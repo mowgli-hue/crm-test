@@ -1,4 +1,5 @@
 "use client" // v2.0.1;
+import { NewtonAgent } from "@/components/newton-agent";
 import { NewtonAiAgent } from "@/components/newton-ai-agent";
 import { AiAssistantPanel } from "@/components/ai-assistant-panel";
 
