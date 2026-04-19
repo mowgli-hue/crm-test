@@ -4159,7 +4159,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           <div className="space-y-4">
           {screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
-              <NewtonAiAgent cases={cases} user={sessionUser} />
+              <NewtonAgent sessionUser={sessionUser} />
             </div>
           ) : screen === "dashboard" ? (
             <>
