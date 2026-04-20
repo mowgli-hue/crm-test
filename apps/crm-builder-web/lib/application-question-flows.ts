@@ -229,7 +229,7 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: details)",
       "Any medical or criminal history? (Yes/No for each — if Yes: details)"
     ]
-  },,
+  },
   express_entry_pr: {
     requiredFields: [
       "fullName", "phone", "maritalStatus", "address", "nativeLanguage",
