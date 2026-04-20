@@ -69,7 +69,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       submissionDate: date,
     });
   } catch (e) {
-    console.error("Sheet sync failed (non-fatal):", (e as Error).message);
+    console.error("🔴 Sheet sync FAILED:", (e as Error).message, (e as Error).stack);
   }
 
   // Auto-archive WhatsApp inbox + send submission confirmation
