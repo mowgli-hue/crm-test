@@ -230,6 +230,42 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Any medical or criminal history? (Yes/No for each — if Yes: details)"
     ]
   },,
+  express_entry_pr: {
+    requiredFields: [
+      "fullName", "phone", "maritalStatus", "address", "nativeLanguage",
+      "englishTestTaken", "employmentHistory", "education"
+    ],
+    prompts: [
+      "🎉 Congratulations on receiving your ITA! Let's get started on your PR application!\n\nHave you used any other name? (Yes/No — if Yes, list them and reason for change)",
+      "What is your height in cm and eye colour?",
+      "What is your native language?",
+      "What is your current phone number and personal email address?",
+      "What is your complete residential AND mailing address? (Unit/Apt, Street No., Street Name, City, Province, Postal Code)",
+
+      "👨‍👩‍👧 Spouse/Partner details (if applicable):\n- Full name\n- Date of birth (YYYY-MM-DD)\n- Country of citizenship\n- Education level\n- Occupation\n\nReply NA if not applicable.",
+
+      "Do you have a sibling who is a Canadian PR or Citizen? (Yes/No)\nIf Yes: full name, relationship, date of birth, city and country of birth, Canadian address.\n\n🇨🇦 This adds CRS points!",
+
+      "🏠 Complete address history for the past 10 years — NO GAPS!\n\nFor each address:\n- From (MM-YYYY) to (MM-YYYY)\n- Unit/Apt & Street No., Street Name\n- City, Province/State, Country\n- Postal Code",
+
+      "🎓 Complete education history from 10+2 onwards:\n\nFor each:\n- Field of study\n- From (MM-YYYY) to (MM-YYYY)\n- Country\n- Institution name\n- Level (10+2 / Diploma / Bachelor's / Master's / PhD)\n\nDo you have an ECA report? (Yes/No — if Yes: organization e.g. WES)",
+
+      "💼 Complete personal history for the past 10 years — NO GAPS!\n\nFor each period:\n- From (MM-YYYY) to (MM-YYYY)\n- Activity (Employed / Student / Unemployed / Travelling)\n- Employer/School name\n- City, Country",
+
+      "For each SKILLED work position please provide:\n- Job title + NOC code\n- Employer name, address, phone\n- From (YYYY-MM) to (YYYY-MM)\n- Hours per week\n- Key duties (3-4 sentences describing responsibilities)",
+
+      "Language test results:\n- Test name (IELTS / CELPIP / TEF)\n- Reading, Writing, Listening, Speaking scores\n- Test date (YYYY-MM-DD)\n- TRF/Reference number",
+
+      "Spouse language test results (same format). Reply NA if not applicable.",
+
+      "Settlement funds available in CAD. Current minimum for single applicant: $14,690 CAD",
+
+      "✈️ Travel history for the past 10 years:\n\nFor each trip outside your home country:\n- Country visited\n- From (YYYY-MM-DD) to (YYYY-MM-DD)\n- Purpose (Tourism / Business / Study / Work / Other)\n\nIf no travel, say: 'I did not travel outside my country.'",
+
+      "📝 Background questions — answer Yes or No for each. If ALL are No, just say 'No to all' 😊\n\n1. Have you or any family member had tuberculosis or serious illness?\n2. Have you or family ever been convicted of a crime?\n3. Have you ever been refused a visa or entry to any country?\n4. Have you ever been ordered to leave any country?\n5. Have you ever claimed refugee status?\n6. Have you ever served in military or armed group?\n7. Have you ever held government or law enforcement position?"
+    ]
+  },
+
   family_sponsorship: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
     prompts: [

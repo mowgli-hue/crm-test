@@ -24,6 +24,7 @@ export function resolveApplicationChecklistKey(formType: string):
   | "study_permit_extension"
   | "super_visa"
   | "express_entry"
+  | "express_entry_pr"
   | "family_sponsorship"
   | "citizenship_prcard"
   | "us_b1b2"
@@ -52,7 +53,9 @@ export function resolveApplicationChecklistKey(formType: string):
   if (ft.includes("study permit")) return "study_permit";
   if (ft.includes("study permit extension") || ft.includes("college change") || ft.includes("spe")) return "study_permit_extension";
   if (ft.includes("super visa") || ft.includes("supervisa")) return "super_visa";
-  if (ft.includes("express entry") || ft.includes("pnp") || ft.includes("pr application")) return "express_entry";
+  if (ft.includes("express entry") && (ft.includes("pr application") || ft.includes("after ita"))) return "express_entry_pr";
+  if (ft.includes("express entry") || ft.includes("pnp")) return "express_entry";
+  if (ft.includes("pr application")) return "express_entry_pr";
   if (ft.includes("spousal sponsorship") || ft.includes("parents") || ft.includes("grandparents sponsorship") || ft.includes("family sponsorship")) return "family_sponsorship";
   if (ft.includes("citizenship") || ft.includes("pr card renewal") || ft.includes("pr card replacement")) return "citizenship_prcard";
   if (ft.includes("ds 160") || ft.includes("b1") || ft.includes("b2") || ft.includes("usa")) return "us_b1b2";
