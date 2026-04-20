@@ -52,6 +52,15 @@ export async function PATCH(request: NextRequest) {
   
   if (action === "archive" && phone) {
     // Archive all messages for this phone
+    // Load all messages for specific phone
+    if (action === "thread" && phone) {
+      const result = await pool.query(
+        `SELECT * FROM whatsapp_inbox WHERE phone = $1 ORDER BY created_at ASC`,
+        [phone]
+      );
+      return NextResponse.json({ messages: result.rows });
+    }
+
     await pool.query(`UPDATE whatsapp_inbox SET is_archived = TRUE WHERE phone = $1`, [phone]);
     return NextResponse.json({ ok: true, action: "archived" });
   }
