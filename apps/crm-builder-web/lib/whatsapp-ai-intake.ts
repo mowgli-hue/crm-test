@@ -410,7 +410,7 @@ async function completeIntake(session: IntakeSession): Promise<void> {
     ].join("\n");
 
     await sendAndSave(session.phone, checklistMsg, session.caseId, session.clientName);
-    clearSession(session.phone);
+    await clearSession(session.phone);
     console.log(`✅ WhatsApp intake complete for case ${session.caseId}`);
 
     // Save intake answers as PDF in Drive
