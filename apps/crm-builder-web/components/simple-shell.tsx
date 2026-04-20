@@ -8012,6 +8012,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
                         else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
                       }} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 shrink-0">Send</button>
+                      </div>
                     </div>
                   </div>
 
