@@ -61,6 +61,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ messages: result.rows });
     }
 
+    // Save name for unknown number
+    if (action === "saveName" && phone && body.name) {
+      await pool.query(
+        `UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone = $2`,
+        [body.name, phone]
+      );
+      return NextResponse.json({ ok: true });
+    }
+
     await pool.query(`UPDATE whatsapp_inbox SET is_archived = TRUE WHERE phone = $1`, [phone]);
     return NextResponse.json({ ok: true, action: "archived" });
   }
