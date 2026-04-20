@@ -491,6 +491,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
   const [newtonBriefing, setNewtonBriefing] = useState<{loaded:boolean; data:any}>({loaded:false, data:null});
   const [inboxSearch, setInboxSearch] = useState<Record<string,string>>({});
+  const [inboxAttachment, setInboxAttachment] = useState<Record<string,{name:string;type:string;data:string}|null>>({});
   const [aiResult, setAiResult] = useState<{caseId:string;text:string;action:string}|null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [inboxAiSuggestion, setInboxAiSuggestion] = useState<Record<string,string>>({});
@@ -7854,15 +7855,29 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       </div>
                       <div className="flex items-center gap-2">
                         {isUnknown && (
-                          <select defaultValue="" onChange={async e => {
-                            const cId = e.target.value; if (!cId) return;
-                            await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
-                            setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
-                            setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
-                          }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
-                            <option value="">⚠️ Link to case...</option>
-                            {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
-                          </select>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input
+                              placeholder="💾 Save name (Enter)"
+                              className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700 w-36 focus:outline-none focus:border-orange-400"
+                              onKeyDown={async e => {
+                                if (e.key !== "Enter") return;
+                                const name = (e.target as HTMLInputElement).value.trim();
+                                if (!name) return;
+                                await apiFetch(`/inbox`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"saveName", phone, name})});
+                                setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
+                                (e.target as HTMLInputElement).value = "";
+                              }}
+                            />
+                            <select defaultValue="" onChange={async e => {
+                              const cId = e.target.value; if (!cId) return;
+                              await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
+                              setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
+                              setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
+                            }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
+                              <option value="">⚠️ Link to case...</option>
+                              {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
+                            </select>
+                          </div>
                         )}
                         {matchedCase && (
                           <button onClick={() => { setSelectedCaseId(matchedCase.id); setScreen("cases"); }}
@@ -7959,7 +7974,28 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     </div>
 
                     {/* Reply box */}
-                    <div className="flex gap-2 px-4 py-3 border-t border-slate-100 bg-white shrink-0">
+                    <div className="flex flex-col px-4 py-3 border-t border-slate-100 bg-white shrink-0 gap-2">
+                      {inboxAttachment[phone] && (
+                        <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+                          <span className="text-sm">📎</span>
+                          <span className="text-xs text-slate-600 truncate flex-1">{inboxAttachment[phone].name}</span>
+                          <button onClick={() => setInboxAttachment(prev=>({...prev,[phone]:null}))} className="text-slate-400 hover:text-red-500 text-xs">✕</button>
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                      <label className="cursor-pointer flex items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 hover:border-emerald-400 transition-colors" title="Attach file">
+                        <span className="text-slate-500 text-base">📎</span>
+                        <input type="file" className="hidden" accept="image/*,.pdf,.doc,.docx" onChange={async e => {
+                          const file = e.target.files?.[0]; if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = ev => {
+                            const data = (ev.target?.result as string).split(",")[1];
+                            setInboxAttachment(prev=>({...prev,[phone]:{name:file.name, type:file.type, data}}));
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = "";
+                        }} />
+                      </label>
                       <input value={inboxReply[phone]||""} onChange={e=>setInboxReply(prev=>({...prev,[phone]:e.target.value}))}
                         placeholder={`Message ${clientName}...`}
                         className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none focus:bg-white"
@@ -7967,13 +8003,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           if (e.key!=="Enter") return;
                           const text=(inboxReply[phone]||"").trim(); if (!text) return;
                           const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                          if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                          if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
                           else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
                         }} />
                       <button onClick={async () => {
                         const text=(inboxReply[phone]||"").trim(); if (!text) return;
                         const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                        if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                        if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
                         else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
                       }} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 shrink-0">Send</button>
                     </div>
