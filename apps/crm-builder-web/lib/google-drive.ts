@@ -424,7 +424,7 @@ export async function syncCaseToUnderReviewSheet(caseItem: {
 
     // First read all rows to find if this client already exists
     const readRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Sheet1!A:J`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Under review!A:J`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const readData = await readRes.json() as { values?: string[][] };
@@ -454,7 +454,7 @@ export async function syncCaseToUnderReviewSheet(caseItem: {
       // Update existing row
       const rowNum = rowIndex + 1;
       const updateRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Sheet1!D${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Under review!D${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
         {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -477,7 +477,7 @@ export async function syncCaseToUnderReviewSheet(caseItem: {
       // Append new row
       const nextRow = rows.length + 1;
       await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Sheet1!A:J:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${UNDER_REVIEW_SHEET_ID}/values/Under review!A:J:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
         {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
