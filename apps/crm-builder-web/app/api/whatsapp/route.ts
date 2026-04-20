@@ -491,6 +491,31 @@ How can we help you today? Please share your name and query and our team will as
             });
             if (aiRes.ok) {
               console.log(`🤖 AI smart reply sent to ${matched.client}`);
+              // Notify staff that bot handled this — no action needed
+              try {
+                const { readStore, writeStore, addNotification } = await import("@/lib/store");
+                const store = await readStore();
+                const admins = (store.users || []).filter((u: any) => 
+                  u.companyId === COMPANY_ID && ["Admin", "ProcessingLead", "Processing"].includes(u.role)
+                );
+                for (const admin of admins.slice(0, 3)) {
+                  await addNotification({
+                    companyId: COMPANY_ID,
+                    userId: admin.id,
+                    type: "ai_alert",
+                    message: `🤖 Newton AI replied to ${matched.client}: "${text.slice(0, 60)}${text.length > 60 ? "..." : ""}" — No action needed`,
+                    caseId: matched.id
+                  });
+                }
+                // Mark inbound messages as read so "Needs reply" goes away
+                const { Pool } = await import("pg");
+                const pool3 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                await pool3.query(
+                  `UPDATE whatsapp_inbox SET is_read = TRUE WHERE phone LIKE $1 AND direction = 'inbound'`,
+                  [`%${from.slice(-9)}`]
+                );
+                await pool3.end();
+              } catch(e) { console.error("Bot notification failed:", e); }
             } else {
               console.error(`🤖 AI reply failed: ${aiRes.status}`);
             }
