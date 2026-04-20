@@ -236,21 +236,66 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
   family_sponsorship: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
     prompts: [
-      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
-      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "Sponsor full name, date of birth, and relationship to you",
-      "Sponsor address in Canada (full address including postal code)",
-      "Sponsor immigration status in Canada (Canadian Citizen / Permanent Resident) and document number",
-      "Sponsor occupation and employer name",
-      "Date and place of your marriage or relationship start (YYYY-MM-DD, city, country)",
-      "Any previous marriage or common-law partnership? (Yes/No — if Yes: partner name, DOB, dates of relationship YYYY-MM-DD)",
-      "Current address (full address with postal code or country if outside Canada)",
-      "Telephone number",
-      "Children/dependants details — for each: full name, DOB, relationship, citizenship, currently living with you? (Yes/No)",
-      "Have you ever applied for or been refused immigration to Canada or any other country? (Yes/No — if Yes: details)",
-      "Do you have any medical history? (Yes/No — if Yes: provide details)",
-      "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "What is your native language? Have you taken an English proficiency test? (Yes/No — if Yes: test name, score, date)"
+      // SECTION 1 — PERSONAL DETAILS
+      "👤 Let's start with some personal details!\n\nWhat is your eye color and height (in cm)?",
+      "What is your native language?",
+      "What is your current Canadian phone number and personal email address?",
+      "What is your current home address in Canada? (Full address including postal code)",
+      "When did you last enter Canada? Please share the date and city of entry.",
+      "Have you ever used any other names? (e.g. maiden name, nickname) — If Yes, list them and the reason for change. If No, just say No!",
+
+      // SECTION 2 — MARRIAGE & RELATIONSHIP
+      "💍 Now let's talk about your beautiful relationship!\n\nWas your marriage arranged? (Yes/No) — If Yes, please describe by whom, when and where.",
+      "Were there any formal ceremonies or events? (engagement, reception, honeymoon, etc.)\nIf Yes, for each event please share: date, location, number of guests, and who performed the ceremony.",
+      "Did the following people attend your ceremonies? Please answer Yes or No for each:\n1. Your parents\n2. Your other family/relatives\n3. Sponsor's parents\n4. Sponsor's other family/relatives\n\nIf anyone did not attend, please explain why.",
+      "How did you meet your spouse? Share your story! 😊",
+      "What language(s) do you use when communicating with each other? And how often do you communicate when not together? (phone, WhatsApp, video calls, etc.)",
+      "Do your close friends and family know about your relationship? (Yes/No)\nIf Yes, please list 2-4 people: their name, relationship to you or sponsor, and date they met you/sponsor.",
+      "Are either of you currently pregnant? (Yes/No — if Yes, please share the due date)",
+      "Have you ever been married or in a common-law relationship before? (Yes/No)\nIf Yes: previous spouse's full name, date of birth, dates of relationship, and how it ended.",
+      "Before this relationship, was your sponsor related to you in any way? (Yes/No — if Yes, please explain)",
+
+      // SECTION 3 — PARENTS
+      "👨‍👩‍👧 Now some details about your parents!\n\nMother's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your mother alive? (If not, please share date and place of passing 🙏)",
+      "Father's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your father alive? (If not, please share date and place of passing 🙏)",
+
+      // SECTION 4 — SIBLINGS
+      "👫 How many brothers and sisters do you have?\n\nFor EACH sibling please share: full name, brother or sister, date of birth (DD/MM/YYYY), city and country of birth, current address (city and country is enough), marital status, and occupation.",
+
+      // SECTION 5 — CHILDREN
+      "👶 Do you have any children? (Yes/No)\nIf Yes, for EACH child please share: full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and occupation (or N/A if child).",
+
+      // SECTION 6 — EDUCATION
+      "🎓 Let's talk about your education!\n\nWhat is the highest level of education you completed? (e.g. 10th, 12th, Diploma, Bachelor's, Master's)\n\nTotal years completed in:\n- Primary school (Grade 1-8)\n- Secondary/high school (Grade 9-12)\n- College/university\n- Trade/vocational school (e.g. GNM, ITI, nursing)",
+      "Please list ALL schools/colleges you attended after Grade 10:\nFor each: full name of school/college, city and country, start and end date (MM/YYYY), name of certificate/diploma, and field of study.",
+
+      // SECTION 7 — WORK HISTORY
+      "💼 Now your work and personal history — this is important!\n\nPlease list EVERY period from your 18th birthday (or last 10 years) to today. Include employment, education, unemployment, and travel periods.\n\nFor each period:\n- From (MM/YYYY) to (MM/YYYY)\n- Activity type (Student / Employed / Unemployed / Housewife / Travelling)\n- Employer/school name\n- City, province/state, country\n\n⚠️ No gaps — every month must be covered!",
+      "What is your current occupation? And what is your intended occupation in Canada?",
+
+      // SECTION 8 — ADDRESS HISTORY
+      "🏠 Please list ALL addresses where you have lived in the last 10 years.\n\nFor each address:\n- Full street address\n- City/Town, Province/State, Country\n- Postal code\n- Date moved in (MM/YYYY)\n- Date moved out (MM/YYYY) or 'still living here'\n\n⚠️ No gaps — every month must be covered!",
+
+      // SECTION 9 — TRAVEL HISTORY
+      "✈️ Please list ALL trips outside your home country in the last 10 years.\n\nFor each trip:\n- Country and city visited\n- Date left (YYYY-MM-DD)\n- Date returned (YYYY-MM-DD)\n- Number of days\n- Purpose (Tourism / Business / Study / Work / Family Visit / Transit / Religious / Marriage / Other)\n\nIf you did NOT travel outside your country at all, just say: 'I did not travel.'",
+      "Now the same travel details for your SPOUSE — all trips outside their country of residence in the last 10 years. (Same format as above)",
+
+      // SECTION 10 — BACKGROUND
+      "📝 Almost done! Just a few background questions. Please answer Yes or No for each — if ALL answers are No, just say 'No to all' and that's it! 😊\n\nHealth:\n1. Have you or any family member had tuberculosis or been in contact with someone with TB?\n2. Have you or any family member had a serious physical or mental illness?\n\nLegal/Immigration:\n3. Have you or any family member ever been convicted of or charged with a crime?\n4. Have you or any family member ever been refused a visa or entry to any country?\n5. Have you or any family member ever been ordered to leave any country?\n6. Have you ever been arrested, charged, or detained?\n7. Have you ever claimed refugee status anywhere?\n\nSecurity:\n8. Have you or any family member committed or been involved in war crimes or terrorism?\n9. Have you ever served in a military or armed group?\n10. Have you ever been a member of a political party, rebel group, or union?\n11. Have you ever worked in prisons, police, or intelligence agencies?\n12. Have you ever held a government, judiciary, or state-owned enterprise position?",
+
+      // SECTION 11 — SPONSOR DETAILS
+      "🇨🇦 Now some details about your sponsor (your spouse in Canada)!\n\nSponsor's Canadian phone number, personal email, and current home address in Canada (full address with postal code)",
+      "Is the sponsor currently employed? (Yes/No)\nIf Yes: employer name, full employer address, employer phone, job title, NOC code (if known), start date, and monthly gross income.\nIf No: source of income / how they support themselves.",
+      "Sponsor's employment history for the last 5 years (no gaps):\nFor each: employer name, address, phone, occupation/position, dates (MM/YYYY – MM/YYYY), monthly gross income.",
+      "Sponsor's highest level of education completed and total years of education.",
+      "Sponsor's address history for the last 5 years (no gaps) — full addresses with dates moved in and out.",
+      "Has the sponsor ever been married or in a common-law relationship before? (Yes/No — if Yes, full details)",
+      "Has the sponsor ever sponsored anyone for immigration before? (Yes/No)\nIf Yes: their full name, date of birth, and relationship to sponsor.",
+      "Has the sponsor ever: received social assistance/welfare? Been convicted of a crime? Been bankrupt? (Please answer Yes or No for each — if all No, just say 'No to all')",
+      "Does the sponsor have any relatives (aunts, uncles, cousins, etc.) currently living in Canada? (Yes/No)\nIf Yes, for each: full name, date of birth, place of birth, marital status, relationship to sponsor, and current address.",
+
+      // SECTION 12 — LANGUAGE
+      "🌐 Last question! Did you take an English language test? (Yes/No)\nIf Yes: which test? (IELTS / CELPIP / PTE)\n\nDon't worry — we will extract the test date, scores, and TRF number from your score card document. 😊"
     ]
   },
   citizenship_prcard: {
