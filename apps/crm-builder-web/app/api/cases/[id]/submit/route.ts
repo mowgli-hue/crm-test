@@ -64,7 +64,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     await appendToSubmittedSheet({
       name: caseItem.client,
       appType: caseItem.formType,
-      phone: caseItem.leadPhone || "",
+      phone: caseItem.leadPhone ? "+" + String(caseItem.leadPhone).replace(/\D/g, "").replace(/^1/, "1") : "",
       appNumber: applicationNumber,
       submissionDate: date,
     });

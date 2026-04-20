@@ -10,7 +10,7 @@ import {
   resolveCaseDriveRootLink,
   updateCaseLinks
 } from "@/lib/store";
-import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolderId } from "@/lib/google-drive";
+import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolderId, appendToAllCasesSheet } from "@/lib/google-drive";
 import { boundedText, isReasonablePhone, isValidEmail, normalizeEmail, normalizePhone } from "@/lib/validation";
 import { startIntakeSession } from "@/lib/whatsapp-ai-intake";
 import { isWhatsAppConfigured } from "@/lib/whatsapp";
@@ -127,6 +127,14 @@ export async function POST(request: NextRequest) {
     familyTotalCharges,
     assignedTo
   });
+  // Sync to client sheet
+  appendToAllCasesSheet({
+    caseId: created.id,
+    name: created.client,
+    formType: created.formType,
+    phone: created.leadPhone || "",
+  }).catch(e => console.error("Client sheet sync failed:", e.message));
+
   await addAuditLog({
     companyId: user.companyId,
     actorUserId: user.id,
