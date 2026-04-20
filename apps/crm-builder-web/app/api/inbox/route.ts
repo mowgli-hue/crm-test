@@ -31,15 +31,15 @@ export async function GET(request: NextRequest) {
   // Get latest message per phone (thread view)
   const res = await pool.query(
     showArchived
-      ? `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY phone, created_at DESC LIMIT 100`
-      : `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY phone, created_at DESC LIMIT 100`
+      ? `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY phone, created_at DESC LIMIT 500`
+      : `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY phone, created_at DESC LIMIT 500`
   );
   
   // Get all messages for thread detail
   const allRes = await pool.query(
     showArchived
-      ? `SELECT * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY created_at DESC LIMIT 500`
-      : `SELECT * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY created_at DESC LIMIT 500`
+      ? `SELECT * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY created_at DESC LIMIT 2000`
+      : `SELECT * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY created_at DESC LIMIT 2000`
   );
   return NextResponse.json({ messages: allRes.rows, threads: res.rows });
 }
