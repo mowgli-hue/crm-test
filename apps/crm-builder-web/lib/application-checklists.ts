@@ -136,13 +136,18 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "sponsor_birth", label: "Sponsor Birth Certificate (if available)", required: false, keywords: ["birth certificate"] }
   ],
   express_entry: [
-    { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
-    { key: "language", label: "Language Test (IELTS/CELPIP/TEF)", required: true, keywords: ["ielts", "celpip", "tef"] },
-    { key: "eca", label: "ECA Report (WES or equivalent)", required: true, keywords: ["eca", "wes"] },
-    { key: "work_reference", label: "Work Experience Reference Letters", required: true, keywords: ["reference letter", "employment letter", "experience letter"] },
-    { key: "education_docs", label: "Education Transcripts/Degree", required: true, keywords: ["degree", "diploma", "transcript"] },
-    { key: "proof_funds", label: "Proof of Funds", required: false, keywords: ["proof of funds", "bank statement", "bank certificate"] },
-    { key: "pcc", label: "Police Clearance Certificate (if available)", required: false, keywords: ["police clearance", "pcc"] }
+    { key: "pcc", label: "Police Clearance Certificate (all countries lived 6+ months after age 18)", required: true, keywords: ["police clearance", "pcc", "police certificate"] },
+    { key: "passport", label: "Passport (all pages including blank)", required: true, keywords: ["passport"] },
+    { key: "ielts", label: "IELTS TRF / Language Test Result", required: true, keywords: ["ielts", "celpip", "tef", "trf", "language test"] },
+    { key: "education_docs", label: "All Educational Documents (10+2 onwards) — Degrees, Diplomas, Transcripts", required: true, keywords: ["degree", "diploma", "transcript", "education", "marksheet"] },
+    { key: "photo", label: "Digital Photo (as per IRCC guidelines)", required: true, keywords: ["photo", "digital photo", "photograph"] },
+    { key: "employment_letter", label: "Letter of Employment (all employers)", required: true, keywords: ["employment letter", "job letter", "offer letter", "reference letter"] },
+    { key: "pay_stubs", label: "Pay Stubs (all employments)", required: true, keywords: ["pay stub", "paystub", "pay slip", "payslip", "salary slip"] },
+    { key: "tax_docs", label: "Tax Documents (T4, NOA — all employments)", required: true, keywords: ["tax", "t4", "noa", "notice of assessment"] },
+    { key: "bank_statements", label: "Bank Statements (all employments)", required: true, keywords: ["bank statement", "bank", "statement"] },
+    { key: "permits", label: "All Immigration Permits (study/work/visitor)", required: true, keywords: ["permit", "study permit", "work permit", "visitor record"] },
+    { key: "pr_sibling_proof", label: "Proof of PR/Citizen Sibling — Passport, PR card (front & back), Govt ID, Bank Statement", required: false, keywords: ["pr card", "sibling", "brother", "sister", "family member"] },
+    { key: "relationship_proof", label: "Proof of Relationship with PR Sibling — Birth Certificates", required: false, keywords: ["birth certificate", "relationship", "sibling proof"] },
   ],
   family_sponsorship: [
     { key: "passport", label: "Passport(s)", required: true, keywords: ["passport"] },
