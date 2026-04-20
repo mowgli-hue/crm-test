@@ -214,23 +214,44 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "refusedAnyCountry", "criminalHistory", "medicalHistory"
     ],
     prompts: [
-      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
+      // SECTION 1 — PERSONAL DETAILS
+      "🍁 Welcome! Let's get started with your Express Entry application!\n\nHave you ever used any other name? (e.g. maiden name, nickname) — If Yes, please list them. If No, just say No!",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "If Married or Common-Law: spouse full name, DOB, citizenship, education level, occupation. Reply NA if not applicable.",
-      "Current address (full address with postal code or country)",
-      "Telephone number",
-      "Primary job title and NOC code (if known). How many years of skilled work experience in this field?",
-      "List all skilled work experience — for each: From (YYYY-MM), To (YYYY-MM), Job Title, NOC code, Employer, City, Country, Hours/week",
-      "Highest education completed — institution name, field of study, country, from/to dates. Do you have an ECA report? (Yes/No — if Yes: which organization e.g. WES)",
-      "Language test results — test name (IELTS/CELPIP/TEF), scores for Reading/Writing/Listening/Speaking, test date (YYYY-MM-DD)",
-      "Spouse language test results (if applicable) — test name, scores, date. Reply NA if not applicable.",
-      "Do you have a provincial nomination? (Yes/No — if Yes: province and program name)",
-      "Do you have a Canadian job offer? (Yes/No — if Yes: employer name, NOC code, job title, LMIA number if applicable)",
-      "Proof of settlement funds available (amount in CAD)",
-      "Have you ever lived in Canada? (Yes/No — if Yes: permit type, dates, province)",
-      "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: details)",
-      "Do you have any medical history? (Yes/No — if Yes: provide details)",
-      "Do you have any criminal history? (Yes/No — if Yes: provide details)"
+      "If Married or Common-Law: spouse's full name, date of birth, citizenship, education level, and occupation. Reply NA if not applicable.",
+      "What is your height in cm and eye colour?",
+      "What is your native language?",
+      "What is your current phone number and email address?",
+      "What is your complete residential and mailing address? (Unit/Apt No., Street No., Street Name, City, Province, Postal Code)",
+
+      // SECTION 2 — PR FAMILY MEMBER IN CANADA
+      "Do you have a sibling who is a Canadian PR or Citizen? (Yes/No)\nIf Yes, please provide: Full name, relationship to you, date of birth, city and country of birth, and their Canadian address.\n\nThis can add points to your CRS score! 🇨🇦",
+
+      // SECTION 3 — ADDRESS HISTORY
+      "🏠 Please provide your complete address history for the past 10 years. No gaps allowed!\n\nFor each address:\n- From (MM-YYYY)\n- To (MM-YYYY)\n- Unit/Apt No. & Street No.\n- Street Name\n- City & Province/State\n- Country\n- Postal Code\n\n⚠️ Every month must be covered!",
+
+      // SECTION 4 — EDUCATION
+      "🎓 Please provide your complete education history from 10+2 onwards.\n\nFor each:\n- Field of study\n- From (MM-YYYY)\n- To (MM-YYYY)\n- Country of study\n- Name of school/institution\n- Level of education (10+2 / Diploma / Bachelor's / Master's / PhD)\n\nDo you have an ECA (Educational Credential Assessment) report? (Yes/No — if Yes: which organization e.g. WES)",
+
+      // SECTION 5 — PERSONAL/WORK HISTORY
+      "💼 Please provide your complete personal history for the past 10 years. No gaps!\n\nFor each period:\n- From (MM-YYYY)\n- To (MM-YYYY)\n- Activity type (Employed / Student / Unemployed / Travelling / Other)\n- Employer/School/Facility name\n- Country/Territory\n\n⚠️ Every month must be covered!",
+
+      "What is your primary job title and NOC code (if known)? How many years of skilled work experience do you have in this field?",
+
+      "For each SKILLED work position (NOC 0/A/B), please provide:\n- Job title + NOC code\n- Employer name + city + country\n- From (YYYY-MM) to (YYYY-MM)\n- Hours per week\n- Key duties (2-3 sentences)",
+
+      // SECTION 6 — LANGUAGE
+      "🌐 Language test results:\n- Test name (IELTS / CELPIP / TEF)\n- Reading score\n- Writing score\n- Listening score\n- Speaking score\n- Test date (YYYY-MM-DD)\n- TRF/Reference number",
+
+      "Spouse language test results (if applicable) — same format as above. Reply NA if not applicable.",
+
+      // SECTION 7 — BONUS FACTORS
+      "Do you have a provincial nomination (PNP)? (Yes/No — if Yes: province and program name)",
+      "Do you have a valid Canadian job offer? (Yes/No — if Yes: employer name, NOC code, job title, and LMIA number if applicable)",
+      "What is your proof of settlement funds available? (amount in CAD)\n\nMinimum required for single applicant: $14,690 CAD",
+      "Have you ever lived or worked in Canada? (Yes/No — if Yes: permit type, dates, and province)",
+
+      // SECTION 8 — BACKGROUND
+      "📝 Last section! Please answer Yes or No for each — if ALL are No, just say 'No to all' 😊\n\n1. Have you ever been refused a visa or permit for Canada or any other country?\n2. Have you ever been ordered to leave any country?\n3. Do you have any medical conditions?\n4. Do you have any criminal history?\n5. Have you ever claimed refugee status?"
     ]
   },
   family_sponsorship: {
