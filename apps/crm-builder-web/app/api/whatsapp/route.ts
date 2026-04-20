@@ -326,6 +326,113 @@ Reply ONLY with JSON: {
           console.error("Intake handler error:", (e as Error).message);
         }
 
+        // Handle UNKNOWN numbers — auto detect name + case status
+        if (!handledByIntake && !matched) {
+          try {
+            const { sendWhatsAppText } = await import("@/lib/whatsapp");
+            const { Pool } = await import("pg");
+            const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+            // Check if we already know their name from previous messages
+            const prevMsg = await pool.query(
+              `SELECT matched_case_name FROM whatsapp_inbox WHERE phone = $1 AND matched_case_name IS NOT NULL LIMIT 1`,
+              [from]
+            );
+            const knownName = prevMsg.rows[0]?.matched_case_name || "";
+
+            // Use Claude to extract name and intent from message
+            const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY || "", "anthropic-version": "2023-06-01" },
+              body: JSON.stringify({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 300,
+                messages: [{ role: "user", content: `Extract info from this WhatsApp message to Newton Immigration:
+Message: "${text}"
+Known name: "${knownName}"
+
+Reply ONLY with JSON:
+{
+  "name": "full name if mentioned or known name",
+  "isAskingForUpdate": true/false,
+  "isGreeting": true/false,
+  "intent": "brief description of what they want"
+}` }]
+              })
+            });
+
+            let extracted = { name: knownName, isAskingForUpdate: false, isGreeting: false, intent: "" };
+            if (aiRes.ok) {
+              const aiData = await aiRes.json() as any;
+              try { extracted = JSON.parse(aiData.content?.[0]?.text?.replace(/```json|```/g,"").trim() || "{}"); } catch {}
+            }
+
+            // Save name if detected
+            if (extracted.name && extracted.name !== knownName) {
+              await pool.query(`UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone = $2`, [extracted.name, from]);
+            }
+
+            // Search for their case
+            const casesData = await listCases(COMPANY_ID);
+            const foundCase = extracted.name ? casesData.find((c: any) => {
+              const clientName = String(c.client || "").toLowerCase();
+              const searchName = String(extracted.name || "").toLowerCase();
+              return clientName.includes(searchName.split(" ")[0]) || searchName.includes(clientName.split(" ")[0]);
+            }) : null;
+
+            if (foundCase) {
+              // Link phone to case
+              const { updateCase } = await import("@/lib/store");
+              await updateCase(COMPANY_ID, foundCase.id, { leadPhone: from });
+
+              // Reply with case status
+              const firstName = String(foundCase.client || "").split(" ")[0];
+              const status = foundCase.processingStatus || "in progress";
+              const statusMap: Record<string, string> = {
+                "docs_pending": "we are waiting for your documents",
+                "under_review": "your application is under review by our team",
+                "submitted": "your application has been submitted to IRCC",
+                "approved": "your application has been approved! 🎉",
+                "refused": "unfortunately your application was not approved"
+              };
+              const statusMsg = statusMap[status] || `status: ${status}`;
+              await sendWhatsAppText(from, `Hello ${firstName}! 🍁
+
+We found your file at Newton Immigration.
+
+Your *${foundCase.formType}* application — ${statusMsg}.
+
+If you have any questions, our team will be in touch shortly.
+
+— Newton Immigration Team`);
+              console.log(`✅ Auto-replied to unknown number with case status: ${foundCase.client}`);
+            } else if (extracted.isAskingForUpdate) {
+              // They want an update but we can't find their case
+              const name = extracted.name || "there";
+              await sendWhatsAppText(from, `Hello ${name}! 🍁
+
+Thank you for reaching out to Newton Immigration.
+
+We couldn't find your file with this number. Could you please share:
+1. Your full name
+2. Your application type (work permit, study permit, etc.)
+
+Our team will look into your file and get back to you shortly!
+
+— Newton Immigration Team`);
+            } else if (extracted.isGreeting || text.length < 20) {
+              // Simple greeting
+              await sendWhatsAppText(from, `Hello! 🍁 Welcome to Newton Immigration.
+
+How can we help you today? Please share your name and query and our team will assist you.
+
+— Newton Immigration Team`);
+            }
+
+            await pool.end();
+          } catch(e) { console.error("Unknown number handler error:", e); }
+        }
+
         // If not an intake reply — it's a general client question, notify team
         if (!handledByIntake && matched) {
           try {
