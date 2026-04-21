@@ -45,14 +45,13 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
     if(filter==="unread") return msgs.some(m=>!m.is_read&&m.direction==="inbound");
     return true;
   }).sort((a,b)=>{
+    // Pinned always first
     if(pinned.has(a)&&!pinned.has(b)) return -1;
     if(!pinned.has(a)&&pinned.has(b)) return 1;
+    // Sort by latest message time (WhatsApp style)
     const aLast = Math.max(...allThreads[a].map(m=>new Date(m.created_at).getTime()));
     const bLast = Math.max(...allThreads[b].map(m=>new Date(m.created_at).getTime()));
-    const aUnread = allThreads[a].filter(m=>!m.is_read&&m.direction==="inbound").length;
-    const bUnread = allThreads[b].filter(m=>!m.is_read&&m.direction==="inbound").length;
-    if(bUnread!==aUnread) return bUnread-aUnread;
-    return bLast-aLast;
+    return bLast - aLast;
   });
 
   const threadMsgs = thread ? [...(allThreads[thread]||[])].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime()) : [];

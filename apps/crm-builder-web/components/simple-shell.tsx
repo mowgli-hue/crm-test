@@ -7801,19 +7801,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       };
                       const aw = getWaitMins(a.msgs);
                       const bw = getWaitMins(b.msgs);
-                      // Pin staff numbers to ABSOLUTE top - before everything
+                      // Pin staff numbers to absolute top
                       const aIsStaff = STAFF_PHONES.some(p => a.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
                       const bIsStaff = STAFF_PHONES.some(p => b.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
                       if (aIsStaff && !bIsStaff) return -1;
                       if (!aIsStaff && bIsStaff) return 1;
-                      if (bw >= 120 && aw < 120) return 1;
-                      if (aw >= 120 && bw < 120) return -1;
-                      if (bw >= 30 && aw < 30) return 1;
-                      if (aw >= 30 && bw < 30) return -1;
-                      const au = a.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
-                      const bu = b.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
-                      if (bu !== au) return bu - au;
-                      return Math.max(bw, 0) - Math.max(aw, 0);
+                      // Sort by latest message time (WhatsApp style)
+                      const aLatest = Math.max(...a.msgs.map(m=>new Date(m.created_at).getTime()));
+                      const bLatest = Math.max(...b.msgs.map(m=>new Date(m.created_at).getTime()));
+                      return bLatest - aLatest;
                     });
 
                     if (threadList.length === 0) return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
@@ -7839,8 +7835,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       ) : false;
                       const needsReply = lastIn && !lastInIsSimple && (!lastOut || new Date(lastIn.created_at) > new Date(lastOut.created_at));
                       const waitMins = needsReply ? Math.floor((Date.now() - new Date(lastIn.created_at).getTime()) / 60000) : null;
-                      const isUrgent = waitMins !== null && waitMins >= 120;
-                      const isPending = waitMins !== null && waitMins >= 30 && !isUrgent;
+                      const isUrgent = waitMins !== null && waitMins >= 60;
+                      const isPending = waitMins !== null && waitMins >= 15 && !isUrgent;
                       const waitLabel = waitMins !== null ? (waitMins >= 60 ? `${Math.floor(waitMins/60)}h` : `${waitMins}m`) : null;
                       return (
                         <button key={phone} onClick={() => {
