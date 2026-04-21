@@ -6,6 +6,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   attachments?: { name: string; type: string; data: string }[];
+  isLetter?: boolean;
   timestamp: Date;
 };
 
@@ -82,10 +83,19 @@ export function NewtonAgent({ sessionUser }: { sessionUser: any }) {
         })
       });
       const data = await res.json() as any;
+      const reply = data.reply || data.error || "Something went wrong.";
+      
+      // Check if reply is a rep letter - offer download
+      const isLetter = reply.toLowerCase().includes("representative") || 
+                       reply.toLowerCase().includes("submission letter") ||
+                       reply.toLowerCase().includes("to whom it may concern") ||
+                       reply.toLowerCase().includes("yours sincerely");
+      
       setMessages(prev => [...prev, {
         id: Date.now().toString() + "r",
         role: "assistant",
-        content: data.reply || data.error || "Something went wrong.",
+        content: reply,
+        isLetter,
         timestamp: new Date()
       }]);
     } catch (e) {
@@ -154,6 +164,32 @@ export function NewtonAgent({ sessionUser }: { sessionUser: any }) {
               <div className={`${msg.role === "user" ? "text-sm text-white" : "text-slate-800"} leading-relaxed`}>
                 {msg.role === "assistant" ? formatMessage(msg.content) : <p className="text-sm">{msg.content}</p>}
               </div>
+              {msg.isLetter && (
+                <div className="mt-3 pt-3 border-t border-slate-200 flex gap-2">
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([msg.content], { type: "text/plain" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "Newton_Rep_Letter.txt";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+                  >
+                    📥 Download Letter
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(msg.content);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    📋 Copy
+                  </button>
+                </div>
+              )}
               <p className={`text-[10px] mt-1.5 ${msg.role === "user" ? "text-slate-400 text-right" : "text-slate-400"}`}>
                 {msg.timestamp.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit" })}
               </p>
