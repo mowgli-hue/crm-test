@@ -7253,8 +7253,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             <div className="space-y-4">
               {(() => {
                 const today = new Date();
-                const todayStr = today.toISOString().slice(0, 10);
-                const todayLabel = today.toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+                const todayStr = today.toLocaleDateString("en-CA", {timeZone: "America/Vancouver"});
+                const todayLabel = today.toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Vancouver" });
 
                 // Accounting uses ALL cases including submitted
                 const allCasesByRole = filterCasesByRole(cases, viewRole, sessionUser?.name);
