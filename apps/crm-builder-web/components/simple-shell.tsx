@@ -4164,7 +4164,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
           <div className="space-y-4">
           {screen === "marketing-inbox" ? (
-              <MarketingInbox sessionUser={sessionUser} />
+              <MarketingInbox sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />
