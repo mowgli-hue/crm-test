@@ -491,6 +491,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
   const [newtonBriefing, setNewtonBriefing] = useState<{loaded:boolean; data:any}>({loaded:false, data:null});
   const [inboxSearch, setInboxSearch] = useState<Record<string,string>>({});
+  const [inboxGlobalSearch, setInboxGlobalSearch] = useState("");
   const [inboxAttachment, setInboxAttachment] = useState<Record<string,{name:string;type:string;data:string}|null>>({});
   const [aiResult, setAiResult] = useState<{caseId:string;text:string;action:string}|null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -7719,6 +7720,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
               {/* LEFT: Thread list */}
               <div className={`flex flex-col border-r border-slate-100 ${inboxThread ? "hidden md:flex md:w-72 shrink-0" : "w-full md:w-72 shrink-0"}`}>
+                  {/* Global inbox search */}
+                  <div className="px-3 py-2 border-b border-slate-100 bg-white shrink-0">
+                    <input
+                      value={inboxGlobalSearch||""}
+                      onChange={e=>setInboxGlobalSearch(e.target.value)}
+                      placeholder="🔍 Search all conversations..."
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
                   <div className="flex items-center gap-2">
                     <button onClick={() => { setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${!inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>Active</button>
@@ -7739,6 +7749,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                 {!inboxLoaded && (() => {
                   apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" }).then(r => r.json()).then(d => { setInboxMessages(d.messages || []); setInboxLoaded(true); }).catch(()=>setInboxLoaded(true));
+                  // Auto-refresh inbox every 5 seconds
+                  const inboxTimer = setInterval(() => {
+                    apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" })
+                      .then(r => r.json())
+                      .then(d => { if (d.messages) setInboxMessages(d.messages); })
+                      .catch(() => {});
+                  }, 5000);
+                  return () => clearInterval(inboxTimer);
                   return <p className="text-xs text-slate-400 py-8 text-center">Loading...</p>;
                 })()}
 
@@ -7746,6 +7764,18 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   {inboxLoaded && (() => {
                     const threads: Record<string, typeof inboxMessages> = {};
                     inboxMessages.forEach(m => { if (!threads[m.phone]) threads[m.phone] = []; threads[m.phone].push(m); });
+                    // Filter by global search
+                    if (inboxGlobalSearch) {
+                      const q = inboxGlobalSearch.toLowerCase();
+                      Object.keys(threads).forEach(phone => {
+                        const hasMatch = threads[phone].some(m => 
+                          m.message.toLowerCase().includes(q) || 
+                          (m.matched_case_name||"").toLowerCase().includes(q) ||
+                          phone.includes(q)
+                        );
+                        if (!hasMatch) delete threads[phone];
+                      });
+                    }
                     const threadList = Object.entries(threads).map(([phone, msgs]) => {
                       const mp = phone.replace(/\D/g,"");
                       const matchedCase = cases.find(c => { const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
@@ -7898,9 +7928,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       <input
                         value={inboxSearch[phone]||""}
                         onChange={e=>setInboxSearch(prev=>({...prev,[phone]:e.target.value}))}
-                        placeholder="🔍 Search messages..."
+                        placeholder="🔍 Search in this chat..."
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
                       />
+                      {inboxSearch[phone] && (
+                        <p className="text-[10px] text-slate-400 mt-1 px-1">
+                          {sortedMsgs.filter(m=>m.message.toLowerCase().includes((inboxSearch[phone]||"").toLowerCase())).length} results
+                        </p>
+                      )}
                     </div>
 
                     {/* Messages */}
