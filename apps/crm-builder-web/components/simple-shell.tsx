@@ -7801,8 +7801,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       if (bw >= 30 && aw < 30) return 1;
                       if (aw >= 30 && bw < 30) return -1;
                       // Pin staff numbers to absolute top
-                      const aIsStaff = STAFF_PHONES.some(p => a.phone.includes(p.slice(-9)));
-                      const bIsStaff = STAFF_PHONES.some(p => b.phone.includes(p.slice(-9)));
+                      const aIsStaff = STAFF_PHONES.some(p => a.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
+                      const bIsStaff = STAFF_PHONES.some(p => b.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
                       if (aIsStaff && !bIsStaff) return -1;
                       if (!aIsStaff && bIsStaff) return 1;
                       const au = a.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
