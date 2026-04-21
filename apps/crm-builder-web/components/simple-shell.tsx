@@ -7348,10 +7348,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     )}
 
                     {/* Search + filter */}
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <input value={accountingSearch} onChange={(e) => { setAccountingSearch(e.target.value); setAccountingPage(0); }}
-                        placeholder="Search client, case ID, application..."
-                        className="flex-1 min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none" />
+                    <div className="flex flex-wrap gap-2 items-center sticky top-0 bg-slate-50 py-2 z-10">
+                      <div className="flex-1 min-w-0 relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+                        <input value={accountingSearch} onChange={(e) => { setAccountingSearch(e.target.value); setAccountingPage(0); }}
+                          placeholder="Search client name, case ID..."
+                          className="w-full rounded-lg border-2 border-slate-200 bg-white pl-8 pr-3 py-2 text-sm focus:border-emerald-400 focus:outline-none font-medium" />
+                        {accountingSearch && <button onClick={() => setAccountingSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 text-xs">✕</button>}
+                      </div>
                       <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
                         {(["all","pending","paid"] as const).map(f => (
                           <button key={f} onClick={() => { setAccountingPaymentFilter(f); setAccountingPage(0); }}
