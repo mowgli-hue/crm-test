@@ -7800,13 +7800,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       if (aw >= 120 && bw < 120) return -1;
                       if (bw >= 30 && aw < 30) return 1;
                       if (aw >= 30 && bw < 30) return -1;
+                      const au = a.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
+                      const bu = b.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
                       // Pin staff numbers to top
                       const aIsStaff = STAFF_PHONES.some(p => a.phone.includes(p.slice(-9)));
                       const bIsStaff = STAFF_PHONES.some(p => b.phone.includes(p.slice(-9)));
                       if (aIsStaff && !bIsStaff) return -1;
                       if (!aIsStaff && bIsStaff) return 1;
-                      const au = a.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
-                      const bu = b.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
                       if (bu !== au) return bu - au;
                       return Math.max(bw, 0) - Math.max(aw, 0);
                     });
@@ -7815,7 +7815,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                     return threadList.map(({ phone, msgs, matchedCase }) => {
                       const unread = msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
-                      const clientName = matchedCase?.client || msgs[0]?.matched_case_name || "Unknown";
+                      const isStaff = STAFF_PHONES.some(p => phone.includes(p.slice(-9)));
+                      const clientName = isStaff ? "Newton Team" : matchedCase?.client || msgs[0]?.matched_case_name || "Unknown";
                       const lastMsg = [...msgs].sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
                       const isSelected = inboxThread === phone;
                       const isUnknown = !matchedCase;
