@@ -60,36 +60,18 @@ export async function POST(req: NextRequest) {
     const value = body?.entry?.[0]?.changes?.[0]?.value;
     if (!value) return NextResponse.json({ status: "ok" });
 
-    // Route marketing number to marketing inbox
+    // Route marketing number to marketing webhook handler
     const incomingPhoneId = value?.metadata?.phone_number_id;
     const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "1047138985153613";
     if (incomingPhoneId === MARKETING_PHONE_ID) {
-      // Forward to marketing webhook handler
-      const messages = value?.messages;
-      if (messages?.length) {
-        for (const message of messages) {
-          const from = message.from;
-          const msgType = message.type;
-          const text = message?.text?.body || "";
-          const displayMsg = msgType === "text" ? text : `[${msgType} received]`;
-          try {
-            const { Pool } = await import("pg");
-            const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-            await pool.query(`CREATE TABLE IF NOT EXISTS marketing_inbox (
-              id TEXT PRIMARY KEY, phone TEXT NOT NULL, message TEXT NOT NULL,
-              direction TEXT NOT NULL DEFAULT 'inbound', contact_name TEXT,
-              is_read BOOLEAN NOT NULL DEFAULT FALSE,
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )`);
-            const msgId = `MKT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-            await pool.query(
-              `INSERT INTO marketing_inbox (id, phone, message, direction, is_read) VALUES ($1,$2,$3,'inbound',FALSE)`,
-              [msgId, from, displayMsg]
-            );
-            await pool.end();
-          } catch(e) { console.error("Marketing inbox save failed:", e); }
-        }
-      }
+      try {
+        const baseUrl = process.env.NEXTAUTH_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
+        await fetch(`${baseUrl}/api/marketing-whatsapp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+      } catch(e) { console.error("Marketing forward failed:", e); }
       return NextResponse.json({ status: "ok" });
     }
 
