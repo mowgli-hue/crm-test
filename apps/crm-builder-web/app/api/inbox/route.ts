@@ -47,7 +47,8 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { id, phone, action } = await request.json().catch(() => ({}));
+  const body = await request.json().catch(() => ({}));
+  const { id, phone, action } = body;
   await ensureTable();
   
   if (action === "archive" && phone) {
