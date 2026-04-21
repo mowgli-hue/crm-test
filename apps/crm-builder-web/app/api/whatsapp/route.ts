@@ -471,8 +471,15 @@ How can we help you today? Please share your name and query and our team will as
             console.error("Team notification error:", (e as Error).message);
           }
 
+          // Skip AI auto-reply for staff numbers
+          const STAFF_PHONES = ["16046535031","17789828954","17787236662"];
+          const isStaffNumber = STAFF_PHONES.some(p => from.includes(p.slice(-9)));
+          if (isStaffNumber) {
+            console.log(`👥 Staff message from ${from} — skipping AI auto-reply`);
+          }
+
           // Smart AI auto-reply for client messages
-          try {
+          if (!isStaffNumber) try {
             const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
             const aiRes = await fetch(`${appUrl}/api/ai-reply`, {
               method: "POST",
