@@ -7367,10 +7367,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     {(() => {
                       // Group by date — use updatedAt or createdAt
                       // Cases with no real date (imported from sheets) go to Unknown
-                      const todayIso = new Date().toISOString().slice(0, 10);
+                      const todayIso = new Date().toLocaleDateString("en-CA", {timeZone: "America/Vancouver"});
                       const groups: Record<string, typeof filtered> = {};
                       filtered.forEach(c => {
-                        const rawDate = (c.createdAt || "").slice(0, 10);
+                        const rawDate = c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-CA", {timeZone: "America/Vancouver"}) : "";
                         const d = rawDate || "Unknown";
                         if (!groups[d]) groups[d] = [];
                         groups[d].push(c);
