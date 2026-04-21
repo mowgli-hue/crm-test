@@ -8895,7 +8895,8 @@ function ClientPortal({
       </div>
     </main>
   );
-}se client" // v2.0.1;
+}
+"use client" // v2.0.1;
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import { NewtonAiAgent } from "@/components/newton-ai-agent";
