@@ -429,6 +429,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     (value || "Use your case number in message and upload proof.")
       .replace(/payments@newtonimmigration\.com/gi, fixedInteracRecipient)
       .replace(/payments@newtonimmigration\.ca/gi, fixedInteracRecipient);
+  const STAFF_PHONES = ["16046535031","17789828954","17787236662"];
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [caseBoardView, setCaseBoardView] = useState<CaseBoardView>("home");
   const [clientScreen, setClientScreen] = useState<ClientScreen>("retainer");
