@@ -4162,11 +4162,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
           <div className="space-y-4">
-          {screen === "marketing-inbox" ? (
-            <div className="flex-1 h-full overflow-hidden">
-              <MarketingInbox sessionUser={sessionUser} apiFetch={apiFetch} />
-            </div>
-          ) : screen === "newton-ai" ? (
+          {screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />
             </div>
@@ -8896,6 +8892,8 @@ function ClientPortal({
     </main>
   );
 }
+
+
 "use client" // v2.0.1;
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
@@ -13060,7 +13058,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
           <div className="space-y-4">
-          {screen === "newton-ai" ? (
+          {screen === "marketing-inbox" ? (
+            <div className="flex-1 h-full overflow-hidden">
+              <MarketingInbox sessionUser={sessionUser} apiFetch={apiFetch} />
+            </div>
+          ) : screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />
             </div>
