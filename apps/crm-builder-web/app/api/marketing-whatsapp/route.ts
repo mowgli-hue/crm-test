@@ -203,11 +203,6 @@ export async function POST(request: NextRequest) {
     const contact = value.contacts?.[0];
     const contactName = contact?.profile?.name || "";
 
-    // Only handle messages from our marketing phone
-    if (value.metadata?.phone_number_id !== MARKETING_PHONE_ID) {
-      return NextResponse.json({ status: "ok" });
-    }
-
     if (text && from) {
       await handleMarketingMessage(from, text, contactName);
     }
