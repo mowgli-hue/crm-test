@@ -7388,7 +7388,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           {sortedDates.map(dateKey => {
                             const dayCases = groups[dateKey];
                             const isToday = dateKey === todayStr;
-                            const isExpanded = isToday || expandedAcctDates.has(dateKey);
+                            const isExpanded = isToday || expandedAcctDates.has(dateKey) || accountingSearch.trim().length > 0;
                             const _unused = accountingPage; // keep reftodayStr])).has(dateKey));
                             const dayTotal = dayCases.reduce((s, c) => s + Number(c.servicePackage?.retainerAmount || (c as any).totalCharges || 0), 0);
                             const dayPaid = dayCases.reduce((s, c) => s + Number((c as any).amountPaid || 0), 0);
