@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   if (!phone || !message) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   
   // Send via marketing WhatsApp
-  const MARKETING_PHONE_ID = "2362362349348";
+  const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "1047138985153613";
   const WA_TOKEN = process.env.WHATSAPP_TOKEN || "";
   
   const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {

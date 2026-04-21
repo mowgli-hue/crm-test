@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { NEWTON_FEES, NEWTON_DOCS } from "@/lib/marketing-knowledge";
 import { Pool } from "pg";
 
-const MARKETING_PHONE_ID = "2362362349348";
+const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "1047138985153613";
 const WA_TOKEN = process.env.WHATSAPP_TOKEN || "";
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "newton_verify_2024";
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
