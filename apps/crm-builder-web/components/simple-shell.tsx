@@ -376,7 +376,8 @@ const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} /> },
   { id: "inbox", label: "Inbox", icon: <MessageCircle size={16} /> },
   { id: "team", label: "Team", icon: <Users size={16} /> },
-  { id: "newton-ai", label: "Newton AI", icon: <span>🤖</span> }
+  { id: "newton-ai", label: "Newton AI", icon: <span>🤖</span> },
+  { id: "marketing-inbox", label: "Marketing Inbox", icon: <span>📣</span> }
 ];
 
 function filterCasesByRole(allCases: CaseItem[], role: Role, userName?: string) {
@@ -4162,7 +4163,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
           <div className="space-y-4">
-          {screen === "newton-ai" ? (
+          {screen === "marketing-inbox" ? (
+              <MarketingInbox sessionUser={sessionUser} />
+            ) : screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />
             </div>
