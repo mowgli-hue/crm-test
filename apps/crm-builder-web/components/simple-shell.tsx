@@ -7819,7 +7819,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               </div>
                             </div>
                             <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                              {STAFF_PHONES.some(p => phone.includes(p.slice(-9))) ? "📌 Staff Number" : matchedCase ? matchedCase.formType + " · " + (matchedCase.assignedTo || "Unassigned") : "⚠️ Unknown"}
+                              {STAFF_PHONES.some(p => phone.includes(p.slice(-9))) ? "📌 Newton Team" : matchedCase ? matchedCase.formType + " · " + (matchedCase.assignedTo || "Unassigned") : "⚠️ Unknown"}
                             </p>
                             <p className={`text-[11px] truncate ${isUrgent?"text-red-500 font-semibold":isPending?"text-amber-600":"text-slate-400"}`}>
                               {isUrgent?"⚠️ Needs reply · ":isPending?"⏳ Waiting · ":lastMsg?.direction==="outbound"?"You: ":""}{lastMsg?.message?.slice(0,35)}
