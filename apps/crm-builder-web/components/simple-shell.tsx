@@ -7796,15 +7796,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       };
                       const aw = getWaitMins(a.msgs);
                       const bw = getWaitMins(b.msgs);
-                      if (bw >= 120 && aw < 120) return 1;
-                      if (aw >= 120 && bw < 120) return -1;
-                      if (bw >= 30 && aw < 30) return 1;
-                      if (aw >= 30 && bw < 30) return -1;
-                      // Pin staff numbers to absolute top
+                      // Pin staff numbers to ABSOLUTE top - before everything
                       const aIsStaff = STAFF_PHONES.some(p => a.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
                       const bIsStaff = STAFF_PHONES.some(p => b.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
                       if (aIsStaff && !bIsStaff) return -1;
                       if (!aIsStaff && bIsStaff) return 1;
+                      if (bw >= 120 && aw < 120) return 1;
+                      if (aw >= 120 && bw < 120) return -1;
+                      if (bw >= 30 && aw < 30) return 1;
+                      if (aw >= 30 && bw < 30) return -1;
                       const au = a.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
                       const bu = b.msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
                       if (bu !== au) return bu - au;
