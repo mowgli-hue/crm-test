@@ -50,7 +50,7 @@ OTHER:
 - US Application (DS-160/B1/B2): $265
 - Restoration: Processing $415 + Embassy $230
 
-INTERAC IDs: newtonimmigration@gmail.com / navisandhu0297@gmail.com
+INTERAC ID: newtonimmigration@gmail.com
 
 OFFICES:
 Surrey: +1 604-897-5894 / +1 604-653-5031 / +1 (236) 877-2225
