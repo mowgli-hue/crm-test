@@ -7824,7 +7824,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const lastIn = [...msgs].filter(m=>m.direction==="inbound").sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
                       const lastOut = [...msgs].filter(m=>m.direction==="outbound").sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
                       const SIMPLE_REPLIES = /^(ok|okay|yes|no|k|👍|thanks|thank you|thx|confirmed|sure|noted|received|done|got it|ji|haa|nahi|theek|shukriya|ਹਾਂ|ਠੀਕ|ਜੀ|✅|👌|🙏|hmm|hm|yep|yup|nope)$/i;
-                      const lastInIsSimple = lastIn ? SIMPLE_REPLIES.test(lastIn.message.trim()) : false;
+                      const lastInIsSimple = lastIn ? (
+                        SIMPLE_REPLIES.test(lastIn.message.trim()) ||
+                        lastIn.message.includes("[image received]") ||
+                        lastIn.message.includes("[document received]") ||
+                        lastIn.message.includes("[audio received]") ||
+                        lastIn.message.includes("[video received]") ||
+                        lastIn.message.trim().length < 4
+                      ) : false;
                       const needsReply = lastIn && !lastInIsSimple && (!lastOut || new Date(lastIn.created_at) > new Date(lastOut.created_at));
                       const waitMins = needsReply ? Math.floor((Date.now() - new Date(lastIn.created_at).getTime()) / 60000) : null;
                       const isUrgent = waitMins !== null && waitMins >= 120;

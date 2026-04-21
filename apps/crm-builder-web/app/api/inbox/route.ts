@@ -63,9 +63,10 @@ export async function PATCH(request: NextRequest) {
 
     // Save name for unknown number
     if (action === "saveName" && phone && body.name) {
+      const cleanPhone = phone.replace(/\D/g, "");
       await pool.query(
-        `UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone = $2`,
-        [body.name, phone]
+        `UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone LIKE $2 OR phone = $3`,
+        [body.name, `%${cleanPhone.slice(-9)}`, cleanPhone]
       );
       return NextResponse.json({ ok: true });
     }
