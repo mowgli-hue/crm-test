@@ -654,6 +654,11 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
 
   async function syncToSheets() {
     if (!selectedCase) return;
+    const status = selectedCase.processingStatus || "docs_pending";
+    if (status === "docs_pending") {
+      setSheetSyncStatus("⚠️ Sheet sync only available when case is Under Review or later.");
+      return;
+    }
     setSheetSyncRunning(true);
     setSheetSyncStatus("Syncing to Google Sheets…");
     const res = await apiFetch(`/cases/${selectedCase.id}/sync-sheet`, { method: "POST" });
