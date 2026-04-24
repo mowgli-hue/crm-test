@@ -493,57 +493,8 @@ How can we help you today? Please share your name and query and our team will as
             console.log(`👥 Staff message from ${from} — skipping AI auto-reply`);
           }
 
-          // Smart AI auto-reply for client messages
-          if (!isStaffNumber) try {
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
-            const aiRes = await fetch(`${appUrl}/api/ai-reply`, {
-              method: "POST",
-              headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-        "anthropic-version": "2023-06-01"
-      },
-              body: JSON.stringify({
-                phone: from,
-                message: text,
-                caseId: matched.id,
-                action: "send",
-                systemToken: process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024"
-              })
-            });
-            if (aiRes.ok) {
-              console.log(`🤖 AI smart reply sent to ${matched.client}`);
-              // Notify staff that bot handled this — no action needed
-              try {
-                const { readStore, writeStore, addNotification } = await import("@/lib/store");
-                const store = await readStore();
-                const admins = (store.users || []).filter((u: any) => 
-                  u.companyId === COMPANY_ID && ["Admin", "ProcessingLead", "Processing"].includes(u.role)
-                );
-                for (const admin of admins.slice(0, 3)) {
-                  await addNotification({
-                    companyId: COMPANY_ID,
-                    userId: admin.id,
-                    type: "ai_alert",
-                    message: `🤖 Newton AI replied to ${matched.client}: "${text.slice(0, 60)}${text.length > 60 ? "..." : ""}" — No action needed`,
-                    caseId: matched.id
-                  });
-                }
-                // Mark inbound messages as read so "Needs reply" goes away
-                const { Pool } = await import("pg");
-                const pool3 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-                await pool3.query(
-                  `UPDATE whatsapp_inbox SET is_read = TRUE WHERE phone LIKE $1 AND direction = 'inbound'`,
-                  [`%${from.slice(-9)}`]
-                );
-                await pool3.end();
-              } catch(e) { console.error("Bot notification failed:", e); }
-            } else {
-              console.error(`🤖 AI reply failed: ${aiRes.status}`);
-            }
-          } catch (e) {
-            console.error("AI auto-reply failed (non-fatal):", e);
-          }
+          // AI auto-reply DISABLED — staff replies manually via inbox
+          // Do not send any automatic replies to avoid confusing clients
         }
       }
     }
