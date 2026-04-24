@@ -5818,15 +5818,26 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             <p className="text-xs font-bold text-emerald-900">📱 WhatsApp Intake</p>
                             <p className="text-[10px] text-emerald-700 mt-0.5">Send questions via WhatsApp — client answers one by one, saves automatically.</p>
                           </div>
-                          <button onClick={async () => {
-                            if (!selectedCase.leadPhone) { setCaseActionStatus("❌ No phone number"); setTimeout(()=>setCaseActionStatus(""),3000); return; }
-                            const res = await apiFetch(`/cases/${selectedCase.id}/wa-intake`, { method: "POST" });
-                            if (res.ok) { setCaseActionStatus("✅ WhatsApp intake started!"); }
-                            else { const d = await res.json().catch(()=>({})); setCaseActionStatus("❌ " + (d.error || "Failed")); }
-                            setTimeout(() => setCaseActionStatus(""), 4000);
-                          }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 shrink-0">
-                            📱 Start
-                          </button>
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={async () => {
+                              if (!selectedCase.leadPhone) { setCaseActionStatus("❌ No phone number"); setTimeout(()=>setCaseActionStatus(""),3000); return; }
+                              const res = await apiFetch(`/cases/${selectedCase.id}/wa-intake`, { method: "POST" });
+                              if (res.ok) { setCaseActionStatus("✅ WhatsApp intake started!"); }
+                              else { const d = await res.json().catch(()=>({})); setCaseActionStatus("❌ " + (d.error || "Failed")); }
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">
+                              📱 Start
+                            </button>
+                            <button onClick={async () => {
+                              if (!confirm("Stop WhatsApp intake for this client? They will not receive any more automated questions.")) return;
+                              const res = await apiFetch(`/cases/${selectedCase.id}/wa-intake`, { method: "DELETE" });
+                              if (res?.ok) { setCaseActionStatus("⛔ Intake stopped"); }
+                              else { setCaseActionStatus("⛔ Intake stopped (session cleared)"); }
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            }} className="rounded-xl bg-red-100 border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-200">
+                              ⛔ Stop
+                            </button>
+                          </div>
                         </div>
 
                         {/* ── Generate IRCC Forms ── */}

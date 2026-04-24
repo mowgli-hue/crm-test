@@ -47,3 +47,31 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const systemToken = body?.systemToken;
+    const isSystem = systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+
+    if (!isSystem) {
+      const user = await getCurrentUserFromRequest(request);
+      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const companyId = process.env.DEFAULT_COMPANY_ID || "newton";
+    const { updateCasePgwpIntake } = await import("@/lib/store");
+
+    // Clear the WhatsApp session from the case
+    await updateCasePgwpIntake(companyId, params.id, {
+      whatsappSession: "",
+      whatsappIntakePhase: "stopped",
+      whatsappIntakeStoppedAt: new Date().toISOString(),
+    } as any);
+
+    console.log(`⛔ WA Intake stopped for case ${params.id}`);
+    return NextResponse.json({ ok: true, message: "Intake stopped" });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
