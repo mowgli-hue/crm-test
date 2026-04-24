@@ -129,13 +129,14 @@ export async function startIntakeSession(params: {
   const { caseId, companyId, phone, clientName, formType } = params;
   const questions = getQuestionPromptsForFormType(formType);
   const rawBatches = getQuestionBatchesForFormType(formType);
-  session.batches = rawBatches.map(b => b.questions);
-  session.batchTitles = rawBatches.map(b => b.title);
   const firstName = clientName.split(" ")[0];
 
   const session: IntakeSession = {
     caseId, companyId, phone, clientName, formType,
     questions,
+    batches: rawBatches.map(b => b.questions),
+    batchTitles: rawBatches.map(b => b.title),
+    currentBatch: 0,
     currentIndex: 0,
     answers: {},
     phase: "awaiting_template_reply",
