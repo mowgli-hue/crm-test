@@ -1,7 +1,7 @@
 // lib/whatsapp-ai-intake.ts
 // AI-powered conversational intake — Claude chats with client naturally
 
-import { getQuestionFlowForFormType, getQuestionPromptsForFormType } from "@/lib/application-question-flows";
+import { getQuestionFlowForFormType, getQuestionPromptsForFormType, getQuestionBatchesForFormType } from "@/lib/application-question-flows";
 import { resolveApplicationChecklistKey } from "@/lib/application-checklists";
 import { sendWhatsAppText, sendWhatsAppTemplate, sendDocumentChecklist } from "@/lib/whatsapp";
 import { getCase, updateCaseProcessing, addMessage } from "@/lib/store";
@@ -32,6 +32,9 @@ export type IntakeSession = {
   currentIndex: number;
   answers: Record<string, string>;
   phase: "intake" | "awaiting_template_reply" | "ai_chat" | "awaiting_bulk" | "complete";
+  batches?: string[][];
+  batchTitles?: string[];
+  currentBatch?: number;
   conversationHistory: Array<{ role: "assistant" | "user"; content: string }>;
   collectedFields: Record<string, string>;
   chatTurns: number;
@@ -125,6 +128,9 @@ export async function startIntakeSession(params: {
 }): Promise<{ success: boolean; error?: string }> {
   const { caseId, companyId, phone, clientName, formType } = params;
   const questions = getQuestionPromptsForFormType(formType);
+  const rawBatches = getQuestionBatchesForFormType(formType);
+  session.batches = rawBatches.map(b => b.questions);
+  session.batchTitles = rawBatches.map(b => b.title);
   const firstName = clientName.split(" ")[0];
 
   const session: IntakeSession = {
@@ -276,15 +282,35 @@ export async function handleIncomingReply(params: {
 
   const text = message.trim();
 
-  // Phase: waiting for template reply → start questions directly
+  // Phase: waiting for template reply → send first batch
   if (session.phase === "awaiting_template_reply") {
     session.phase = "ai_chat";
     session.chatTurns = 0;
+    session.currentBatch = 0;
     await setSession(phone, session);
 
     const firstName = session.clientName.split(" ")[0];
-    const firstQuestion = session.questions[0];
-    const firstMsg = `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!\n\nTo prepare your *${session.formType}* application, I need to ask you ${session.questions.length} questions. Please reply to each one.\n\n*(1/${session.questions.length})* ${firstQuestion}`;
+    const batches = session.batches || [session.questions];
+    const batchTitles = session.batchTitles || [];
+    const totalBatches = batches.length;
+    const firstBatch = batches[0];
+    const firstTitle = batchTitles[0] || "Part 1";
+
+    const questionsText = firstBatch.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+    const firstMsg = [
+      `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
+      ``,
+      `To prepare your *${session.formType}* application, I have *${totalBatches} sections* of questions.`,
+      `Please answer each section before I send the next one.`,
+      ``,
+      `${firstTitle} *(Section 1 of ${totalBatches})*`,
+      `━━━━━━━━━━━━━━━`,
+      questionsText,
+      `━━━━━━━━━━━━━━━`,
+      ``,
+      `Please reply with all answers numbered (1. answer, 2. answer...) 🙏`,
+    ].join("\n");
+
     await sendAndSave(phone, firstMsg, session.caseId, session.clientName);
     return;
   }

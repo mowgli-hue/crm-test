@@ -7,28 +7,27 @@ type ChecklistKey = ReturnType<typeof resolveApplicationChecklistKey>;
 type QuestionFlow = {
   prompts: string[];
   requiredFields: string[];
+  batches?: Array<{ title: string; questions: number[] }>; // indices into prompts
 };
 
 const DEFAULT_REQUIRED_FIELDS = [
-  "fullName",
-  "phone",
-  "maritalStatus",
-  "address",
-  "travelHistorySixMonths",
-  "nativeLanguage",
-  "englishTestTaken",
-  "originalEntryDate",
-  "originalEntryPlacePurpose",
-  "employmentHistory",
-  "education",
-  "refusedAnyCountry",
-  "criminalHistory",
-  "medicalHistory"
+  "fullName", "phone", "maritalStatus", "address",
+  "travelHistorySixMonths", "nativeLanguage", "englishTestTaken",
+  "originalEntryDate", "originalEntryPlacePurpose",
+  "employmentHistory", "education", "refusedAnyCountry",
+  "criminalHistory", "medicalHistory"
 ];
 
 const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
   pgwp: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "🏠 Address & Contact", questions: [4, 5, 6] },
+      { title: "🛬 Entry to Canada", questions: [7, 8, 9] },
+      { title: "💼 Work & Education", questions: [13, 14] },
+      { title: "🌐 Language & Background", questions: [10, 11, 12, 15, 16, 17] },
+    ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
@@ -47,34 +46,106 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Education after 12th grade (if any). For each: From (YYYY-MM), To (YYYY-MM), Field of Study, Name of Institute, City. Reply NONE if none.",
       "What is your native language?",
       "Have you taken an English language proficiency test? (Yes/No — if Yes: test name, score, and date)",
-      "Do you plan to work in the medical field in Canada in the future? (Yes/No — if Yes: please provide your medical exam/test details)"
+      "Do you plan to work in the medical field in Canada in the future? (Yes/No)"
     ]
   },
-  trv_inside: {
+
+  work_permit: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "🏠 Address & Contact", questions: [4, 5, 6] },
+      { title: "🛬 Entry to Canada", questions: [7, 8, 9] },
+      { title: "💼 Work & Education", questions: [13, 14] },
+      { title: "🌐 Language & Background", questions: [10, 11, 12, 15, 16, 17] },
+    ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "If Married or Common-Law: provide partner's full name, DOB, citizenship. Reply NA if not applicable.",
-      "Current mailing address in Canada including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
+      "If Married or Common-Law: provide partner's full name and date of marriage (YYYY-MM-DD). Reply NA if not applicable.",
+      "Any previous marriage or common-law partnership? (Yes/No — if Yes: partner's name, date of birth, start and end date of relationship YYYY-MM-DD)",
+      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
+      "Residential address if different from mailing address. Reply SAME if same.",
       "Telephone number",
-      "What is your current immigration status in Canada and expiry date? (e.g. Visitor — expires YYYY-MM-DD)",
-      "What country do you currently live in and what is your immigration status there? (e.g. India — Citizen)",
-      "What is the purpose of your visit to Canada? (Tourism / Visiting family / Business / Other — provide details)",
-      "What date does your visit start? (YYYY-MM-DD) and when do you plan to leave Canada? (YYYY-MM-DD)",
-      "Address in Canada where you will stay (full address including postal code)",
-      "Will you be visiting anyone in Canada? (Yes/No — if Yes: full name, relationship, and their address)",
-      "How much money do you have available for your stay in Canada? (amount in CAD)",
-      "Who will pay your expenses in Canada? (Myself / Parents / Other — if Other: name and relationship)",
-      "Date and place you first entered Canada (YYYY-MM-DD, city/port of entry)",
-      "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: details)",
+      "Date and place you first entered Canada (YYYY-MM-DD, city/airport)",
+      "Purpose of your original visit to Canada (Study / Work / Visit)",
+      "Any recent entry to Canada? (Yes/No — if Yes: provide date YYYY-MM-DD and reason)",
+      "Have you ever been refused a visa or permit, denied entry, or ordered to leave Canada or any other country? (Yes/No — if Yes: provide details)",
       "Do you have any medical history? (Yes/No — if Yes: provide details)",
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "What is your native language? Can you communicate in English or French? (Yes/No)"
+      "Employment details — list all jobs most recent first. For each: From (YYYY-MM), To (YYYY-MM), Job Title, Employer Name, City. Reply NONE if no employment.",
+      "Education after 12th grade (if any). For each: From (YYYY-MM), To (YYYY-MM), Field of Study, Name of Institute, City. Reply NONE if none.",
+      "What is your native language?",
+      "Have you taken an English language proficiency test? (Yes/No — if Yes: test name, score, and date)",
+      "Do you plan to work in the medical field in Canada in the future? (Yes/No)"
     ]
   },
+
+  study_permit: {
+    requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "🏠 Address & Contact", questions: [4, 5, 6] },
+      { title: "🎓 Study Details", questions: [7, 8, 9, 10] },
+      { title: "💰 Funding & Sponsor", questions: [11, 12, 13] },
+      { title: "📋 Background", questions: [14, 15, 16, 17] },
+    ],
+    prompts: [
+      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
+      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
+      "If Married or Common-Law: provide partner's full name and date of marriage (YYYY-MM-DD). Reply NA if not applicable.",
+      "Any previous marriage or common-law partnership? (Yes/No — if Yes: partner's name, DOB, start and end date YYYY-MM-DD)",
+      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
+      "Residential address if different from mailing address. Reply SAME if same.",
+      "Telephone number",
+      "Date and place you first entered Canada (YYYY-MM-DD, city/airport). If applying from outside Canada reply OUTSIDE.",
+      "Name and address of the institution you plan to attend in Canada",
+      "Program of study and expected start date (YYYY-MM-DD) and end date (YYYY-MM-DD)",
+      "Highest education completed (school name, field, country, from/to dates YYYY-MM)",
+      "How are you funding your studies? (Savings / Sponsor / Scholarship / Loan — provide amount available in CAD)",
+      "Who is your financial sponsor? (Name, relationship, occupation, country of residence). Reply SELF if self-funded.",
+      "Have you ever studied in Canada before? (Yes/No — if Yes: institution, program, permit expiry date)",
+      "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: country, year, reason)",
+      "Do you have any medical history? (Yes/No — if Yes: provide details)",
+      "Do you have any criminal history? (Yes/No — if Yes: provide details)",
+      "What is your native language? Have you taken an English proficiency test? (Yes/No — if Yes: test name, score, date)"
+    ]
+  },
+
+  study_permit_extension: {
+    requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "🎓 Current Study Details", questions: [4, 5, 6, 7, 8] },
+      { title: "📋 Extension Reason & Background", questions: [9, 10, 11, 12, 13] },
+    ],
+    prompts: [
+      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
+      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
+      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
+      "Telephone number",
+      "Current study permit number and expiry date (YYYY-MM-DD)",
+      "Current institution name and city",
+      "Current program of study and expected completion date (YYYY-MM-DD)",
+      "Are you changing colleges/institutions? (Yes/No — if Yes: new institution name, program, start date YYYY-MM-DD and reason for change)",
+      "Are you changing your program of study? (Yes/No — if Yes: old program and new program details)",
+      "Reason for extension — are you still enrolled or did you need more time to complete? (provide details)",
+      "Have you maintained full-time enrollment throughout your studies? (Yes/No — if No: explain)",
+      "Have you ever been refused a visa or permit? (Yes/No — if Yes: details)",
+      "Do you have any medical history? (Yes/No — if Yes: provide details)",
+      "Do you have any criminal history? (Yes/No — if Yes: provide details)"
+    ]
+  },
+
   visitor_visa: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal & Passport", questions: [0, 1, 2, 3, 4, 5] },
+      { title: "💍 Marital & Residence", questions: [6, 7, 8, 9, 10] },
+      { title: "✈️ Visit Details", questions: [11, 12, 13, 14] },
+      { title: "💼 Education & Employment", questions: [15, 16] },
+      { title: "🌍 Travel & Background", questions: [17, 18, 19, 20, 21] },
+    ],
     prompts: [
       "Full name as on passport (Family name, Given name)",
       "Date of birth (YYYY-MM-DD)",
@@ -100,8 +171,15 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Native language and can you communicate in English or French? (English / French / Both / Neither)"
     ]
   },
+
   visitor_record: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3, 4] },
+      { title: "📋 Status & Application", questions: [5, 6, 7, 8] },
+      { title: "💰 Funds & Contacts", questions: [9, 10, 11, 12] },
+      { title: "📋 Background", questions: [13, 14, 15, 16] },
+    ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
@@ -122,73 +200,45 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "What is your native language? Can you communicate in English or French? (Yes/No)"
     ]
   },
-  work_permit: {
+
+  trv_inside: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3, 4] },
+      { title: "📋 Status & Visit", questions: [5, 6, 7, 8, 9, 10] },
+      { title: "💰 Funds & Entry", questions: [11, 12, 13] },
+      { title: "📋 Background", questions: [14, 15, 16, 17] },
+    ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "If Married or Common-Law: provide partner's full name and date of marriage (YYYY-MM-DD). Reply NA if not applicable.",
-      "Any previous marriage or common-law partnership? (Yes/No — if Yes: partner's name, date of birth, start and end date of relationship YYYY-MM-DD)",
-      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
-      "Residential address if different from mailing address. Reply SAME if same.",
+      "If Married or Common-Law: provide partner's full name, DOB, citizenship. Reply NA if not applicable.",
+      "Current mailing address in Canada including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
       "Telephone number",
-      "Date and place you first entered Canada (YYYY-MM-DD, city/airport)",
-      "Purpose of your original visit to Canada (Study / Work / Visit)",
-      "Any recent entry to Canada? (Yes/No — if Yes: provide date YYYY-MM-DD and reason)",
-      "Have you ever been refused a visa or permit, denied entry, or ordered to leave Canada or any other country? (Yes/No — if Yes: provide details)",
+      "What is your current immigration status in Canada and expiry date? (e.g. Study Permit — expires YYYY-MM-DD)",
+      "What country do you currently have status in and what is your immigration status there? (e.g. India — Citizen)",
+      "What is the purpose of your travel outside Canada? (Tourism / Visit family / Business / Other — provide details)",
+      "What are your planned travel dates — leaving Canada (YYYY-MM-DD) and returning to Canada (YYYY-MM-DD)?",
+      "Which countries do you plan to visit?",
+      "Address in Canada where you will return to (full address including postal code)",
+      "How much money do you have available for your trip? (amount in CAD)",
+      "Who will pay your expenses? (Myself / Parents / Other — if Other: name and relationship)",
+      "Date and place you first entered Canada (YYYY-MM-DD, city/port of entry)",
+      "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: details)",
       "Do you have any medical history? (Yes/No — if Yes: provide details)",
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "Employment details — list all jobs most recent first. For each: From (YYYY-MM), To (YYYY-MM), Job Title, Employer Name, City. Reply NONE if no employment.",
-      "Education after 12th grade (if any). For each: From (YYYY-MM), To (YYYY-MM), Field of Study, Name of Institute, City. Reply NONE if none.",
-      "What is your native language?",
-      "Have you taken an English language proficiency test? (Yes/No — if Yes: test name, score, and date)",
-      "Do you plan to work in the medical field in Canada in the future? (Yes/No — if Yes: please provide your medical exam/test details)"
+      "What is your native language? Can you communicate in English or French? (Yes/No)"
     ]
   },
-  study_permit: {
-    requiredFields: DEFAULT_REQUIRED_FIELDS,
-    prompts: [
-      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
-      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "If Married or Common-Law: provide partner's full name and date of marriage (YYYY-MM-DD). Reply NA if not applicable.",
-      "Any previous marriage or common-law partnership? (Yes/No — if Yes: partner's name, DOB, start and end date YYYY-MM-DD)",
-      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
-      "Residential address if different from mailing address. Reply SAME if same.",
-      "Telephone number",
-      "Date and place you first entered Canada (YYYY-MM-DD, city/airport). If applying from outside Canada reply OUTSIDE.",
-      "Name and address of the institution you plan to attend in Canada",
-      "Program of study and expected start date (YYYY-MM-DD) and end date (YYYY-MM-DD)",
-      "Highest education completed (school name, field, country, from/to dates YYYY-MM)",
-      "How are you funding your studies? (Savings / Sponsor / Scholarship / Loan — provide amount available in CAD)",
-      "Who is your financial sponsor? (Name, relationship, occupation, country of residence). Reply SELF if self-funded.",
-      "Have you ever studied in Canada before? (Yes/No — if Yes: institution, program, permit expiry date)",
-      "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: country, year, reason)",
-      "Do you have any medical history? (Yes/No — if Yes: provide details)",
-      "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "What is your native language? Have you taken an English proficiency test? (Yes/No — if Yes: test name, score, date)"
-    ]
-  },
-  study_permit_extension: {
-    requiredFields: DEFAULT_REQUIRED_FIELDS,
-    prompts: [
-      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
-      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
-      "Telephone number",
-      "Current study permit number and expiry date (YYYY-MM-DD)",
-      "Current institution name and city",
-      "Current program of study and expected completion date (YYYY-MM-DD)",
-      "Are you changing colleges/institutions? (Yes/No — if Yes: new institution name, program, start date YYYY-MM-DD and reason for change)",
-      "Are you changing your program of study? (Yes/No — if Yes: old program and new program details)",
-      "Reason for extension — are you still enrolled or did you need more time to complete? (provide details)",
-      "Have you maintained full-time enrollment throughout your studies? (Yes/No — if No: explain)",
-      "Have you ever been refused a visa or permit? (Yes/No — if Yes: details)",
-      "Do you have any medical history? (Yes/No — if Yes: provide details)",
-      "Do you have any criminal history? (Yes/No — if Yes: provide details)"
-    ]
-  },
+
   super_visa: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3, 4] },
+      { title: "🇨🇦 Sponsor Details", questions: [5, 6, 7, 8] },
+      { title: "✈️ Visit & Family", questions: [9, 10, 11] },
+      { title: "📋 Background", questions: [12, 13, 14] },
+    ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
@@ -207,11 +257,15 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Do you have any criminal history? (Yes/No — if Yes: provide details)"
     ]
   },
+
   express_entry: {
-    requiredFields: [
-      "fullName", "phone", "maritalStatus", "address", "nativeLanguage",
-      "englishTestTaken", "employmentHistory", "education",
-      "refusedAnyCountry", "criminalHistory", "medicalHistory"
+    requiredFields: ["fullName", "phone", "maritalStatus", "address", "nativeLanguage", "englishTestTaken", "employmentHistory", "education", "refusedAnyCountry", "criminalHistory", "medicalHistory"],
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "💼 Work Experience", questions: [4, 5] },
+      { title: "🎓 Education & Language", questions: [6, 7, 8] },
+      { title: "🇨🇦 Job Offer & Funds", questions: [9, 10, 11] },
+      { title: "📋 Background", questions: [12, 13] },
     ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full name)",
@@ -230,129 +284,104 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Any medical or criminal history? (Yes/No for each — if Yes: details)"
     ]
   },
+
   express_entry_pr: {
-    requiredFields: [
-      "fullName", "phone", "maritalStatus", "address", "nativeLanguage",
-      "englishTestTaken", "employmentHistory", "education"
+    requiredFields: ["fullName", "phone", "maritalStatus", "address", "nativeLanguage", "englishTestTaken", "employmentHistory", "education"],
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
+      { title: "🏠 Address & Sibling", questions: [4, 5, 6] },
+      { title: "🎓 Education & Work History", questions: [7, 8] },
+      { title: "💼 Skilled Work Details", questions: [9] },
+      { title: "🌐 Language & Funds", questions: [10, 11] },
+      { title: "✈️ Travel History", questions: [12] },
+      { title: "📋 Background", questions: [13] },
     ],
     prompts: [
-      "🎉 Congratulations on receiving your ITA! Let's get started on your PR application!\n\nHave you used any other name? (Yes/No — if Yes, list them and reason for change)",
-      "What is your height in cm and eye colour?",
-      "What is your native language?",
-      "What is your current phone number and personal email address?",
+      "🎉 Congratulations on your ITA!\n\nHave you used any other name? (Yes/No — if Yes, list them and reason for change)\nAlso: what is your height in cm and eye colour?",
+      "What is your native language? And your current phone number and personal email address?",
+      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)\nIf Married or Common-Law: spouse full name, DOB, citizenship, education level, occupation.",
       "What is your complete residential AND mailing address? (Unit/Apt, Street No., Street Name, City, Province, Postal Code)",
-
-      "👨‍👩‍👧 Spouse/Partner details (if applicable):\n- Full name\n- Date of birth (YYYY-MM-DD)\n- Country of citizenship\n- Education level\n- Occupation\n\nReply NA if not applicable.",
-
+      "🏠 Complete address history for the past 10 years — NO GAPS!\n\nFor each address:\n- From (MM-YYYY) to (MM-YYYY)\n- Full address (Unit, Street, City, Province/State, Country, Postal Code)",
       "Do you have a sibling who is a Canadian PR or Citizen? (Yes/No)\nIf Yes: full name, relationship, date of birth, city and country of birth, Canadian address.\n\n🇨🇦 This adds CRS points!",
-
-      "🏠 Complete address history for the past 10 years — NO GAPS!\n\nFor each address:\n- From (MM-YYYY) to (MM-YYYY)\n- Unit/Apt & Street No., Street Name\n- City, Province/State, Country\n- Postal Code",
-
-      "🎓 Complete education history from 10+2 onwards:\n\nFor each:\n- Field of study\n- From (MM-YYYY) to (MM-YYYY)\n- Country\n- Institution name\n- Level (10+2 / Diploma / Bachelor's / Master's / PhD)\n\nDo you have an ECA report? (Yes/No — if Yes: organization e.g. WES)",
-
-      "💼 Complete personal history for the past 10 years — NO GAPS!\n\nFor each period:\n- From (MM-YYYY) to (MM-YYYY)\n- Activity (Employed / Student / Unemployed / Travelling)\n- Employer/School name\n- City, Country",
-
-      "For each SKILLED work position please provide:\n- Job title + NOC code\n- Employer name, address, phone\n- From (YYYY-MM) to (YYYY-MM)\n- Hours per week\n- Key duties (3-4 sentences describing responsibilities)",
-
-      "Language test results:\n- Test name (IELTS / CELPIP / TEF)\n- Reading, Writing, Listening, Speaking scores\n- Test date (YYYY-MM-DD)\n- TRF/Reference number",
-
-      "Spouse language test results (same format). Reply NA if not applicable.",
-
-      "Settlement funds available in CAD. Current minimum for single applicant: $14,690 CAD",
-
-      "✈️ Travel history for the past 10 years:\n\nFor each trip outside your home country:\n- Country visited\n- From (YYYY-MM-DD) to (YYYY-MM-DD)\n- Purpose (Tourism / Business / Study / Work / Other)\n\nIf no travel, say: 'I did not travel outside my country.'",
-
-      "📝 Background questions — answer Yes or No for each. If ALL are No, just say 'No to all' 😊\n\n1. Have you or any family member had tuberculosis or serious illness?\n2. Have you or family ever been convicted of a crime?\n3. Have you ever been refused a visa or entry to any country?\n4. Have you ever been ordered to leave any country?\n5. Have you ever claimed refugee status?\n6. Have you ever served in military or armed group?\n7. Have you ever held government or law enforcement position?"
+      "🎓 Complete education history from 10+2 onwards:\n\nFor each:\n- Field of study\n- From (MM-YYYY) to (MM-YYYY)\n- Country, Institution name, Level (10+2 / Diploma / Bachelor's / Master's / PhD)\n\nDo you have an ECA report? (Yes/No — if Yes: organization e.g. WES)",
+      "💼 Complete personal history for past 10 years — NO GAPS!\n\nFor each period:\n- From (MM-YYYY) to (MM-YYYY)\n- Activity (Employed / Student / Unemployed / Travelling)\n- Employer/School name, City, Country",
+      "For each SKILLED work position please provide:\n- Job title + NOC code\n- Employer name, address, phone\n- From (YYYY-MM) to (YYYY-MM)\n- Hours per week\n- Key duties (3-4 sentences)",
+      "Language test results:\n- Test name (IELTS / CELPIP / TEF)\n- Reading, Writing, Listening, Speaking scores\n- Test date (YYYY-MM-DD), TRF/Reference number\n\nSpouse language test results (same format). Reply NA if not applicable.",
+      "Settlement funds available in CAD.\nCurrent minimum for single applicant: $14,690 CAD",
+      "✈️ Travel history for the past 10 years:\n\nFor each trip outside your home country:\n- Country visited\n- From (YYYY-MM-DD) to (YYYY-MM-DD)\n- Purpose (Tourism / Business / Study / Work)\n\nIf no travel, say: 'I did not travel outside my country.'",
+      "📝 Background — answer Yes or No for each. If ALL are No, just say 'No to all' 😊\n\n1. Tuberculosis or serious illness (you or family)?\n2. Ever convicted of a crime?\n3. Ever refused a visa or entry to any country?\n4. Ever ordered to leave any country?\n5. Ever claimed refugee status?\n6. Ever served in military or armed group?\n7. Ever held government or law enforcement position?"
     ]
   },
 
   family_sponsorship: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
+    batches: [
+      { title: "👤 Personal Info", questions: [0, 1, 2, 3, 4, 5] },
+      { title: "💍 Relationship Story", questions: [6, 7, 8, 9, 10, 11, 12, 13, 14] },
+      { title: "👨‍👩‍👧 Parents & Siblings", questions: [15, 16, 17, 18] },
+      { title: "🎓 Education & Work", questions: [19, 20, 21, 22] },
+      { title: "🏠 Address & Travel", questions: [23, 24, 25] },
+      { title: "📋 Background", questions: [26] },
+      { title: "🇨🇦 Sponsor Details", questions: [27, 28, 29, 30, 31, 32, 33, 34, 35] },
+      { title: "🌐 Language", questions: [36] },
+    ],
     prompts: [
-      // SECTION 1 — PERSONAL DETAILS
       "👤 Let's start with some personal details!\n\nWhat is your eye color and height (in cm)?",
       "What is your native language?",
       "What is your current Canadian phone number and personal email address?",
       "What is your current home address in Canada? (Full address including postal code)",
       "When did you last enter Canada? Please share the date and city of entry.",
       "Have you ever used any other names? (e.g. maiden name, nickname) — If Yes, list them and the reason for change. If No, just say No!",
-
-      // SECTION 2 — MARRIAGE & RELATIONSHIP
       "💍 Now let's talk about your beautiful relationship!\n\nWas your marriage arranged? (Yes/No) — If Yes, please describe by whom, when and where.",
       "Were there any formal ceremonies or events? (engagement, reception, honeymoon, etc.)\nIf Yes, for each event please share: date, location, number of guests, and who performed the ceremony.",
       "Did the following people attend your ceremonies? Please answer Yes or No for each:\n1. Your parents\n2. Your other family/relatives\n3. Sponsor's parents\n4. Sponsor's other family/relatives\n\nIf anyone did not attend, please explain why.",
       "How did you meet your spouse? Share your story! 😊",
-      "What language(s) do you use when communicating with each other? And how often do you communicate when not together? (phone, WhatsApp, video calls, etc.)",
+      "What language(s) do you use when communicating with each other? And how often do you communicate when not together?",
       "Do your close friends and family know about your relationship? (Yes/No)\nIf Yes, please list 2-4 people: their name, relationship to you or sponsor, and date they met you/sponsor.",
       "Are either of you currently pregnant? (Yes/No — if Yes, please share the due date)",
       "Have you ever been married or in a common-law relationship before? (Yes/No)\nIf Yes: previous spouse's full name, date of birth, dates of relationship, and how it ended.",
       "Before this relationship, was your sponsor related to you in any way? (Yes/No — if Yes, please explain)",
-
-      // SECTION 3 — PARENTS
-      "👨‍👩‍👧 Now some details about your parents!\n\nMother's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your mother alive? (If not, please share date and place of passing 🙏)",
-      "Father's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your father alive? (If not, please share date and place of passing 🙏)",
-
-      // SECTION 4 — SIBLINGS
-      "👫 How many brothers and sisters do you have?\n\nFor EACH sibling please share: full name, brother or sister, date of birth (DD/MM/YYYY), city and country of birth, current address (city and country is enough), marital status, and occupation.",
-
-      // SECTION 5 — CHILDREN
-      "👶 Do you have any children? (Yes/No)\nIf Yes, for EACH child please share: full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and occupation (or N/A if child).",
-
-      // SECTION 6 — EDUCATION
-      "🎓 Let's talk about your education!\n\nWhat is the highest level of education you completed? (e.g. 10th, 12th, Diploma, Bachelor's, Master's)\n\nTotal years completed in:\n- Primary school (Grade 1-8)\n- Secondary/high school (Grade 9-12)\n- College/university\n- Trade/vocational school (e.g. GNM, ITI, nursing)",
+      "👨‍👩‍👧 Now some details about your parents!\n\nMother's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your mother alive?",
+      "Father's full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and current occupation. Is your father alive?",
+      "👫 How many brothers and sisters do you have?\n\nFor EACH sibling please share: full name, brother or sister, date of birth (DD/MM/YYYY), city and country of birth, current address, marital status, and occupation.",
+      "👶 Do you have any children? (Yes/No)\nIf Yes, for EACH child please share: full name, date of birth (DD/MM/YYYY), city and country of birth, current address, and occupation.",
+      "🎓 What is the highest level of education you completed?\n\nTotal years completed in:\n- Primary school (Grade 1-8)\n- Secondary/high school (Grade 9-12)\n- College/university\n- Trade/vocational school",
       "Please list ALL schools/colleges you attended after Grade 10:\nFor each: full name of school/college, city and country, start and end date (MM/YYYY), name of certificate/diploma, and field of study.",
-
-      // SECTION 7 — WORK HISTORY
-      "💼 Now your work and personal history — this is important!\n\nPlease list EVERY period from your 18th birthday (or last 10 years) to today. Include employment, education, unemployment, and travel periods.\n\nFor each period:\n- From (MM/YYYY) to (MM/YYYY)\n- Activity type (Student / Employed / Unemployed / Housewife / Travelling)\n- Employer/school name\n- City, province/state, country\n\n⚠️ No gaps — every month must be covered!",
+      "💼 Complete work and personal history — NO GAPS from age 18!\n\nFor each period:\n- From (MM/YYYY) to (MM/YYYY)\n- Activity type (Student / Employed / Unemployed / Housewife / Travelling)\n- Employer/school name, City, Province/State, Country",
       "What is your current occupation? And what is your intended occupation in Canada?",
-
-      // SECTION 8 — ADDRESS HISTORY
-      "🏠 Please list ALL addresses where you have lived in the last 10 years.\n\nFor each address:\n- Full street address\n- City/Town, Province/State, Country\n- Postal code\n- Date moved in (MM/YYYY)\n- Date moved out (MM/YYYY) or 'still living here'\n\n⚠️ No gaps — every month must be covered!",
-
-      // SECTION 9 — TRAVEL HISTORY
-      "✈️ Please list ALL trips outside your home country in the last 10 years.\n\nFor each trip:\n- Country and city visited\n- Date left (YYYY-MM-DD)\n- Date returned (YYYY-MM-DD)\n- Number of days\n- Purpose (Tourism / Business / Study / Work / Family Visit / Transit / Religious / Marriage / Other)\n\nIf you did NOT travel outside your country at all, just say: 'I did not travel.'",
-      "Now the same travel details for your SPOUSE — all trips outside their country of residence in the last 10 years. (Same format as above)",
-
-      // SECTION 10 — BACKGROUND
-      "📝 Almost done! Just a few background questions. Please answer Yes or No for each — if ALL answers are No, just say 'No to all' and that's it! 😊\n\nHealth:\n1. Have you or any family member had tuberculosis or been in contact with someone with TB?\n2. Have you or any family member had a serious physical or mental illness?\n\nLegal/Immigration:\n3. Have you or any family member ever been convicted of or charged with a crime?\n4. Have you or any family member ever been refused a visa or entry to any country?\n5. Have you or any family member ever been ordered to leave any country?\n6. Have you ever been arrested, charged, or detained?\n7. Have you ever claimed refugee status anywhere?\n\nSecurity:\n8. Have you or any family member committed or been involved in war crimes or terrorism?\n9. Have you ever served in a military or armed group?\n10. Have you ever been a member of a political party, rebel group, or union?\n11. Have you ever worked in prisons, police, or intelligence agencies?\n12. Have you ever held a government, judiciary, or state-owned enterprise position?",
-
-      // SECTION 11 — SPONSOR DETAILS
+      "🏠 Please list ALL addresses where you have lived in the last 10 years — NO GAPS!\n\nFor each:\n- Full street address\n- City/Town, Province/State, Country\n- Postal code\n- Date moved in (MM/YYYY) and moved out (MM/YYYY)",
+      "✈️ Please list ALL trips outside your home country in the last 10 years.\n\nFor each trip:\n- Country and city visited\n- Date left (YYYY-MM-DD) and returned (YYYY-MM-DD)\n- Purpose (Tourism / Business / Study / Work / Family Visit / Other)\n\nIf no travel, say: 'I did not travel.'",
+      "Now the same travel details for your SPOUSE — all trips outside their country of residence in the last 10 years.",
+      "📝 Almost done! Background questions — answer Yes or No for each. If ALL No, just say 'No to all' 😊\n\nHealth:\n1. Tuberculosis or serious illness (you or family)?\n2. Serious physical or mental illness?\n\nLegal/Immigration:\n3. Ever convicted of or charged with a crime?\n4. Ever refused a visa or entry to any country?\n5. Ever ordered to leave any country?\n6. Ever arrested, charged, or detained?\n7. Ever claimed refugee status?\n\nSecurity:\n8. Ever involved in war crimes or terrorism?\n9. Ever served in military or armed group?\n10. Ever been a member of political party or union?\n11. Ever worked in prisons, police, or intelligence?\n12. Ever held government or state-owned enterprise position?",
       "🇨🇦 Now some details about your sponsor (your spouse in Canada)!\n\nSponsor's Canadian phone number, personal email, and current home address in Canada (full address with postal code)",
-      "Is the sponsor currently employed? (Yes/No)\nIf Yes: employer name, full employer address, employer phone, job title, NOC code (if known), start date, and monthly gross income.\nIf No: source of income / how they support themselves.",
+      "Is the sponsor currently employed? (Yes/No)\nIf Yes: employer name, full employer address, employer phone, job title, NOC code, start date, and monthly gross income.\nIf No: source of income.",
       "Sponsor's employment history for the last 5 years (no gaps):\nFor each: employer name, address, phone, occupation/position, dates (MM/YYYY – MM/YYYY), monthly gross income.",
       "Sponsor's highest level of education completed and total years of education.",
       "Sponsor's address history for the last 5 years (no gaps) — full addresses with dates moved in and out.",
       "Has the sponsor ever been married or in a common-law relationship before? (Yes/No — if Yes, full details)",
       "Has the sponsor ever sponsored anyone for immigration before? (Yes/No)\nIf Yes: their full name, date of birth, and relationship to sponsor.",
-      "Has the sponsor ever: received social assistance/welfare? Been convicted of a crime? Been bankrupt? (Please answer Yes or No for each — if all No, just say 'No to all')",
-      "Does the sponsor have any relatives (aunts, uncles, cousins, etc.) currently living in Canada? (Yes/No)\nIf Yes, for each: full name, date of birth, place of birth, marital status, relationship to sponsor, and current address.",
-
-      // SECTION 12 — LANGUAGE
-      "🌐 Last question! Did you take an English language test? (Yes/No)\nIf Yes: which test? (IELTS / CELPIP / PTE)\n\nDon't worry — we will extract the test date, scores, and TRF number from your score card document. 😊"
+      "Has the sponsor ever: received social assistance/welfare? Been convicted of a crime? Been bankrupt? (Yes or No for each)",
+      "Does the sponsor have any relatives currently living in Canada? (Yes/No)\nIf Yes, for each: full name, date of birth, place of birth, marital status, relationship to sponsor, and current address.",
+      "🌐 Last question! Did you take an English language test? (Yes/No)\nIf Yes: which test? (IELTS / CELPIP / PTE)\n\nDon't worry — we will extract scores from your score card document. 😊"
     ]
   },
+
   citizenship_prcard: {
-    requiredFields: [
-      "fullName",
-      "phone",
-      "address",
-      "nativeLanguage"
+    requiredFields: ["fullName", "phone", "address", "nativeLanguage"],
+    batches: [
+      { title: "📋 Details", questions: [0, 1] },
     ],
     prompts: [
       "Address history and travel history summary",
       "Current status and prior travel documents/passports"
     ]
   },
+
   us_b1b2: {
-    requiredFields: [
-      "fullName",
-      "phone",
-      "address",
-      "maritalStatus",
-      "employmentHistory",
-      "education",
-      "criminalHistory",
-      "medicalHistory"
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "employmentHistory", "education", "criminalHistory", "medicalHistory"],
+    batches: [
+      { title: "✈️ Trip Details", questions: [0, 1] },
+      { title: "👨‍👩‍👧 Family & Social", questions: [2, 3] },
     ],
     prompts: [
       "US trip purpose, intended dates, and address in US",
@@ -361,15 +390,12 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Social media handles used in last 5 years"
     ]
   },
+
   uk_visitor: {
-    requiredFields: [
-      "fullName",
-      "phone",
-      "address",
-      "maritalStatus",
-      "employmentHistory",
-      "criminalHistory",
-      "medicalHistory"
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "employmentHistory", "criminalHistory", "medicalHistory"],
+    batches: [
+      { title: "✈️ Visit Details", questions: [0, 1] },
+      { title: "📋 Background", questions: [2, 3] },
     ],
     prompts: [
       "UK visit purpose and expected arrival date",
@@ -378,18 +404,12 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Family in UK (if any) with details"
     ]
   },
+
   refugee: {
-    requiredFields: [
-      "fullName",
-      "phone",
-      "address",
-      "maritalStatus",
-      "nativeLanguage",
-      "employmentHistory",
-      "education",
-      "refusedAnyCountry",
-      "criminalHistory",
-      "medicalHistory"
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "nativeLanguage", "employmentHistory", "education", "refusedAnyCountry", "criminalHistory", "medicalHistory"],
+    batches: [
+      { title: "📋 Claim Details", questions: [0, 1] },
+      { title: "🏠 History", questions: [2, 3, 4] },
     ],
     prompts: [
       "Detailed explanation of why you left your country",
@@ -399,8 +419,13 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Parents/siblings/children details"
     ]
   },
+
   canadian_passport_doc: {
     requiredFields: ["fullName", "phone", "address"],
+    batches: [
+      { title: "👤 Personal", questions: [0, 1, 2] },
+      { title: "📋 References", questions: [3, 4, 5] },
+    ],
     prompts: [
       "Any previous names used",
       "Eye color and height (cm)",
@@ -410,15 +435,11 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "References and emergency contact details"
     ]
   },
+
   generic: {
-    requiredFields: [
-      "fullName",
-      "phone",
-      "address",
-      "maritalStatus",
-      "refusedAnyCountry",
-      "criminalHistory",
-      "medicalHistory"
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "refusedAnyCountry", "criminalHistory", "medicalHistory"],
+    batches: [
+      { title: "📋 Details", questions: [0, 1, 2] },
     ],
     prompts: [
       "Provide key details relevant to your application",
@@ -464,6 +485,25 @@ export function getQuestionPromptsForFormType(formType: string): string[] {
   return getQuestionFlowForFormType(formType).prompts;
 }
 
+export function getQuestionBatchesForFormType(formType: string): Array<{ title: string; questions: string[] }> {
+  const flow = getQuestionFlowForFormType(formType);
+  if (!flow.batches) {
+    // Default: split into groups of 4
+    const batches = [];
+    for (let i = 0; i < flow.prompts.length; i += 4) {
+      batches.push({
+        title: `Part ${Math.floor(i/4) + 1}`,
+        questions: flow.prompts.slice(i, i + 4)
+      });
+    }
+    return batches;
+  }
+  return flow.batches.map(b => ({
+    title: b.title,
+    questions: b.questions.map(idx => flow.prompts[idx])
+  }));
+}
+
 export function isQuestionnaireComplete(formType: string, intake: IntakeRecord): boolean {
   const flow = getQuestionFlowForFormType(formType);
   const requiredBaseOk = flow.requiredFields.every((field) => hasValue(intake, field));
@@ -485,13 +525,7 @@ export function isQuestionnaireComplete(formType: string, intake: IntakeRecord):
 
   if (isYes(asText(intake.travelHistorySixMonths)) && !hasValue(intake, "travelHistoryDetails")) return false;
 
-  const education = asText(intake.education).toLowerCase();
-  if (["bachelor", "master", "other"].includes(education) && !hasValue(intake, "educationDetails")) {
-    return false;
-  }
-
   const specific = parseSpecificAnswers(intake.applicationSpecificAnswers, flow.prompts);
   const promptsOk = flow.prompts.every((prompt) => asText(specific[prompt]).length > 0);
   return promptsOk;
 }
-
