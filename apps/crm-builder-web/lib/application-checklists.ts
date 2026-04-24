@@ -153,11 +153,33 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "relationship_proof", label: "Proof of Relationship with PR Sibling — Birth Certificates", required: false, keywords: ["birth certificate", "relationship", "sibling proof"] },
   ],
   family_sponsorship: [
-    { key: "passport", label: "Passport(s)", required: true, keywords: ["passport"] },
-    { key: "status_docs", label: "Sponsor Status Proof (PR card/citizenship)", required: true, keywords: ["pr card", "citizenship", "canadian passport"] },
-    { key: "relationship", label: "Relationship Proof (marriage/birth/etc.)", required: true, keywords: ["marriage certificate", "birth certificate", "relationship proof"] },
-    { key: "financials", label: "Sponsor Financial Docs (NOA/T4/paystubs)", required: true, keywords: ["noa", "t4", "paystub", "job letter"] },
-    { key: "photos_chat", label: "Photos/Communication Evidence", required: false, keywords: ["photo", "chat", "call log"] }
+    // APPLICANT DOCUMENTS
+    { key: "passport", label: "Passport (Applicant)", required: true, keywords: ["passport"] },
+    { key: "birth_cert", label: "Birth Certificate (Applicant)", required: true, keywords: ["birth certificate"] },
+    { key: "police_clearance", label: "Police Clearance Certificate (all countries where stayed 6+ months after age 18)", required: true, keywords: ["police clearance", "pcc", "criminal record"] },
+    { key: "employment_docs", label: "Employment Letter + 3 Paystubs (current/old)", required: true, keywords: ["employment letter", "job letter", "paystub"] },
+    { key: "status_docs", label: "All Permits / Status Documents (study permit, work permit, etc.)", required: true, keywords: ["permit", "status", "visa"] },
+    { key: "love_letter", label: "Letter of Explanation (Love Story)", required: true, keywords: ["love story", "letter of explanation", "relationship letter"] },
+    { key: "govt_id", label: "Government Issued Identity Cards (Applicant)", required: true, keywords: ["id card", "identity card", "aadhar", "driver licence"] },
+    { key: "digital_photo", label: "Digital Photo (as per IRCC guidelines)", required: true, keywords: ["digital photo", "photo"] },
+    { key: "noa", label: "Notice of Assessment (Applicant)", required: true, keywords: ["noa", "notice of assessment", "t1"] },
+    { key: "education_docs", label: "Educational Documents (degrees, transcripts)", required: true, keywords: ["degree", "transcript", "diploma", "education"] },
+    // SPONSOR DOCUMENTS
+    { key: "sponsor_passport", label: "Sponsor — Passport", required: true, keywords: ["sponsor passport"] },
+    { key: "sponsor_pr_card", label: "Sponsor — PR Card", required: true, keywords: ["pr card", "permanent resident card"] },
+    { key: "sponsor_noa", label: "Sponsor — Recent Notice of Assessment", required: true, keywords: ["sponsor noa", "notice of assessment"] },
+    { key: "sponsor_employment", label: "Sponsor — Employment Letter + 3 Recent Paystubs (stating salary and regular hours)", required: true, keywords: ["sponsor employment", "sponsor job letter", "sponsor paystub"] },
+    { key: "marriage_cert", label: "Marriage Certificate", required: true, keywords: ["marriage certificate"] },
+    // COHABITATION / RELATIONSHIP PROOF (any 2)
+    { key: "joint_ownership", label: "Proof of Joint Ownership / Rental Agreement / Joint Utility/Bank Account", required: true, keywords: ["joint ownership", "rental agreement", "joint bank", "utility"] },
+    { key: "vehicle_insurance", label: "Vehicle Insurance (showing both names) OR Government ID showing same address", required: false, keywords: ["vehicle insurance", "car insurance"] },
+    // PHOTOS
+    { key: "photos", label: "20 Photographs (wedding, engagement, celebrations, outings)", required: true, keywords: ["photo", "photograph", "wedding photo"] },
+    // RELATIONSHIP EVIDENCE (any 2)
+    { key: "financial_evidence", label: "Financial Support Evidence (joint bank statement, utility bills, e-transfer screenshots)", required: true, keywords: ["joint bank statement", "e-transfer", "utility bill"] },
+    { key: "relationship_proof", label: "Other Relationship Proof (signed letters from friends/family, social media, proof of cohabitation)", required: false, keywords: ["relationship proof", "social media", "friend letter"] },
+    // CONTACT PROOF
+    { key: "contact_proof", label: "Proof of Contact (text messages, emails, WhatsApp chats, airline tickets, boarding passes)", required: true, keywords: ["text message", "email", "whatsapp chat", "airline ticket", "boarding pass"] }
   ],
   citizenship_prcard: [
     { key: "id_docs", label: "Current ID + Existing PR card/Passport", required: true, keywords: ["id", "pr card", "passport"] },
