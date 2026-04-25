@@ -7741,420 +7741,516 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             </div>
           ) : null}
           {screen === "inbox" ? (
-            <section className="h-[calc(100vh-8rem)] flex rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-sm">
+            <section className="h-[calc(100vh-8rem)] flex gap-0 rounded-2xl border border-slate-200 overflow-hidden bg-white">
 
-              {/* ── LEFT: Thread List (WhatsApp style) ── */}
-              <div className={`flex flex-col border-r border-slate-100 bg-white ${inboxThread ? "hidden md:flex md:w-80 shrink-0" : "w-full md:w-80 shrink-0"}`}>
-                
-                {/* Header */}
-                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 shrink-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-bold text-slate-900">💬 Inbox</p>
-                    <div className="flex gap-1">
-                      <button onClick={() => { setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full transition-colors ${!inboxShowArchived ? "bg-emerald-600 text-white" : "text-slate-500 hover:bg-slate-200"}`}>
-                        Active
-                      </button>
-                      <button onClick={() => { setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full transition-colors ${inboxShowArchived ? "bg-slate-700 text-white" : "text-slate-500 hover:bg-slate-200"}`}>
-                        📦 Archived
-                      </button>
-                    </div>
+              {/* LEFT: Thread list */}
+              <div className={`flex flex-col border-r border-slate-100 ${inboxThread ? "hidden md:flex md:w-72 shrink-0" : "w-full md:w-72 shrink-0"}`}>
+                  {/* Global inbox search */}
+                  <div className="px-3 py-2 border-b border-slate-100 bg-white shrink-0">
+                    <input
+                      value={inboxGlobalSearch||""}
+                      onChange={e=>setInboxGlobalSearch(e.target.value)}
+                      placeholder="🔍 Search all conversations..."
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
+                    />
                   </div>
-                  {/* Search */}
-                  <input
-                    value={inboxGlobalSearch||""}
-                    onChange={e=>setInboxGlobalSearch(e.target.value)}
-                    placeholder="🔍 Search conversations..."
-                    className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-xs focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-100"
-                  />
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${!inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>Active</button>
+                    <button onClick={() => { setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>📦 Archived</button>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">💬 Inbox</p>
+                    <p className="text-[10px] text-slate-400">{sessionUser?.role === "Processing" ? "Your clients" : "All conversations"}</p>
+                  </div>
+                  <button onClick={async () => {
+                    setInboxLoaded(false);
+                    const res = await apiFetch("/inbox", { cache: "no-store" });
+                    const d = await res.json().catch(()=>({}));
+                    setInboxMessages(d.messages || []);
+                    setInboxLoaded(true);
+                  }} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[10px] font-semibold hover:bg-white">↻</button>
                 </div>
 
-                {/* Thread list */}
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
-                  {!inboxLoaded && (() => {
+                {!inboxLoaded && (() => {
+                  apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" }).then(r => r.json()).then(d => { setInboxMessages(d.messages || []); setInboxLoaded(true); }).catch(()=>setInboxLoaded(true));
+                  // Auto-refresh inbox every 5 seconds
+                  const inboxTimer = setInterval(() => {
                     apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" })
                       .then(r => r.json())
-                      .then(d => { setInboxMessages(d.messages || []); setInboxLoaded(true); })
-                      .catch(()=>setInboxLoaded(true));
-                    return <div className="flex items-center justify-center h-32"><p className="text-xs text-slate-400 animate-pulse">Loading...</p></div>;
-                  })()}
+                      .then(d => { if (d.messages) setInboxMessages(d.messages); })
+                      .catch(() => {});
+                  }, 5000);
+                  return () => clearInterval(inboxTimer);
+                  return <p className="text-xs text-slate-400 py-8 text-center">Loading...</p>;
+                })()}
 
+                <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
                   {inboxLoaded && (() => {
-                    // Group by phone → get latest message per thread
-                    const threads = new Map<string, typeof inboxMessages[0]>();
-                    const filtered = inboxMessages.filter(m =>
-                      !inboxGlobalSearch || 
-                      (m.matched_case_name || "").toLowerCase().includes(inboxGlobalSearch.toLowerCase()) ||
-                      (m.message || "").toLowerCase().includes(inboxGlobalSearch.toLowerCase())
-                    );
-                    for (const m of filtered) {
-                      const existing = threads.get(m.phone);
-                      if (!existing || new Date(m.created_at) > new Date(existing.created_at)) {
-                        threads.set(m.phone, m);
-                      }
+                    const threads: Record<string, typeof inboxMessages> = {};
+                    inboxMessages.forEach(m => { if (!threads[m.phone]) threads[m.phone] = []; threads[m.phone].push(m); });
+                    // Filter by global search
+                    if (inboxGlobalSearch) {
+                      const q = inboxGlobalSearch.toLowerCase();
+                      Object.keys(threads).forEach(phone => {
+                        const hasMatch = threads[phone].some(m => 
+                          m.message.toLowerCase().includes(q) || 
+                          (m.matched_case_name||"").toLowerCase().includes(q) ||
+                          phone.includes(q)
+                        );
+                        if (!hasMatch) delete threads[phone];
+                      });
                     }
-
-                    // Sort: unread first, then by time
-                    const sorted = [...threads.values()].sort((a, b) => {
-                      const aUnread = !a.is_read && a.direction === "inbound";
-                      const bUnread = !b.is_read && b.direction === "inbound";
-                      if (aUnread && !bUnread) return -1;
-                      if (!aUnread && bUnread) return 1;
-                      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                    const threadList = Object.entries(threads).map(([phone, msgs]) => {
+                      const mp = phone.replace(/\D/g,"");
+                      const matchedCase = cases.find(c => { const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
+                      return { phone, msgs, matchedCase };
+                    }).filter(({ matchedCase }) => {
+                      if (!matchedCase) return sessionUser?.role !== "Processing";
+                      if (sessionUser?.role === "Processing") return String(matchedCase.assignedTo||"").toLowerCase()===String(sessionUser?.name||"").toLowerCase();
+                      return true;
+                    }).sort((a,b) => {
+                      // Sort: urgent unanswered first, then waiting, then unread, then recent
+                      const getWaitMins = (msgs: typeof a.msgs) => {
+                        const lastIn = [...msgs].filter(m=>m.direction==="inbound").sort((x,y)=>new Date(y.created_at).getTime()-new Date(x.created_at).getTime())[0];
+                        const lastOut = [...msgs].filter(m=>m.direction==="outbound").sort((x,y)=>new Date(y.created_at).getTime()-new Date(x.created_at).getTime())[0];
+                        if (!lastIn) return -1;
+                        if (lastOut && new Date(lastOut.created_at) > new Date(lastIn.created_at)) return -1;
+                        return Math.floor((Date.now() - new Date(lastIn.created_at).getTime()) / 60000);
+                      };
+                      const aw = getWaitMins(a.msgs);
+                      const bw = getWaitMins(b.msgs);
+                      // Pin staff numbers to absolute top
+                      const aIsStaff = STAFF_PHONES.some(p => a.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
+                      const bIsStaff = STAFF_PHONES.some(p => b.phone.replace(/\D/g,"").slice(-10) === p.replace(/\D/g,"").slice(-10));
+                      if (aIsStaff && !bIsStaff) return -1;
+                      if (!aIsStaff && bIsStaff) return 1;
+                      // Sort by latest message time (WhatsApp style)
+                      const aLatest = Math.max(...a.msgs.map(m=>new Date(m.created_at).getTime()));
+                      const bLatest = Math.max(...b.msgs.map(m=>new Date(m.created_at).getTime()));
+                      return bLatest - aLatest;
                     });
 
-                    if (sorted.length === 0) {
-                      return <div className="flex flex-col items-center justify-center h-48 gap-2">
-                        <p className="text-2xl">💬</p>
-                        <p className="text-xs text-slate-400">{inboxShowArchived ? "No archived conversations" : "No active conversations"}</p>
-                      </div>;
-                    }
+                    if (threadList.length === 0) return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
 
-                    return <>{sorted.map(thread => {
-                      const phone = thread.phone;
-                      const clientName = thread.matched_case_name || phone;
+                    return threadList.map(({ phone, msgs, matchedCase }) => {
+                      const unread = msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
+                      const isStaff = STAFF_PHONES.some(p => phone.includes(p.slice(-9)));
+                      const clientName = isStaff ? "Newton Team" : matchedCase?.client || msgs[0]?.matched_case_name || "Unknown";
+                      const lastMsg = [...msgs].sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
                       const isSelected = inboxThread === phone;
-                      const isUnread = !thread.is_read && thread.direction === "inbound";
-                      const msgTime = new Date(thread.created_at);
-                      const now = new Date();
-                      const isToday = msgTime.toDateString() === now.toDateString();
-                      const timeStr = isToday
-                        ? msgTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                        : msgTime.toLocaleDateString([], { month: "short", day: "numeric" });
-                      const initials = clientName.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
-                      const unreadCount = inboxMessages.filter(m => m.phone === phone && !m.is_read && m.direction === "inbound").length;
-                      const isUrgent = unreadCount > 0 && (now.getTime() - msgTime.getTime()) > 2 * 60 * 60 * 1000;
-
-                      // Find matching case for extra info
-                      const matchedCaseForThread = cases.find(c => {
-                        const cp = (c.leadPhone || "").replace(/\D/g,"");
-                        const pp = phone.replace(/\D/g,"");
-                        return cp && (pp.endsWith(cp) || cp.endsWith(pp));
-                      });
-
+                      const isUnknown = !matchedCase;
+                      // Priority: time since last unanswered inbound message
+                      const lastIn = [...msgs].filter(m=>m.direction==="inbound").sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
+                      const lastOut = [...msgs].filter(m=>m.direction==="outbound").sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
+                      const SIMPLE_REPLIES = /^(ok|okay|yes|no|k|👍|thanks|thank you|thx|confirmed|sure|noted|received|done|got it|ji|haa|nahi|theek|shukriya|ਹਾਂ|ਠੀਕ|ਜੀ|✅|👌|🙏|hmm|hm|yep|yup|nope)$/i;
+                      const lastInIsSimple = lastIn ? (
+                        SIMPLE_REPLIES.test(lastIn.message.trim()) ||
+                        lastIn.message.includes("[image received]") ||
+                        lastIn.message.includes("[document received]") ||
+                        lastIn.message.includes("[audio received]") ||
+                        lastIn.message.includes("[video received]") ||
+                        lastIn.message.trim().length < 4
+                      ) : false;
+                      const needsReply = lastIn && !lastInIsSimple && (!lastOut || new Date(lastIn.created_at) > new Date(lastOut.created_at));
+                      const waitMins = needsReply ? Math.floor((Date.now() - new Date(lastIn.created_at).getTime()) / 60000) : null;
+                      const isUrgent = waitMins !== null && waitMins >= 60;
+                      const isPending = waitMins !== null && waitMins >= 15 && !isUrgent;
+                      const waitLabel = waitMins !== null ? (waitMins >= 60 ? `${Math.floor(waitMins/60)}h` : `${waitMins}m`) : null;
                       return (
                         <button key={phone} onClick={() => {
                           setInboxThread(phone);
-                          apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ phone: phone.replace(/\D/g,""), action: "read" }) }).catch(()=>null);
-                          setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, is_read: true} : m));
-                        }}
-                          className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${isSelected ? "bg-emerald-50 border-r-2 border-emerald-500" : "hover:bg-slate-50"}`}>
-                          
-                          {/* Avatar */}
-                          <div className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold text-white ${isUrgent ? "bg-red-500" : isUnread ? "bg-emerald-500" : "bg-slate-400"}`}>
-                            {initials}
+                          if (unread > 0) {
+                            msgs.filter(m=>!m.is_read).forEach(m => apiFetch("/inbox",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:m.id})}).catch(()=>null));
+                            setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,is_read:true}:m));
+                          }
+                        }} className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors ${isSelected?"bg-blue-50 border-l-2 border-blue-500":isUrgent?"bg-red-50 border-l-2 border-red-400 hover:bg-red-100":isPending?"bg-amber-50 border-l-2 border-amber-300 hover:bg-amber-100":"hover:bg-slate-50"}`}>
+                          <div className={`h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-bold mt-0.5 ${isUnknown?"bg-orange-100 text-orange-700":isUrgent?"bg-red-100 text-red-700":isPending?"bg-amber-100 text-amber-700":"bg-emerald-100 text-emerald-700"}`}>
+                            {(clientName||"?").charAt(0).toUpperCase()}
                           </div>
-
-                          {/* Content */}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <p className={`text-sm truncate ${isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{clientName}</p>
-                              <p className={`text-[10px] shrink-0 ml-2 ${isUnread ? "text-emerald-600 font-bold" : "text-slate-400"}`}>{timeStr}</p>
-                            </div>
-                            {/* Case info row */}
-                            {matchedCaseForThread && (
-                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                <span className="text-[10px] text-slate-400 font-mono">{matchedCaseForThread.id}</span>
-                                <span className="text-[10px] text-slate-300">·</span>
-                                <span className="text-[10px] text-slate-500 truncate">{matchedCaseForThread.formType}</span>
-                                {matchedCaseForThread.assignedTo && matchedCaseForThread.assignedTo !== "Unassigned" && (
-                                  <>
-                                    <span className="text-[10px] text-slate-300">·</span>
-                                    <span className="text-[10px] text-emerald-600 font-medium">{matchedCaseForThread.assignedTo}</span>
-                                  </>
-                                )}
+                            <div className="flex items-center justify-between gap-1">
+                              <p className={`text-sm font-semibold truncate ${isSelected?"text-blue-900":isUrgent?"text-red-800":isPending?"text-amber-800":"text-slate-900"}`}>{clientName}</p>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {isUrgent && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-black text-white">🔴 {waitLabel}</span>}
+                                {isPending && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-black text-white">⏳ {waitLabel}</span>}
+                                {unread > 0 && <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unread}</span>}
                               </div>
-                            )}
-                            <div className="flex items-center justify-between mt-0.5">
-                              <p className={`text-xs truncate ${isUnread ? "text-slate-700 font-medium" : "text-slate-400"}`}>
-                                {thread.direction === "outbound" ? "✓ " : ""}{(thread.message || "").startsWith("[doc:") ? "📎 Document" : (thread.message || "").startsWith("📎") ? "📎 Document" : (thread.message || "").slice(0, 40)}
-                              </p>
-                              {unreadCount > 0 && (
-                                <span className={`shrink-0 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-black text-white ${isUrgent ? "bg-red-500" : "bg-emerald-500"}`}>
-                                  {unreadCount}
-                                </span>
-                              )}
                             </div>
+                            <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                              {STAFF_PHONES.some(p => phone.includes(p.slice(-9))) ? "📌 Newton Team" : matchedCase ? matchedCase.formType + " · " + (matchedCase.assignedTo || "Unassigned") : "⚠️ Unknown"}
+                            </p>
+                            <p className={`text-[11px] truncate ${isUrgent?"text-red-500 font-semibold":isPending?"text-amber-600":"text-slate-400"}`}>
+                              {isUrgent?"⚠️ Needs reply · ":isPending?"⏳ Waiting · ":lastMsg?.direction==="outbound"?"You: ":""}{lastMsg?.message?.slice(0,35)}
+                            </p>
                           </div>
                         </button>
                       );
-                    })}</>;
+                    });
                   })()}
                 </div>
               </div>
 
-              {/* ── RIGHT: Chat Panel ── */}
+              {/* RIGHT: Chat window */}
               {inboxThread ? (() => {
                 const phone = inboxThread;
-                const threadMsgs = [...inboxMessages]
-                  .filter(m => m.phone === phone)
-                  .sort((a,b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                const clientName = threadMsgs[0]?.matched_case_name || phone;
-                const matchedCase = cases.find(c => {
-                  const cp = (c.leadPhone || "").replace(/\D/g,"");
-                  const pp = phone.replace(/\D/g,"");
-                  return cp && (pp.endsWith(cp) || cp.endsWith(pp));
-                });
-
+                const msgs = inboxMessages.filter(m=>m.phone===phone);
+                const mp = phone.replace(/\D/g,"");
+                const matchedCase = cases.find(c=>{ const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
+                const clientName = matchedCase?.client || msgs[0]?.matched_case_name || "Unknown";
+                const sortedMsgs = [...msgs].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());
+                const isUnknown = !matchedCase;
                 return (
                   <div className="flex-1 flex min-w-0 overflow-hidden">
-                    {/* Chat area */}
-                    <div className="flex-1 flex flex-col min-w-0 bg-[#f0f2f5]">
-
-                      {/* Chat header */}
-                      <div className="px-4 py-3 bg-white border-b border-slate-100 flex items-center gap-3 shrink-0">
-                        <button onClick={() => setInboxThread(null)} className="md:hidden text-slate-500 hover:text-slate-700 mr-1">←</button>
-                        
-                        {/* Avatar */}
-                        <div className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                          {clientName.split(" ").map((w:string) => w[0]).join("").toUpperCase().slice(0,2)}
+                  <div className="flex-1 flex flex-col min-w-0">
+                    {/* Chat header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white shrink-0">
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setInboxThread(null)} className="md:hidden rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold hover:bg-slate-50">← Back</button>
+                        <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold ${isUnknown?"bg-orange-100 text-orange-700":"bg-emerald-100 text-emerald-700"}`}>
+                          {(clientName||"?").charAt(0).toUpperCase()}
                         </div>
-
-                        <div className="flex-1 min-w-0">
+                        <div>
                           <p className="text-sm font-bold text-slate-900">{clientName}</p>
-                          {matchedCase && <p className="text-[11px] text-slate-500">{matchedCase.id} · {matchedCase.formType}</p>}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {matchedCase && (
-                            <button onClick={() => { setSelectedCase(matchedCase); setScreen("cases"); }}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                              View Case →
-                            </button>
-                          )}
-                          <button onClick={async () => {
-                            const action = inboxShowArchived ? "unarchive" : "archive";
-                            await apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ phone: phone.replace(/\D/g,""), action }) }).catch(()=>null);
-                            setInboxThread(null); setInboxLoaded(false);
-                          }} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50">
-                            {inboxShowArchived ? "📤 Unarchive" : "📦 Archive"}
-                          </button>
+                          <p className="text-[10px] text-slate-400">
+                            {matchedCase ? matchedCase.id + " · " + matchedCase.formType + " · 👤 " + (matchedCase.assignedTo||"Unassigned") : phone}
+                          </p>
                         </div>
                       </div>
+                      <div className="flex items-center gap-2">
+                        {isUnknown && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input
+                              placeholder="💾 Save name (Enter)"
+                              className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700 w-36 focus:outline-none focus:border-orange-400"
+                              onKeyDown={async e => {
+                                if (e.key !== "Enter") return;
+                                const name = (e.target as HTMLInputElement).value.trim();
+                                if (!name) return;
+                                await apiFetch(`/inbox`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"saveName", phone, name})});
+                                setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
+                                (e.target as HTMLInputElement).value = "";
+                              }}
+                            />
+                            <select defaultValue="" onChange={async e => {
+                              const cId = e.target.value; if (!cId) return;
+                              await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
+                              setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
+                              setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
+                            }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
+                              <option value="">⚠️ Link to case...</option>
+                              {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        {matchedCase && (
+                          <button onClick={() => { setSelectedCaseId(matchedCase.id); setScreen("cases"); }}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold hover:bg-slate-50">
+                            Open Case →
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-                      {/* Messages */}
-                      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-                        {threadMsgs.map((msg, idx) => {
-                          const isOut = msg.direction === "outbound";
-                          const msgTime = new Date(msg.created_at);
-                          const prevMsg = threadMsgs[idx - 1];
-                          const showDate = !prevMsg || new Date(prevMsg.created_at).toDateString() !== msgTime.toDateString();
-                          const showTime = !prevMsg || msg.direction !== prevMsg.direction || (msgTime.getTime() - new Date(prevMsg.created_at).getTime()) > 5 * 60 * 1000;
+                    {/* Search bar */}
+                    <div className="px-4 py-2 border-b border-slate-100 bg-white shrink-0">
+                      <input
+                        value={inboxSearch[phone]||""}
+                        onChange={e=>setInboxSearch(prev=>({...prev,[phone]:e.target.value}))}
+                        placeholder="🔍 Search in this chat..."
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
+                      />
+                      {inboxSearch[phone] && (
+                        <p className="text-[10px] text-slate-400 mt-1 px-1">
+                          {sortedMsgs.filter(m=>m.message.toLowerCase().includes((inboxSearch[phone]||"").toLowerCase())).length} results
+                        </p>
+                      )}
+                    </div>
 
-                          return (
-                            <div key={msg.id}>
-                              {showDate && (
-                                <div className="flex justify-center my-3">
-                                  <span className="bg-white text-slate-500 text-[10px] font-semibold px-3 py-1 rounded-full shadow-sm border border-slate-100">
-                                    {msgTime.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
-                                  </span>
-                                </div>
-                              )}
-                              <div className={`flex ${isOut ? "justify-end" : "justify-start"} mb-0.5`}>
-                                <div className="group relative max-w-[75%]">
-                                  <div className={`relative px-3 py-2 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                                    isOut
-                                      ? "bg-[#d9fdd3] text-slate-900 rounded-tr-sm"
-                                      : "bg-white text-slate-900 rounded-tl-sm"
-                                  }`}>
-                                    {/* Message rendering */}
-                                    {(() => {
-                                      const txt = msg.message || "";
-                                      // Drive link format: 📎 [filename](driveUrl)
-                                      const driveMatch = txt.match(/^📎 \[(.+?)\]\((.+?)\)$/);
-                                      if (driveMatch) {
-                                        return (
-                                          <a href={driveMatch[2]} target="_blank" rel="noopener noreferrer"
-                                            className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-slate-200 hover:bg-slate-50 transition-colors">
-                                            <span className="text-lg">📄</span>
-                                            <div>
-                                              <p className="text-xs font-semibold text-blue-700 hover:underline">{driveMatch[1]}</p>
-                                              <p className="text-[10px] text-slate-400">Click to view in Drive</p>
-                                            </div>
-                                          </a>
-                                        );
-                                      }
-                                      // Plain document marker (no drive link yet)
-                                      if (txt.startsWith("📎") || txt.startsWith("[doc:")) {
-                                        return (
-                                          <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-slate-200">
-                                            <span className="text-lg">📄</span>
-                                            <div>
-                                              <p className="text-xs font-semibold text-slate-600">Document received</p>
-                                              <p className="text-[10px] text-slate-400">Saving to Drive...</p>
-                                            </div>
-                                          </div>
-                                        );
-                                      }
-                                      return <p className="whitespace-pre-wrap text-sm">{txt}</p>;
-                                    })()}
-                                    <div className={`flex items-center gap-1 mt-1 ${isOut ? "justify-end" : "justify-start"}`}>
-                                      <p className="text-[10px] text-slate-400">
-                                        {msgTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                      </p>
-                                      {isOut && <span className="text-[10px] text-blue-500">✓✓</span>}
-                                    </div>
+                    {/* Messages */}
+                    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-[#f0f2f5]">
+                      {(() => {
+                        const searchQ = (inboxSearch[phone]||"").toLowerCase();
+                        const filtered = searchQ ? sortedMsgs.filter(m=>m.message.toLowerCase().includes(searchQ)) : sortedMsgs;
+                        const elements: React.ReactNode[] = [];
+                        let lastDate = "";
+                        filtered.forEach((m, idx) => {
+                          // Date separator
+                          const msgDate = new Date(m.created_at);
+                          const today = new Date();
+                          const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+                          const dateStr = msgDate.toDateString();
+                          let dateLabel = "";
+                          if (dateStr === today.toDateString()) dateLabel = "Today";
+                          else if (dateStr === yesterday.toDateString()) dateLabel = "Yesterday";
+                          else dateLabel = msgDate.toLocaleDateString("en-CA", {day:"numeric",month:"long",year:"numeric"});
+                          
+                          if (dateLabel !== lastDate) {
+                            lastDate = dateLabel;
+                            elements.push(
+                              <div key={`date-${idx}`} className="flex justify-center my-3">
+                                <span className="bg-white text-slate-500 text-[11px] font-medium px-3 py-1 rounded-full shadow-sm border border-slate-200">{dateLabel}</span>
+                              </div>
+                            );
+                          }
 
-                                    {/* Delete button on hover */}
-                                    <button onClick={async () => {
-                                      if (!confirm("Delete this message?")) return;
-                                      await apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: msg.id, action: "delete" }) }).catch(()=>null);
-                                      setInboxMessages(prev => prev.filter(m => m.id !== msg.id));
-                                    }} className="absolute -top-2 right-0 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 hover:bg-red-200 text-slate-500 hover:text-red-600 text-[10px]">
-                                      ✕
-                                    </button>
+                          // Message bubble
+                          const isOut = m.direction==="outbound";
+                          const isImage = m.message.includes("[image received]") || m.message.includes("[image:");
+                          const isAudio = m.message.includes("[audio received]");
+                          // Detect document - old format or new Drive link format
+                          const driveMatch = m.message.match(/^📎 \[(.+?)\]\((.+?)\)$/);
+                          const isDoc = m.message.includes("[document received]") || m.message.startsWith("[doc:") || m.message.startsWith("📎");
+                          const isMedia = isImage || isAudio;
+                          const time = new Date(m.created_at).toLocaleTimeString("en-CA",{hour:"2-digit",minute:"2-digit"});
+                          
+                          elements.push(
+                            <div key={m.id||idx} className={`group flex ${isOut?"justify-end":"justify-start"} mb-1`}>
+                              <div className={`relative max-w-[72%] ${isOut?"bg-[#d9fdd3]":"bg-white"} rounded-2xl px-3.5 py-2 shadow-sm ${isOut?"rounded-br-sm":"rounded-bl-sm"} ${searchQ && m.message.toLowerCase().includes(searchQ) ? "ring-2 ring-yellow-400" : ""}`}>
+                                {isImage && (
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-2xl">🖼️</span>
+                                    <span className="text-sm text-slate-600 font-medium">Image</span>
                                   </div>
+                                )}
+                                {isDoc && driveMatch ? (
+                                  <a href={driveMatch[2]} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-blue-200 hover:bg-blue-50 transition-colors">
+                                    <span className="text-2xl">📄</span>
+                                    <div>
+                                      <p className="text-sm font-semibold text-blue-700">{driveMatch[1]}</p>
+                                      <p className="text-[10px] text-blue-500">Click to open in Drive ↗</p>
+                                    </div>
+                                  </a>
+                                ) : isDoc ? (
+                                  <div className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-slate-200">
+                                    <span className="text-2xl">📄</span>
+                                    <div>
+                                      <p className="text-sm font-semibold text-slate-800">Document</p>
+                                      <p className="text-[10px] text-slate-500">Saving to case docs...</p>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {isAudio && (
+                                  <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-2 border border-slate-200">
+                                    <span className="text-xl">🎵</span>
+                                    <span className="text-sm text-slate-600">Voice message</span>
+                                  </div>
+                                )}
+                                {!isMedia && !isDoc && <p className="text-sm text-slate-900 whitespace-pre-wrap break-words leading-relaxed">{m.message}</p>}
+                                <div className={`flex items-center justify-end gap-1 mt-0.5`}>
+                                  <span className="text-[10px] text-slate-400">{time}</span>
+                                  {isOut && <span className="text-[11px] text-blue-500">✓✓</span>}
                                 </div>
+                                {/* Delete on hover */}
+                                <button onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!confirm("Delete this message?")) return;
+                                  await apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: m.id, action: "delete" }) }).catch(()=>null);
+                                  setInboxMessages(prev => prev.filter(msg => msg.id !== m.id));
+                                }} className="absolute -top-2 right-1 hidden group-hover:flex w-5 h-5 rounded-full bg-slate-200 hover:bg-red-200 items-center justify-center text-[10px] text-slate-500 hover:text-red-600">
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           );
-                        })}
-                        {threadMsgs.length === 0 && (
-                          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-50">
-                            <p className="text-4xl">💬</p>
-                            <p className="text-sm text-slate-500">No messages yet</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Message input */}
-                      <div className="px-4 py-3 bg-white border-t border-slate-100 shrink-0">
-                        {caseActionStatus && <p className="text-xs font-bold text-emerald-700 mb-2 text-center">{caseActionStatus}</p>}
-                        <div className="flex gap-2 items-end">
-                          <div className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 focus-within:border-emerald-400 focus-within:ring-1 focus-within:ring-emerald-100">
-                            <textarea
-                              value={inboxReply[phone]||""}
-                              onChange={e=>setInboxReply(prev=>({...prev,[phone]:e.target.value}))}
-                              placeholder="Type a message..."
-                              rows={1}
-                              className="w-full bg-transparent text-sm focus:outline-none resize-none"
-                              style={{maxHeight: "120px"}}
-                              onKeyDown={async e => {
-                                if (e.key === "Enter" && !e.shiftKey) {
-                                  e.preventDefault();
-                                  const text = (inboxReply[phone]||"").trim();
-                                  if (!text) return;
-                                  const res = await apiFetch("/inbox/send", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                                  if (res?.ok) {
-                                    setInboxReply(prev=>({...prev,[phone]:""}));
-                                    setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]);
-                                  } else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                                }
-                              }}
-                            />
-                          </div>
-                          <button onClick={async () => {
-                            const text = (inboxReply[phone]||"").trim();
-                            if (!text) return;
-                            const res = await apiFetch("/inbox/send", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                            if (res?.ok) {
-                              setInboxReply(prev=>({...prev,[phone]:""}));
-                              setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]);
-                            } else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                          }} className="shrink-0 w-10 h-10 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center text-white shadow-sm active:scale-95 transition-all">
-                            ➤
-                          </button>
-                        </div>
-                      </div>
+                        });
+                        if (filtered.length === 0) {
+                          elements.push(<p key="empty" className="text-center text-xs text-slate-400 py-8">{searchQ ? "No messages found" : "No messages yet"}</p>);
+                        }
+                        return elements;
+                      })()}
                     </div>
 
-                    {/* ── Smart Suggestions Panel ── */}
-                    <div className="hidden lg:flex flex-col w-60 shrink-0 border-l border-slate-100 bg-white overflow-y-auto">
-                      <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
-                        <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">⚡ Quick Actions</p>
-                        {matchedCase && <p className="text-[11px] text-slate-400 mt-0.5">{matchedCase.formType}</p>}
-                      </div>
-
-                      <div className="p-3 space-y-2">
-                        {/* Send Checklist */}
-                        {matchedCase && (() => {
-                          const checklist = getChecklistForFormType(matchedCase.formType);
-                          const required = checklist.filter(i => i.required);
-                          if (!checklist.length) return null;
-                          const checklistMsg = [
-                            `📋 *Document Checklist — ${matchedCase.formType}*`,
-                            ``,
-                            `*Required:*`,
-                            ...required.map((item,i) => `${i+1}. ${item.label}`),
-                            ...(checklist.filter(i=>!i.required).length ? [``, `*Additional (if applicable):*`, ...checklist.filter(i=>!i.required).map(item=>`• ${item.label}`)] : []),
-                            ``,
-                            `Please send clear photos or scans on WhatsApp. 📸`,
-                            `— Newton Immigration 🍁`,
-                          ].join("\n");
-                          return (
-                            <button onClick={async () => {
-                              const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:checklistMsg,caseId:matchedCase.id})}).catch(()=>null);
-                              if (res?.ok) { setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:checklistMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]); setCaseActionStatus("✅ Checklist sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                            }} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left hover:bg-blue-100 transition-colors">
-                              <p className="text-xs font-bold text-blue-800">📋 Send Checklist</p>
-                              <p className="text-[10px] text-blue-500 mt-0.5">{required.length} required docs</p>
-                            </button>
-                          );
-                        })()}
-
-                        {/* Send Questions */}
-                        {matchedCase && (() => {
-                          const questions = getQuestionPromptsForFormType(matchedCase.formType);
-                          if (!questions.length) return null;
-                          const questionsMsg = [`📝 *Intake Questions — ${matchedCase.formType}*`, ``, `Please reply to each question:`, ``].concat(questions.map((q,i)=>`*${i+1}.* ${q}`)).join("\n");
-                          return (
-                            <button onClick={async () => {
-                              const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:questionsMsg,caseId:matchedCase.id})}).catch(()=>null);
-                              if (res?.ok) { setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:questionsMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]); setCaseActionStatus("✅ Questions sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                            }} className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-left hover:bg-purple-100 transition-colors">
-                              <p className="text-xs font-bold text-purple-800">📝 Send Questions</p>
-                              <p className="text-[10px] text-purple-500 mt-0.5">{questions.length} questions</p>
-                            </button>
-                          );
-                        })()}
-
-                        {/* Greeting */}
-                        <button onClick={async () => {
-                          const firstName = clientName.split(" ")[0];
-                          const msg = `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏\nHi *${firstName}*! Welcome to Newton Immigration. Our team will guide you through every step. Feel free to reach out anytime! 🍁`;
-                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:msg,caseId:matchedCase?.id||null})}).catch(()=>null);
-                          if (res?.ok) { setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:msg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]); setCaseActionStatus("✅ Sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                        }} className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-left hover:bg-emerald-100 transition-colors">
-                          <p className="text-xs font-bold text-emerald-800">👋 Send Greeting</p>
-                          <p className="text-[10px] text-emerald-500 mt-0.5">Welcome in English + Punjabi</p>
-                        </button>
-
-                        {/* Reminder */}
-                        <button onClick={async () => {
-                          const firstName = clientName.split(" ")[0];
-                          const msg = `Hi *${firstName}* 👋 This is a gentle reminder from Newton Immigration. We are waiting for your documents/answers. Please send them at your earliest so we can proceed. Thank you! 🙏`;
-                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:msg,caseId:matchedCase?.id||null})}).catch(()=>null);
-                          if (res?.ok) { setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:msg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]); setCaseActionStatus("✅ Sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                        }} className="w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-left hover:bg-amber-100 transition-colors">
-                          <p className="text-xs font-bold text-amber-800">⏰ Send Reminder</p>
-                          <p className="text-[10px] text-amber-500 mt-0.5">Gentle follow-up</p>
-                        </button>
-
-                        {/* Schedule Call */}
-                        <button onClick={async () => {
-                          const firstName = clientName.split(" ")[0];
-                          const msg = `Hi *${firstName}*! Your application is ready for review. Please call us at your earliest convenience. 📞 Newton Immigration | Mon–Fri 9AM–5PM 🙏`;
-                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:msg,caseId:matchedCase?.id||null})}).catch(()=>null);
-                          if (res?.ok) { setInboxMessages(prev=>[...prev,{id:`tmp-${Date.now()}`,phone,message:msg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()}]); setCaseActionStatus("✅ Sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
-                        }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:bg-slate-50 transition-colors">
-                          <p className="text-xs font-bold text-slate-700">📞 Schedule Call</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Invite client to call</p>
-                        </button>
-
-                        {caseActionStatus && <p className="text-xs font-bold text-emerald-700 text-center py-1">{caseActionStatus}</p>}
+                    {/* Reply box */}
+                    <div className="flex flex-col px-4 py-3 border-t border-slate-100 bg-white shrink-0 gap-2">
+                      {inboxAttachment[phone] && (
+                        <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+                          <span className="text-sm">📎</span>
+                          <span className="text-xs text-slate-600 truncate flex-1">{inboxAttachment[phone].name}</span>
+                          <button onClick={() => setInboxAttachment(prev=>({...prev,[phone]:null}))} className="text-slate-400 hover:text-red-500 text-xs">✕</button>
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                      <label className="cursor-pointer flex items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 hover:border-emerald-400 transition-colors" title="Attach file">
+                        <span className="text-slate-500 text-base">📎</span>
+                        <input type="file" className="hidden" accept="image/*,.pdf,.doc,.docx" onChange={async e => {
+                          const file = e.target.files?.[0]; if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = ev => {
+                            const data = (ev.target?.result as string).split(",")[1];
+                            setInboxAttachment(prev=>({...prev,[phone]:{name:file.name, type:file.type, data}}));
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = "";
+                        }} />
+                      </label>
+                      <input value={inboxReply[phone]||""} onChange={e=>setInboxReply(prev=>({...prev,[phone]:e.target.value}))}
+                        placeholder={`Message ${clientName}...`}
+                        className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none focus:bg-white"
+                        onKeyDown={async e => {
+                          if (e.key!=="Enter") return;
+                          const text=(inboxReply[phone]||"").trim(); if (!text) return;
+                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
+                          if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                          else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                        }} />
+                      <button onClick={async () => {
+                        const text=(inboxReply[phone]||"").trim(); if (!text) return;
+                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
+                        if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                        else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                      }} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 shrink-0">Send</button>
                       </div>
                     </div>
                   </div>
+
+                  {/* RIGHT: Smart Suggestions Panel */}
+                  <div className="hidden lg:flex flex-col w-64 shrink-0 border-l border-slate-100 bg-slate-50 overflow-y-auto">
+                    <div className="px-4 py-3 border-b border-slate-100">
+                      <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">🤖 Quick Send</p>
+                      {matchedCase && <p className="text-[11px] text-slate-400 mt-0.5">{matchedCase.formType} · {clientName}</p>}
+                    </div>
+
+                    <div className="p-3 space-y-2">
+
+                      {/* Send Checklist */}
+                      {matchedCase && (() => {
+                        const checklist = getChecklistForFormType(matchedCase.formType);
+                        if (!checklist.length) return null;
+                        const required = checklist.filter(i => i.required);
+                        const optional = checklist.filter(i => !i.required);
+                        const checklistMsg = [
+                          `📋 *Document Checklist — ${matchedCase.formType}*`,
+                          ``,
+                          `*Required Documents:*`,
+                          ...required.map((item, i) => `${i+1}. ${item.label}`),
+                          ...(optional.length ? [
+                            ``,
+                            `*Additional (if applicable):*`,
+                            ...optional.map((item, i) => `• ${item.label}`)
+                          ] : []),
+                          ``,
+                          `Please send clear photos or scans of all documents. Thank you! 🙏`,
+                          ``,
+                          `— Newton Immigration Team 🍁`,
+                        ].join("\n");
+                        return (
+                          <button onClick={async () => {
+                            const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:checklistMsg,caseId:matchedCase.id})}).catch(()=>null);
+                            if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:checklistMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Checklist sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                          }} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left hover:bg-blue-100 transition-colors">
+                            <p className="text-xs font-bold text-blue-800">📋 Send Document Checklist</p>
+                            <p className="text-[10px] text-blue-600 mt-0.5">{checklist.filter((i: any) => i.required).length} required · {checklist.filter((i: any) => !i.required).length} optional</p>
+                          </button>
+                        );
+                      })()}
+
+                      {/* Send Questions */}
+                      {matchedCase && (() => {
+                        const questions = getQuestionPromptsForFormType(matchedCase.formType);
+                        if (!questions.length) return null;
+                        const questionList = questions.map((q, i) => `*${i+1}.* ${q}`).join("\n\n");
+                        const questionsMsg = [
+                          `📝 *Intake Questions for ${matchedCase.formType}*`,
+                          ``,
+                          `Please reply with all answers numbered in ONE message:`,
+                          ``,
+                          `━━━━━━━━━━━━━━━`,
+                          questionList,
+                          `━━━━━━━━━━━━━━━`,
+                          ``,
+                          `Take your time. Reply with all answers together. 🙏`,
+                        ].join("\n");
+                        return (
+                          <button onClick={async () => {
+                            const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:questionsMsg,caseId:matchedCase.id})}).catch(()=>null);
+                            if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:questionsMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Questions sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                          }} className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-left hover:bg-purple-100 transition-colors">
+                            <p className="text-xs font-bold text-purple-800">📝 Send Intake Questions</p>
+                            <p className="text-[10px] text-purple-600 mt-0.5">{questions.length} questions</p>
+                          </button>
+                        );
+                      })()}
+
+                      {/* Send Greeting */}
+                      <button onClick={async () => {
+                        const greetMsg = `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${clientName.split(" ")[0]} ਜੀ! 🙏\nHi *${clientName.split(" ")[0]}*! Welcome to *Newton Immigration*. Thank you for choosing us. Our team will guide you through every step. Please feel free to reach out anytime!\n\n— Newton Immigration Team 🍁`;
+                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:greetMsg,caseId:matchedCase?.id||null})}).catch(()=>null);
+                        if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:greetMsg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Greeting sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                      }} className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-left hover:bg-emerald-100 transition-colors">
+                        <p className="text-xs font-bold text-emerald-800">👋 Send Greeting</p>
+                        <p className="text-[10px] text-emerald-600 mt-0.5">Welcome message in English + Punjabi</p>
+                      </button>
+
+                      {/* AI Smart Reply */}
+                      <button onClick={async () => {
+                        const lastMsg = inboxMessages.filter(m=>m.phone===phone && m.direction==="inbound").sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0];
+                        if (!lastMsg) { setCaseActionStatus("No client message to reply to"); setTimeout(()=>setCaseActionStatus(""),3000); return; }
+                        setInboxAiLoading(prev=>({...prev,[phone]:true}));
+                        const res = await apiFetch("/ai-reply", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:lastMsg.message,caseId:matchedCase?.id||null,action:"suggest"})}).catch(()=>null);
+                        const d = await res?.json().catch(()=>({}));
+                        if (d?.text) setInboxAiSuggestion(prev=>({...prev,[phone]:d.text}));
+                        setInboxAiLoading(prev=>({...prev,[phone]:false}));
+                      }} className="w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-left hover:bg-violet-100 transition-colors">
+                        <p className="text-xs font-bold text-violet-800">{inboxAiLoading[phone] ? "🤖 Generating..." : "🤖 AI Smart Reply"}</p>
+                        <p className="text-[10px] text-violet-600 mt-0.5">Generate reply from last client message</p>
+                      </button>
+
+                      {/* Show AI suggestion if available */}
+                      {inboxAiSuggestion[phone] && (
+                        <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-2.5 space-y-2">
+                          <p className="text-[10px] font-bold text-violet-700">AI Suggestion:</p>
+                          <p className="text-xs text-slate-700 whitespace-pre-wrap">{inboxAiSuggestion[phone]}</p>
+                          <div className="flex gap-1.5">
+                            <button onClick={async () => {
+                              const msg = inboxAiSuggestion[phone];
+                              const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:msg,caseId:matchedCase?.id||null})}).catch(()=>null);
+                              if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:msg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setInboxAiSuggestion(prev=>({...prev,[phone]:""})); setCaseActionStatus("✅ AI reply sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                            }} className="flex-1 rounded-lg bg-violet-600 py-1.5 text-[10px] font-bold text-white hover:bg-violet-700">Send</button>
+                            <button onClick={() => { setInboxReply(prev=>({...prev,[phone]:inboxAiSuggestion[phone]})); setInboxAiSuggestion(prev=>({...prev,[phone]:""})); }} className="flex-1 rounded-lg border border-violet-300 py-1.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100">Edit first</button>
+                            <button onClick={() => setInboxAiSuggestion(prev=>({...prev,[phone]:""}))} className="rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] text-slate-400 hover:bg-slate-50">✕</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Send Reminder */}
+                      <button onClick={async () => {
+                        const reminderMsg = `Hi *${clientName.split(" ")[0]}*! 👋 This is a gentle reminder from Newton Immigration. We are still waiting for your documents/answers. Please send them at your earliest convenience so we can move forward with your application. Thank you! 🙏`;
+                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:reminderMsg,caseId:matchedCase?.id||null})}).catch(()=>null);
+                        if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:reminderMsg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Reminder sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                      }} className="w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-left hover:bg-amber-100 transition-colors">
+                        <p className="text-xs font-bold text-amber-800">⏰ Send Reminder</p>
+                        <p className="text-[10px] text-amber-600 mt-0.5">Gentle follow-up message</p>
+                      </button>
+
+                      {/* Appointment */}
+                      <button onClick={async () => {
+                        const apptMsg = `Hi *${clientName.split(" ")[0]}*! Your application is ready for review. Please call us at your earliest convenience to schedule a consultation.\n\n📞 Newton Immigration\n🕐 Mon-Fri 9AM-5PM\n\nThank you! 🙏`;
+                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:apptMsg,caseId:matchedCase?.id||null})}).catch(()=>null);
+                        if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:apptMsg,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Message sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                      }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:bg-slate-50 transition-colors">
+                        <p className="text-xs font-bold text-slate-700">📞 Schedule Call</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Invite client to call</p>
+                      </button>
+
+                      {caseActionStatus && <p className="text-xs font-bold text-emerald-700 text-center py-1">{caseActionStatus}</p>}
+
+                    </div>
+                  </div>
+                  </div>
                 );
               })() : (
-                <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-[#f0f2f5]">
-                  <p className="text-5xl">💬</p>
-                  <p className="text-sm text-slate-500 font-medium">Select a conversation to start messaging</p>
+                <div className="flex-1 flex items-center justify-center bg-slate-50">
+                  <div className="text-center">
+                    <p className="text-3xl mb-2">💬</p>
+                    <p className="text-sm font-semibold text-slate-600">Select a conversation</p>
+                    <p className="text-xs text-slate-400 mt-1">Click a client on the left to open their chat</p>
+                  </div>
                 </div>
               )}
-            </section>
-          ) : null}
+
+            </section>) : null}
 
           {screen === "team" ? (
             <div className="space-y-4">
