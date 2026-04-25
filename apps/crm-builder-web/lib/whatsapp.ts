@@ -65,6 +65,32 @@ export async function sendWhatsAppTemplate(params: {
   }
 }
 
+export async function deleteWhatsAppMessage(messageId: string): Promise<boolean> {
+  const phoneId = getPhoneNumberId();
+  const token = getAccessToken();
+  if (!phoneId || !token) return false;
+  try {
+    const res = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: "",
+        type: "template",
+        biz_opaque_callback_data: messageId,
+        status: "deleted"
+      })
+    });
+    // Actually use the correct delete endpoint
+    const delRes = await fetch(`${WHATSAPP_API_URL}/${messageId}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    return delRes.ok;
+  } catch { return false; }
+}
+
 export async function sendWhatsAppText(to: string, message: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const phoneId = getPhoneNumberId();
   const token = getAccessToken();

@@ -8014,19 +8014,28 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
                                 )}
                                 {isDoc && driveMatch ? (
-                                  <a href={driveMatch[2]} target="_blank" rel="noopener noreferrer"
-                                    className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-blue-200 hover:bg-blue-50 transition-colors">
+                                  <div className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-blue-200">
                                     <span className="text-2xl">📄</span>
-                                    <div>
-                                      <p className="text-sm font-semibold text-blue-700">{driveMatch[1]}</p>
-                                      <p className="text-[10px] text-blue-500">Click to open in Drive ↗</p>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-semibold text-slate-800 truncate">{driveMatch[1]}</p>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <a href={driveMatch[2]} target="_blank" rel="noopener noreferrer"
+                                          className="text-[10px] font-bold text-blue-600 hover:underline">
+                                          👁️ Open in Drive
+                                        </a>
+                                        <a href={driveMatch[2].replace("/view", "/export?format=pdf").replace("open?id=", "uc?export=download&id=")} 
+                                          download={driveMatch[1]}
+                                          className="text-[10px] font-bold text-emerald-600 hover:underline">
+                                          ⬇️ Download
+                                        </a>
+                                      </div>
                                     </div>
-                                  </a>
+                                  </div>
                                 ) : isDoc ? (
                                   <div className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-slate-200">
                                     <span className="text-2xl">📄</span>
                                     <div>
-                                      <p className="text-sm font-semibold text-slate-800">Document</p>
+                                      <p className="text-sm font-semibold text-slate-800">Document received</p>
                                       <p className="text-[10px] text-slate-500">Saving to case docs...</p>
                                     </div>
                                   </div>
