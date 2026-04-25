@@ -7938,12 +7938,37 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                       ? "bg-[#d9fdd3] text-slate-900 rounded-tr-sm"
                                       : "bg-white text-slate-900 rounded-tl-sm"
                                   }`}>
-                                    {/* Message image/doc */}
-                                    {(msg.message || "").startsWith("[") && (msg.message || "").includes("Drive") ? (
-                                      <p className="text-xs text-blue-600 font-medium">📎 Document received</p>
-                                    ) : (
-                                      <p className="whitespace-pre-wrap text-sm">{msg.message}</p>
-                                    )}
+                                    {/* Message rendering */}
+                                    {(() => {
+                                      const txt = msg.message || "";
+                                      // Drive link format: 📎 [filename](driveUrl)
+                                      const driveMatch = txt.match(/^📎 \[(.+?)\]\((.+?)\)$/);
+                                      if (driveMatch) {
+                                        return (
+                                          <a href={driveMatch[2]} target="_blank" rel="noopener noreferrer"
+                                            className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-slate-200 hover:bg-slate-50 transition-colors">
+                                            <span className="text-lg">📄</span>
+                                            <div>
+                                              <p className="text-xs font-semibold text-blue-700 hover:underline">{driveMatch[1]}</p>
+                                              <p className="text-[10px] text-slate-400">Click to view in Drive</p>
+                                            </div>
+                                          </a>
+                                        );
+                                      }
+                                      // Plain document marker (no drive link yet)
+                                      if (txt.startsWith("📎") || txt.startsWith("[doc:")) {
+                                        return (
+                                          <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-slate-200">
+                                            <span className="text-lg">📄</span>
+                                            <div>
+                                              <p className="text-xs font-semibold text-slate-600">Document received</p>
+                                              <p className="text-[10px] text-slate-400">Saving to Drive...</p>
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      return <p className="whitespace-pre-wrap text-sm">{txt}</p>;
+                                    })()}
                                     <div className={`flex items-center gap-1 mt-1 ${isOut ? "justify-end" : "justify-start"}`}>
                                       <p className="text-[10px] text-slate-400">
                                         {msgTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

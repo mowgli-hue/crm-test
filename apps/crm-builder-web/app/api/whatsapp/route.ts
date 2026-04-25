@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
         const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-        const displayMsg = msgType === "text" ? text : `[${msgType} received]`;
+        const displayMsg = msgType === "text" ? text : `[doc:${msgId}]`;
         // Auto-unarchive if client messages again after case was archived
         await pool.query(`UPDATE whatsapp_inbox SET is_archived = FALSE WHERE phone = $1 AND is_archived = TRUE`, [from]).catch(() => {});
         await pool.query(
@@ -259,7 +259,19 @@ Reply ONLY with JSON: {
               } catch(e) { console.error("Drive save failed (non-fatal):", e); }
 
               // ── STEP 4: SAVE DOCUMENT RECORD IN CRM ─────────────────────
-              const finalLink = driveLink || s3Link || `wa://media/${mediaId}`;
+              const finalLink = driveLink || s3Link || "";
+              
+              // Update inbox message with proper file name and drive link
+              try {
+                const inboxMsg = driveLink 
+                  ? `📎 [${properFileName}](${driveLink})`
+                  : `📎 ${properFileName}`;
+                await pool.query(
+                  `UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`,
+                  [inboxMsg, msgId]
+                );
+              } catch { /* non-fatal */ }
+
               await addDocument({
                 companyId: COMPANY_ID,
                 caseId: matched.id,
