@@ -7826,10 +7826,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const unreadCount = inboxMessages.filter(m => m.phone === phone && !m.is_read && m.direction === "inbound").length;
                       const isUrgent = unreadCount > 0 && (now.getTime() - msgTime.getTime()) > 2 * 60 * 60 * 1000;
 
+                      // Find matching case for extra info
+                      const matchedCaseForThread = cases.find(c => {
+                        const cp = (c.leadPhone || "").replace(/\D/g,"");
+                        const pp = phone.replace(/\D/g,"");
+                        return cp && (pp.endsWith(cp) || cp.endsWith(pp));
+                      });
+
                       return (
                         <button key={phone} onClick={() => {
                           setInboxThread(phone);
-                          // Mark as read
                           apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ phone: phone.replace(/\D/g,""), action: "read" }) }).catch(()=>null);
                           setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, is_read: true} : m));
                         }}
@@ -7846,9 +7852,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               <p className={`text-sm truncate ${isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>{clientName}</p>
                               <p className={`text-[10px] shrink-0 ml-2 ${isUnread ? "text-emerald-600 font-bold" : "text-slate-400"}`}>{timeStr}</p>
                             </div>
+                            {/* Case info row */}
+                            {matchedCaseForThread && (
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <span className="text-[10px] text-slate-400 font-mono">{matchedCaseForThread.id}</span>
+                                <span className="text-[10px] text-slate-300">·</span>
+                                <span className="text-[10px] text-slate-500 truncate">{matchedCaseForThread.formType}</span>
+                                {matchedCaseForThread.assignedTo && matchedCaseForThread.assignedTo !== "Unassigned" && (
+                                  <>
+                                    <span className="text-[10px] text-slate-300">·</span>
+                                    <span className="text-[10px] text-emerald-600 font-medium">{matchedCaseForThread.assignedTo}</span>
+                                  </>
+                                )}
+                              </div>
+                            )}
                             <div className="flex items-center justify-between mt-0.5">
                               <p className={`text-xs truncate ${isUnread ? "text-slate-700 font-medium" : "text-slate-400"}`}>
-                                {thread.direction === "outbound" ? "✓ " : ""}{(thread.message || "").slice(0, 45)}
+                                {thread.direction === "outbound" ? "✓ " : ""}{(thread.message || "").startsWith("[doc:") ? "📎 Document" : (thread.message || "").startsWith("📎") ? "📎 Document" : (thread.message || "").slice(0, 40)}
                               </p>
                               {unreadCount > 0 && (
                                 <span className={`shrink-0 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-black text-white ${isUrgent ? "bg-red-500" : "bg-emerald-500"}`}>
