@@ -5840,6 +5840,39 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                         </div>
 
+                        {/* ── Representative Letter ── */}
+                        <div className="rounded-xl border border-purple-200 bg-purple-50 p-3 flex items-center justify-between gap-3 flex-wrap">
+                          <div>
+                            <p className="text-xs font-bold text-purple-900">📜 Representative Letter</p>
+                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — {RCIC_NAME}, RCIC R-705964</p>
+                          </div>
+                          <button onClick={async () => {
+                            setCaseActionStatus("Generating rep letter...");
+                            try {
+                              const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
+                                method: "POST",
+                                headers: {"Content-Type":"application/json"},
+                                body: JSON.stringify({ systemToken: "newton-recovery-2024" })
+                              });
+                              if (res?.ok) {
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${selectedCase.client}- Representative Letter.pdf`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                                setCaseActionStatus("✅ Rep letter downloaded!");
+                              } else {
+                                setCaseActionStatus("❌ Failed to generate letter");
+                              }
+                            } catch { setCaseActionStatus("❌ Error generating letter"); }
+                            setTimeout(() => setCaseActionStatus(""), 4000);
+                          }} className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-700 shrink-0">
+                            📥 Generate & Download
+                          </button>
+                        </div>
+
                         {/* ── Generate IRCC Forms ── */}
                         {["post-graduation work permit","pgwp","sowp","spousal open work permit","bowp","bridging open work permit","open work permit","lmia","visitor record","visitor visa","trv","study permit","restoration"].some(k => selectedCase.formType.toLowerCase().includes(k)) && (
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 flex items-center justify-between gap-3 flex-wrap">
