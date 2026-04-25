@@ -86,6 +86,11 @@ export async function PATCH(request: NextRequest) {
     await pool.query(`UPDATE whatsapp_inbox SET is_read = TRUE WHERE phone = $1`, [phone]);
     return NextResponse.json({ ok: true });
   }
+
+  if (action === "delete" && id) {
+    await pool.query(`DELETE FROM whatsapp_inbox WHERE id = $1`, [id]);
+    return NextResponse.json({ ok: true, action: "deleted" });
+  }
   
   if (id) {
     await pool.query(`UPDATE whatsapp_inbox SET is_read = TRUE WHERE id = $1`, [id]);
