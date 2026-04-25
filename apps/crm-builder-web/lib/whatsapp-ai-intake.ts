@@ -61,7 +61,7 @@ export async function getSession(phone: string, companyId?: string): Promise<Int
     const raw = intake.whatsappSession;
     if (!raw) return undefined;
     const session = JSON.parse(raw) as IntakeSession;
-    console.log(`✅ Session found: phase=${session.phase} caseId=${session.caseId}`);
+    console.log(`✅ Session found: phase=${session.phase} caseId=${session.caseId} chatTurns=${session.chatTurns} currentBatch=${session.currentBatch ?? 0}`);
     return session;
   } catch (e) { 
     console.error("getSession error:", e);
@@ -97,7 +97,7 @@ export async function setSession(phone: string, session: IntakeSession): Promise
       }
     }
     
-    console.log(`💾 Session saved: caseId=${session.caseId} phase=${session.phase}`);
+    console.log(`💾 Session saved: caseId=${session.caseId} phase=${session.phase} chatTurns=${session.chatTurns} currentBatch=${session.currentBatch ?? 0}`);
   } catch (e) { console.error("setSession error:", e); }
 }
 
