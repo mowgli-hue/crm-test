@@ -5844,7 +5844,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         <div className="rounded-xl border border-purple-200 bg-purple-50 p-3 flex items-center justify-between gap-3 flex-wrap">
                           <div>
                             <p className="text-xs font-bold text-purple-900">📜 Representative Letter</p>
-                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — {RCIC_NAME}, RCIC R-705964</p>
+                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — Navdeep Singh Sandhu, RCIC R-705964</p>
                           </div>
                           <button onClick={async () => {
                             setCaseActionStatus("Generating rep letter...");
