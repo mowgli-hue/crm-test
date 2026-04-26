@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase, addDocument, updateCaseLinks } from "@/lib/store";
-import { mapIntakeToImm5710 } from "@/lib/imm5710-mapper";
+import { mapIntakeToForm } from "@/lib/intake-to-form-mappers";
 import { uploadFileToDriveFolder, getOrCreateDriveSubfolder } from "@/lib/google-drive";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const intake = (caseItem.pgwpIntake as Record<string, unknown>) || {};
     const formType = caseItem.formType || "PGWP";
     const clientName = (caseItem.client as string) || "Client";
-    const clientData = mapIntakeToImm5710(intake, formType);
+    const clientData = mapIntakeToForm(intake, formType);
     const ft = formType.toLowerCase();
 
     let formId = "imm5710"; let formLabel = "IMM5710E";
