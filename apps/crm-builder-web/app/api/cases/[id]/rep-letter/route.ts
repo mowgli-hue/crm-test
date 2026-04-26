@@ -465,6 +465,142 @@ function drawFooter(page: PDFPage) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// AI-powered body generation — takes a client's story and produces
+// a properly structured letter body using HEADING/BULLET markers
+// ──────────────────────────────────────────────────────────────
+
+interface AIBodyParams {
+  clientStory: string;
+  clientName: string;
+  formType: string;
+  formTypeFull: string;
+  pronoun: { subject: string; object: string; possessive: string };
+  passportNo: string;
+  uci: string;
+  institution: string;
+  program: string;
+  arrivalDate: string;
+  permitExpiry: string;
+  programEndDate: string;
+}
+
+async function generateLetterBodyWithAI(p: AIBodyParams): Promise<string[]> {
+  const knownFacts: string[] = [];
+  if (p.passportNo) knownFacts.push(`Passport No.: ${p.passportNo}`);
+  if (p.uci) knownFacts.push(`UCI: ${p.uci}`);
+  if (p.institution) knownFacts.push(`Institution: ${p.institution}`);
+  if (p.program) knownFacts.push(`Program: ${p.program}`);
+  if (p.arrivalDate) knownFacts.push(`Arrival in Canada: ${p.arrivalDate}`);
+  if (p.permitExpiry) knownFacts.push(`Current permit expires: ${p.permitExpiry}`);
+  if (p.programEndDate) knownFacts.push(`Program end date: ${p.programEndDate}`);
+
+  const systemPrompt = `You are a Regulated Canadian Immigration Consultant (RCIC) drafting the body of a formal Representative Submission Letter to IRCC (Immigration, Refugees and Citizenship Canada).
+
+You will receive:
+- The client's specific story / situational notes from the consultant
+- The client's known facts (name, passport, institution, etc.)
+- The application type
+
+Your job: produce a polished, professional letter body that weaves the client's specific situation into an appropriate IRCC submission letter structure.
+
+CRITICAL OUTPUT FORMAT — return ONLY a JSON array of strings. Each string is one element of the letter body, in order. Use these markers:
+
+  "HEADING:Section Title"           — produces a bold section heading with red accent bar
+  "BULLET:Bold Label:|Rest of text" — produces a bullet point with bold label
+  "Plain paragraph text"            — any string without a marker is a body paragraph
+
+Example output:
+[
+  "I am writing to formally request a study permit extension on behalf of my client, Aarti (Passport No. U4471976)...",
+  "She is committed to her academic program...",
+  "HEADING:Eligibility for Study Permit Extension",
+  "As per Canadian government regulations, an inside-Canada application may be submitted if...",
+  "BULLET:Valid Study Permit:|Attached is Aarti's valid study permit.",
+  "BULLET:Confirmation of Enrollment:|We have included the confirmation of enrollment from Capilano University.",
+  "HEADING:Request for Consideration",
+  "We respectfully request your prompt and favourable consideration of this application...",
+  "Thank you for your attention to this matter."
+]
+
+STRUCTURE GUIDELINES:
+1. Open with 1-2 introductory paragraphs that name the client and the application type, weaving in their specific situation from the story
+2. Add 2-4 HEADING sections that organize the eligibility argument or substantive case (e.g. "Background and Academic Journey", "Eligibility for [Permit Type]", "Compliance with IRCC Requirements", "Request for Consideration")
+3. Use BULLET points where listing eligibility criteria or supporting facts adds clarity (typically under "Eligibility" sections)
+4. Close with a polite request for favourable consideration and a thank-you paragraph
+5. Use the consultant's third-person voice — refer to "my client" and "${p.clientName}". Use the pronoun set ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive} for the client.
+6. Keep the tone formal, respectful, professional. No flowery language, no exclamation marks.
+7. Total letter body should be 6-12 entries in the array.
+8. NEVER include "Dear Sir/Madam" or "Sincerely" — those are added separately.
+9. NEVER include the document subject line — that's added separately.
+10. Weave the client's specific story (transfers, hardships, achievements, gaps, etc.) into the body naturally.
+
+Return ONLY the JSON array. No prose before or after. No markdown fences.`;
+
+  const userPrompt = `APPLICATION TYPE: ${p.formTypeFull}
+CLIENT NAME: ${p.clientName}
+PRONOUN: ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive}
+
+KNOWN FACTS:
+${knownFacts.length ? knownFacts.map(f => `- ${f}`).join("\n") : "(none provided)"}
+
+CLIENT'S STORY / NOTES FROM CONSULTANT:
+${p.clientStory}
+
+Draft the letter body as a JSON array of strings using the HEADING/BULLET markers as instructed.`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Anthropic API ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = (await res.json()) as any;
+  let text = data?.content?.[0]?.text || "";
+
+  // Strip any accidental markdown code fences
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+
+  // Find JSON array in response
+  const startIdx = text.indexOf("[");
+  const endIdx = text.lastIndexOf("]");
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
+    throw new Error("AI response did not contain a JSON array");
+  }
+  const jsonStr = text.substring(startIdx, endIdx + 1);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    throw new Error("AI response was not valid JSON: " + (e as Error).message);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("AI response was not an array");
+  }
+
+  const result = parsed.filter((s) => typeof s === "string" && s.trim().length > 0) as string[];
+  if (result.length < 3) {
+    throw new Error("AI response had too few entries");
+  }
+  return result;
+}
+
+// ──────────────────────────────────────────────────────────────
 // Main route
 // ──────────────────────────────────────────────────────────────
 
@@ -503,10 +639,41 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
     const subjectLine = getSubjectLine(formType, clientName);
     const docs = getDocumentsList(formType);
-    const bodyLines = getBodyParagraphs({
-      clientName, pronoun, formType, passportNo, uci, institution, program,
-      arrivalDate, permitExpiry, programEndDate,
-    });
+
+    // ── Body generation: use AI if clientStory provided, otherwise fall back to template ──
+    const clientStory = String(body.clientStory || "").trim();
+    let bodyLines: string[];
+
+    if (clientStory && clientStory.length >= 20 && process.env.ANTHROPIC_API_KEY) {
+      // Use Claude to weave the client's specific story into a properly-structured letter
+      try {
+        bodyLines = await generateLetterBodyWithAI({
+          clientStory,
+          clientName,
+          formType,
+          formTypeFull: getFormTypeFull(formType),
+          pronoun,
+          passportNo,
+          uci,
+          institution,
+          program,
+          arrivalDate,
+          permitExpiry,
+          programEndDate,
+        });
+      } catch (e) {
+        console.warn("AI letter body generation failed, falling back to template:", (e as Error).message);
+        bodyLines = getBodyParagraphs({
+          clientName, pronoun, formType, passportNo, uci, institution, program,
+          arrivalDate, permitExpiry, programEndDate,
+        });
+      }
+    } else {
+      bodyLines = getBodyParagraphs({
+        clientName, pronoun, formType, passportNo, uci, institution, program,
+        arrivalDate, permitExpiry, programEndDate,
+      });
+    }
 
     // Build PDF
     const pdfDoc = await PDFDocument.create();

@@ -552,6 +552,10 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [commPruneStatus, setCommPruneStatus] = useState("");
   const [commAutoSendInvite, setCommAutoSendInvite] = useState(true);
   const [caseActionStatus, setCaseActionStatus] = useState("");
+  const [showRepLetterModal, setShowRepLetterModal] = useState(false);
+  const [repLetterStory, setRepLetterStory] = useState("");
+  const [repLetterPronouns, setRepLetterPronouns] = useState<"they" | "he" | "she">("they");
+  const [repLetterGenerating, setRepLetterGenerating] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   const [inboxThread, setInboxThread] = useState<string|null>(null);
   const [caseNotes, setCaseNotes] = useState<Record<string, Array<{id:string;text:string;added_by:string;created_at:string}>>>({});
@@ -5852,32 +5856,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         <div className="rounded-xl border border-purple-200 bg-purple-50 p-3 flex items-center justify-between gap-3 flex-wrap">
                           <div>
                             <p className="text-xs font-bold text-purple-900">📜 Representative Letter</p>
-                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — Navdeep Singh Sandhu, RCIC R-705964</p>
+                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — AI weaves your client's story into the letter</p>
                           </div>
-                          <button onClick={async () => {
-                            setCaseActionStatus("Generating rep letter...");
-                            try {
-                              const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
-                                method: "POST",
-                                headers: {"Content-Type":"application/json"},
-                                body: JSON.stringify({ systemToken: "newton-recovery-2024" })
-                              });
-                              if (res?.ok) {
-                                const blob = await res.blob();
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = `${selectedCase.client}- Representative Letter.pdf`;
-                                a.click();
-                                URL.revokeObjectURL(url);
-                                setCaseActionStatus("✅ Rep letter downloaded!");
-                              } else {
-                                setCaseActionStatus("❌ Failed to generate letter");
-                              }
-                            } catch { setCaseActionStatus("❌ Error generating letter"); }
-                            setTimeout(() => setCaseActionStatus(""), 4000);
+                          <button onClick={() => {
+                            // Pre-fill with any existing notes from the case so staff can extend rather than retype
+                            const existing = String((selectedCase as any)?.additionalNotes || "").trim();
+                            setRepLetterStory(existing);
+                            setRepLetterPronouns("they");
+                            setShowRepLetterModal(true);
                           }} className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-700 shrink-0">
-                            📥 Generate & Download
+                            ✍️ Write Story & Generate
                           </button>
                         </div>
 
@@ -8978,6 +8966,115 @@ function ClientPortal({
 
         <p className="text-center text-[10px] text-slate-400 pb-4">Newton Immigration · Secure Portal · All data encrypted</p>
       </div>
+
+      {/* ── Representative Letter modal: write story → AI generates → download ── */}
+      {showRepLetterModal && selectedCase && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">📜 Representative Letter</h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {selectedCase.client} · {selectedCase.formType}
+                </p>
+              </div>
+              {!repLetterGenerating && (
+                <button onClick={() => setShowRepLetterModal(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 mb-3">
+              <p className="text-[11px] text-amber-900 leading-snug">
+                ✍️ <strong>Write the client's story below.</strong> Include their journey, why they're applying, any unique circumstances (transfers, refusals, gaps, hardships, achievements). Claude AI will weave it into a professional IRCC submission letter with proper structure and headings.
+              </p>
+            </div>
+
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+              Client's story / consultant notes <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={repLetterStory}
+              onChange={e => setRepLetterStory(e.target.value)}
+              disabled={repLetterGenerating}
+              rows={10}
+              placeholder={`Example:\n\nAarti began her studies at Capilano University and was progressing well. Due to outside influence she transferred to Granville College for one semester, but realized this was not the right fit. She returned to Capilano University to continue her Associate of Arts degree and is now back on track. Attached are unofficial transcripts from both institutions reflecting her academic progress.`}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-purple-400 font-mono leading-relaxed disabled:bg-slate-50"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              {repLetterStory.length} characters · Minimum 20 characters required
+              {repLetterStory.length < 20 && <span className="text-amber-600"> (or skip story for the default template)</span>}
+            </p>
+
+            <div className="mt-3">
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">Client pronouns</label>
+              <div className="flex gap-2">
+                {(["they", "she", "he"] as const).map(p => (
+                  <button
+                    key={p}
+                    disabled={repLetterGenerating}
+                    onClick={() => setRepLetterPronouns(p)}
+                    className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${repLetterPronouns === p ? "border-purple-500 bg-purple-50 text-purple-700" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+                    {p === "they" ? "they/them/their" : p === "she" ? "she/her" : "he/him"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2 justify-end items-center">
+              {repLetterGenerating && (
+                <span className="text-xs text-purple-600 font-semibold mr-auto">
+                  ⏳ AI is drafting your letter…
+                </span>
+              )}
+              <button
+                onClick={() => setShowRepLetterModal(false)}
+                disabled={repLetterGenerating}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRepLetterGenerating(true);
+                  setCaseActionStatus("AI is drafting the letter…");
+                  try {
+                    const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        systemToken: "newton-recovery-2024",
+                        clientStory: repLetterStory.trim(),
+                        pronouns: repLetterPronouns,
+                      }),
+                    });
+                    if (res?.ok) {
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `${selectedCase.client} - Representative Letter.pdf`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      setCaseActionStatus("✅ Rep letter downloaded!");
+                      setShowRepLetterModal(false);
+                      setRepLetterStory("");
+                    } else {
+                      const err = await res?.json().catch(() => ({}));
+                      setCaseActionStatus(`❌ Failed: ${err.error || "Unknown error"}`);
+                    }
+                  } catch {
+                    setCaseActionStatus("❌ Error generating letter");
+                  }
+                  setRepLetterGenerating(false);
+                  setTimeout(() => setCaseActionStatus(""), 5000);
+                }}
+                disabled={repLetterGenerating}
+                className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
+                {repLetterGenerating ? "Generating…" : (repLetterStory.trim().length >= 20 ? "🪄 Generate with AI" : "📥 Generate (default template)")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
