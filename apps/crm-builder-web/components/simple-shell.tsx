@@ -5862,7 +5862,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             <p className="text-xs font-bold text-purple-900">📜 Representative Letter</p>
                             <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — AI weaves your client's story into the letter</p>
                           </div>
-                          <button onClick={() => {
+                          <button onClick={(e) => {
+                            e.stopPropagation();
+                            console.log("[RepLetter] Opening modal for case:", selectedCase?.id);
                             // Pre-fill with any existing notes from the case so staff can extend rather than retype
                             const existing = String((selectedCase as any)?.additionalNotes || "").trim();
                             setRepLetterStory(existing);
@@ -8972,14 +8974,14 @@ function ClientPortal({
       </div>
 
       {/* ── Representative Letter modal: write story → AI generates → download ── */}
-      {showRepLetterModal && selectedCase && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
+      {showRepLetterModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
           <div className="bg-white rounded-2xl p-5 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900">📜 Representative Letter</h2>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  {selectedCase.client} · {selectedCase.formType}
+                  {selectedCase ? `${selectedCase.client} · ${selectedCase.formType}` : "(select a case first)"}
                 </p>
               </div>
               {!repLetterGenerating && (
@@ -9038,6 +9040,11 @@ function ClientPortal({
               </button>
               <button
                 onClick={async () => {
+                  if (!selectedCase) {
+                    setCaseActionStatus("❌ Please select a case first.");
+                    setShowRepLetterModal(false);
+                    return;
+                  }
                   setRepLetterGenerating(true);
                   setCaseActionStatus("AI is drafting the letter…");
                   try {
@@ -9071,7 +9078,7 @@ function ClientPortal({
                   setRepLetterGenerating(false);
                   setTimeout(() => setCaseActionStatus(""), 5000);
                 }}
-                disabled={repLetterGenerating}
+                disabled={repLetterGenerating || !selectedCase}
                 className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
                 {repLetterGenerating ? "Generating…" : (repLetterStory.trim().length >= 20 ? "🪄 Generate with AI" : "📥 Generate (default template)")}
               </button>
