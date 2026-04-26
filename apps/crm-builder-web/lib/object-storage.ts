@@ -77,6 +77,23 @@ export async function putObjectToS3(input: {
   );
 }
 
+// Retrieve a file from S3 as a Buffer
+export async function getObjectFromS3(key: string): Promise<Buffer> {
+  const client = await getS3Client();
+  const bucket = getS3Bucket();
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key })
+  );
+  const stream = res.Body as any;
+  if (!stream) throw new Error("S3 GetObject returned no body");
+  // Convert stream to buffer
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function getSignedUploadUrl(input: {
   key: string;
   contentType?: string;

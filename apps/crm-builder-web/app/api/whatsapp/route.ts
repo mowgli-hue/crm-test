@@ -114,7 +114,113 @@ export async function POST(req: NextRequest) {
         await pool.end();
       } catch { /* non-fatal */ }
 
-      // Handle document/image uploads → save to Drive
+      // ── Handle docs from UNKNOWN numbers (orphan docs) ──
+      // When a brand new number sends a doc, save it to S3 + classify it so it's not lost.
+      // It'll be re-filed properly once the contact gets linked to a case.
+      if (!matched && (msgType === "document" || msgType === "image" || msgType === "audio")) {
+        const mediaId = message[msgType]?.id;
+        const originalFilename = message[msgType]?.filename || message[msgType]?.name || null;
+
+        if (mediaId) {
+          console.log(`📎 Orphan WA media from unknown number ${from}: ${originalFilename || msgType}`);
+          try {
+            const media = await downloadWaMedia(mediaId);
+            if (media) {
+              const { putObjectToS3, buildS3ObjectKey, toS3StoredLink } = await import("@/lib/object-storage");
+              const ext = (originalFilename || media.filename || "").includes(".")
+                ? (originalFilename || media.filename).split(".").pop()
+                : media.mimeType.includes("pdf") ? "pdf" : "jpg";
+
+              // Save to S3 under "orphan" path
+              const timestamp = Date.now();
+              const s3Key = buildS3ObjectKey({
+                companyId: COMPANY_ID,
+                caseId: `orphan-${from.replace(/\D/g, "")}`,
+                fileName: `${timestamp}-${originalFilename || media.filename}`
+              });
+              let s3Link = "";
+              try {
+                await putObjectToS3({ key: s3Key, content: media.buffer, contentType: media.mimeType });
+                s3Link = toS3StoredLink(s3Key);
+                console.log(`✅ Orphan saved to S3: ${s3Key}`);
+              } catch (e) {
+                console.error("Orphan S3 save failed:", e);
+              }
+
+              // Quick AI classify so we know what kind of doc it is
+              let suggestedLabel = originalFilename || msgType;
+              try {
+                const isImage = media.mimeType.includes("image");
+                const isPdf = media.mimeType.includes("pdf");
+                const scanContent: any[] = [];
+                if (isImage) {
+                  const safeType = media.mimeType.includes("png") ? "image/png" : "image/jpeg";
+                  scanContent.push({ type: "image", source: { type: "base64", media_type: safeType, data: media.buffer.toString("base64") } });
+                } else if (isPdf) {
+                  scanContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: media.buffer.toString("base64") } });
+                }
+                if (scanContent.length > 0) {
+                  scanContent.push({ type: "text", text: `What kind of immigration document is this? Reply with only a short label (e.g. "Passport", "Study Permit", "Transcripts", "IELTS Result"). 1-3 words max.` });
+                  const classRes = await fetch("https://api.anthropic.com/v1/messages", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY || "", "anthropic-version": "2023-06-01" },
+                    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 50, messages: [{ role: "user", content: scanContent }] })
+                  });
+                  if (classRes.ok) {
+                    const classData = await classRes.json() as any;
+                    const label = (classData.content?.[0]?.text || "").trim().replace(/[^\w\s-]/g, "").slice(0, 40);
+                    if (label) suggestedLabel = label;
+                  }
+                }
+              } catch (e) { /* non-fatal */ }
+
+              // Store orphan doc record for later linking
+              try {
+                const { Pool } = await import("pg");
+                const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                await pool.query(`
+                  CREATE TABLE IF NOT EXISTS orphan_docs (
+                    id TEXT PRIMARY KEY,
+                    phone TEXT NOT NULL,
+                    suggested_label TEXT,
+                    original_filename TEXT,
+                    mime_type TEXT,
+                    s3_key TEXT,
+                    s3_link TEXT,
+                    linked_case_id TEXT,
+                    linked_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                  )
+                `);
+                await pool.query(`CREATE INDEX IF NOT EXISTS idx_orphan_docs_phone ON orphan_docs(phone) WHERE linked_case_id IS NULL`);
+                const orphanId = `orphan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                await pool.query(
+                  `INSERT INTO orphan_docs (id, phone, suggested_label, original_filename, mime_type, s3_key, s3_link)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                  [orphanId, from, suggestedLabel, originalFilename, media.mimeType, s3Key, s3Link]
+                );
+
+                // Update the inbox message to show the doc is captured
+                try {
+                  await pool.query(
+                    `UPDATE whatsapp_inbox SET message = $1 WHERE phone = $2 AND message LIKE '%doc:%' ORDER BY created_at DESC LIMIT 1`,
+                    [`📎 ${suggestedLabel} (orphan — save contact name to file)`, from]
+                  );
+                } catch { /* non-fatal */ }
+
+                await pool.end();
+                console.log(`📌 Orphan doc registered: ${suggestedLabel} from ${from}`);
+              } catch (e) {
+                console.error("Orphan registration failed:", e);
+              }
+            }
+          } catch (e) {
+            console.error("Orphan media download failed:", (e as Error).message);
+          }
+        }
+      }
+
+      // Handle document/image uploads → save to Drive (KNOWN clients only)
       if (matched && (msgType === "document" || msgType === "image" || msgType === "audio")) {
         const mediaId = message[msgType]?.id;
         const originalFilename = message[msgType]?.filename || message[msgType]?.name || null;
@@ -143,7 +249,7 @@ export async function POST(req: NextRequest) {
                 fileName: `${timestamp}-${originalFilename || media.filename}` 
               });
               try {
-                await putObjectToS3({ key: s3Key, body: media.buffer, contentType: media.mimeType });
+                await putObjectToS3({ key: s3Key, content: media.buffer, contentType: media.mimeType });
                 s3Link = toS3StoredLink(s3Key);
                 console.log(`✅ S3 saved: ${s3Key}`);
               } catch(e) { console.error("S3 save failed:", e); }

@@ -8150,6 +8150,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             <select defaultValue="" onChange={async e => {
                               const cId = e.target.value; if (!cId) return;
                               await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
+                              // Auto-link any orphan WhatsApp docs from this phone to this case
+                              try {
+                                const linkRes = await apiFetch(`/orphan-docs`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, caseId: cId})});
+                                const linkData = await linkRes?.json().catch(() => ({}));
+                                if (linkData?.linked > 0) {
+                                  setCaseActionStatus(`✅ Linked to case + filed ${linkData.linked} WhatsApp doc${linkData.linked === 1 ? "" : "s"} to Drive`);
+                                } else {
+                                  setCaseActionStatus(`✅ Linked to case ${cId}`);
+                                }
+                                setTimeout(() => setCaseActionStatus(""), 4500);
+                              } catch {}
                               setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
                               setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
                             }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">

@@ -52,7 +52,81 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
       [phone, newCase.id]
     );
 
-    return NextResponse.json({ ok: true, case: newCase });
+    // Auto-link any orphan WhatsApp docs from this phone to the new case
+    let orphansLinked = 0;
+    try {
+      const orphansRes = await pool.query(
+        `SELECT COUNT(*) FROM orphan_docs WHERE phone = $1 AND linked_case_id IS NULL`,
+        [phone]
+      );
+      const orphanCount = parseInt(orphansRes.rows[0]?.count || "0", 10);
+      if (orphanCount > 0) {
+        // Trigger the orphan-link logic via internal call
+        // (We replicate the logic here to avoid an HTTP self-call which would need auth)
+        const orphans = await pool.query(
+          `SELECT * FROM orphan_docs WHERE phone = $1 AND linked_case_id IS NULL ORDER BY created_at ASC`,
+          [phone]
+        );
+        const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
+        const { getObjectFromS3 } = await import("@/lib/object-storage");
+        const { addDocument, updateCaseLinks, getCase } = await import("@/lib/store");
+        const caseFresh = await getCase(companyId, newCase.id);
+        let driveFolderId = extractDriveFolderId(caseFresh?.docsUploadLink || "");
+        if (!driveFolderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
+          try {
+            const structure = await createCaseDriveStructure(
+              process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+              `${clientName} - ${formType}`
+            );
+            driveFolderId = structure.subfolders.clientDocuments.id;
+            await updateCaseLinks(companyId, newCase.id, {
+              docsUploadLink: structure.subfolders.clientDocuments.webViewLink,
+              applicationFormsLink: structure.subfolders.applicationForms.webViewLink,
+              submittedFolderLink: structure.subfolders.submitted.webViewLink,
+              correspondenceFolderLink: structure.subfolders.correspondence.webViewLink,
+            });
+          } catch (e) { console.warn("Drive auto-create on convert failed:", (e as Error).message); }
+        }
+        const cleanName = clientName.replace(/[^a-zA-Z0-9 ]/g, "").trim();
+        for (const orphan of orphans.rows) {
+          try {
+            const ext = orphan.original_filename?.includes(".") ? orphan.original_filename.split(".").pop()
+              : orphan.mime_type?.includes("pdf") ? "pdf" : orphan.mime_type?.includes("image") ? "jpg" : "bin";
+            const properFileName = `${cleanName} - ${orphan.suggested_label || "Document"}.${ext}`;
+            let driveLink = "";
+            let fileBuffer: Buffer | null = null;
+            try { fileBuffer = await getObjectFromS3(orphan.s3_key); } catch {}
+            if (driveFolderId && fileBuffer) {
+              try {
+                const driveRes = await uploadFileToDriveFolder({
+                  folderId: driveFolderId,
+                  fileName: properFileName,
+                  fileBuffer,
+                  mimeType: orphan.mime_type || "application/octet-stream",
+                });
+                driveLink = driveRes.webViewLink || "";
+              } catch (e) { console.warn("Drive upload failed:", (e as Error).message); }
+            }
+            await addDocument({
+              companyId,
+              caseId: newCase.id,
+              name: properFileName,
+              category: "client",
+              uploadedBy: clientName + " (WhatsApp orphan)",
+              status: "received",
+              link: driveLink || orphan.s3_link || "",
+            });
+            await pool.query(
+              `UPDATE orphan_docs SET linked_case_id = $1, linked_at = NOW() WHERE id = $2`,
+              [newCase.id, orphan.id]
+            );
+            orphansLinked++;
+          } catch (e) { console.error("Orphan auto-link failed:", (e as Error).message); }
+        }
+      }
+    } catch (e) { console.error("Orphan link block failed (non-fatal):", (e as Error).message); }
+
+    return NextResponse.json({ ok: true, case: newCase, orphansLinked });
   } catch (e) {
     console.error("Lead convert error:", (e as Error).message);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
