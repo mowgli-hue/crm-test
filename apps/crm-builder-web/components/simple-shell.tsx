@@ -3973,6 +3973,243 @@ We will notify you as soon as we receive a decision. This usually takes a few we
       }
     : { subtitle: "Company workflow: lead to decision in one simple workspace." };
 
+  // ── Form Review Modal helper ──
+  // Opens a vanilla-JS injected modal showing parsed form data side-by-side with raw intake
+  // answers, lets staff edit any field, then fires the onConfirm callback with the edits.
+  // Uses vanilla DOM (not React state) for the same reason the rep-letter modal does:
+  // bulletproof against any CSS / portal / state issues.
+  function openFormReviewModal(opts: {
+    caseId: string;
+    clientName: string;
+    formType: string;
+    clientData: Record<string, any>;
+    aiUsed?: boolean;
+    aiError?: string;
+    rawIntake: Record<string, any>;
+    onConfirm: (overrides: Record<string, any>) => Promise<void> | void;
+  }) {
+    // Remove any existing review modal
+    const existing = document.getElementById("__form_review_modal__");
+    if (existing) existing.remove();
+
+    // Field groups — organized by IRCC form section for readability
+    const FIELD_GROUPS: Array<{ title: string; fields: Array<{ key: string; label: string; type?: "text"|"bool"|"date" }> }> = [
+      {
+        title: "👤 Identity & Passport",
+        fields: [
+          { key: "family_name", label: "Family Name" },
+          { key: "given_name", label: "Given Name" },
+          { key: "sex", label: "Sex" },
+          { key: "dob_year", label: "DOB Year" },
+          { key: "dob_month", label: "DOB Month" },
+          { key: "dob_day", label: "DOB Day" },
+          { key: "place_birth_city", label: "City of Birth" },
+          { key: "place_birth_country", label: "Country of Birth" },
+          { key: "citizenship_country", label: "Citizenship" },
+          { key: "passport_number", label: "Passport Number" },
+          { key: "passport_country", label: "Passport Country" },
+          { key: "passport_issue_year", label: "Passport Issue Year" },
+          { key: "passport_issue_month", label: "Passport Issue Month" },
+          { key: "passport_issue_day", label: "Passport Issue Day" },
+          { key: "passport_expiry_year", label: "Passport Expiry Year" },
+          { key: "passport_expiry_month", label: "Passport Expiry Month" },
+          { key: "passport_expiry_day", label: "Passport Expiry Day" },
+          { key: "uci_client_id", label: "UCI / Client ID" },
+        ]
+      },
+      {
+        title: "💍 Marital",
+        fields: [
+          { key: "marital_status", label: "Marital Status" },
+          { key: "spouse_family_name", label: "Spouse Family Name" },
+          { key: "spouse_given_name", label: "Spouse Given Name" },
+          { key: "date_of_marriage", label: "Date of Marriage" },
+          { key: "previously_married", label: "Previously Married", type: "bool" },
+        ]
+      },
+      {
+        title: "🏠 Address & Contact",
+        fields: [
+          { key: "mailing_apt_unit", label: "Apt / Unit" },
+          { key: "mailing_street_num", label: "Street Number" },
+          { key: "mailing_street_name", label: "Street Name" },
+          { key: "mailing_city", label: "City" },
+          { key: "mailing_province", label: "Province / State" },
+          { key: "mailing_postal_code", label: "Postal Code" },
+          { key: "mailing_country", label: "Country" },
+          { key: "residential_same_as_mailing", label: "Residential = Mailing", type: "bool" },
+          { key: "phone_area_code", label: "Phone Area Code" },
+          { key: "phone_first_three", label: "Phone First 3" },
+          { key: "phone_last_five", label: "Phone Last 5" },
+          { key: "email", label: "Email" },
+        ]
+      },
+      {
+        title: "🇨🇦 Status in Canada / Entry",
+        fields: [
+          { key: "current_status", label: "Current Status" },
+          { key: "current_status_to_date", label: "Status Expires" },
+          { key: "original_entry_date", label: "First Entry Date" },
+          { key: "original_entry_place", label: "First Entry Place" },
+          { key: "original_entry_purpose", label: "First Entry Purpose" },
+          { key: "previous_doc_number", label: "Previous Document Number" },
+        ]
+      },
+      {
+        title: "🎓 Education / Study",
+        fields: [
+          { key: "study_school_name", label: "School Name" },
+          { key: "study_program_name", label: "Program / Field" },
+          { key: "study_program_end_date", label: "Program End Date" },
+          { key: "study_extension_reason", label: "Reason for Extension" },
+          { key: "study_changing_school", label: "Changing School", type: "bool" },
+          { key: "study_changing_program", label: "Changing Program", type: "bool" },
+          { key: "study_maintained_full_time", label: "Maintained Full-Time", type: "bool" },
+          { key: "edu_school_name", label: "Education School (legacy)" },
+          { key: "edu_field_of_study", label: "Field of Study (legacy)" },
+        ]
+      },
+      {
+        title: "✈️ Visit Details (Visitor only)",
+        fields: [
+          { key: "visit_purpose", label: "Purpose of Visit" },
+          { key: "visit_arrival_date", label: "Arrival Date" },
+          { key: "visit_departure_date", label: "Departure Date" },
+          { key: "canada_contact_name", label: "Contact in Canada" },
+          { key: "canada_contact_relationship", label: "Relationship" },
+          { key: "canada_contact_address", label: "Contact Address" },
+          { key: "funds_amount_cad", label: "Funds (CAD)" },
+        ]
+      },
+      {
+        title: "🔍 Background",
+        fields: [
+          { key: "prev_application_refused", label: "Prev Refused", type: "bool" },
+          { key: "prev_refused_details", label: "Refusal Details" },
+          { key: "has_medical_condition", label: "Medical Condition", type: "bool" },
+          { key: "medical_details", label: "Medical Details" },
+          { key: "has_criminal_record", label: "Criminal Record", type: "bool" },
+          { key: "criminal_details", label: "Criminal Details" },
+          { key: "native_language", label: "Native Language" },
+          { key: "communicate_language", label: "Speaks (En/Fr/Both)" },
+        ]
+      },
+    ];
+
+    // Build the modal
+    const modal = document.createElement("div");
+    modal.id = "__form_review_modal__";
+    modal.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;`;
+
+    // Build raw answers HTML for the right panel
+    const rawAnswersList: string[] = [];
+    for (let i = 1; i <= 30; i++) {
+      const v = opts.rawIntake[`q${i}`];
+      if (v) {
+        const safe = String(v).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c] || c));
+        rawAnswersList.push(`<div style="margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;font-size:11px;"><strong style="color:#7e22ce;">Q${i}:</strong> <span style="color:#475569;">${safe}</span></div>`);
+      }
+    }
+    const rawAnswersHTML = rawAnswersList.join("") || `<p style="color:#94a3b8;font-size:11px;">(no Q-numbered answers found)</p>`;
+
+    // Build editable form fields HTML for the left panel
+    const groupsHTML = FIELD_GROUPS.map(group => {
+      const fieldsHTML = group.fields.map(f => {
+        const val = opts.clientData[f.key];
+        const displayVal = val === undefined || val === null ? "" : String(val);
+        const safeVal = displayVal.replace(/"/g, "&quot;").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c] || c));
+        if (f.type === "bool") {
+          const checked = val === true || val === "true";
+          return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9;">
+            <label style="flex:1;font-size:11px;color:#475569;font-weight:500;">${f.label}</label>
+            <input type="checkbox" data-key="${f.key}" data-type="bool" ${checked ? "checked" : ""} style="width:16px;height:16px;accent-color:#10b981;cursor:pointer;" />
+          </div>`;
+        }
+        return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
+          <label style="font-size:10px;color:#64748b;font-weight:600;">${f.label}</label>
+          <input type="text" data-key="${f.key}" data-type="text" value="${safeVal}" style="border:1px solid #e2e8f0;border-radius:4px;padding:4px 6px;font-size:12px;color:#0f172a;background:white;" />
+        </div>`;
+      }).join("");
+      return `<details open style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:8px;background:white;">
+        <summary style="padding:8px 10px;cursor:pointer;font-size:12px;font-weight:bold;color:#0f172a;background:#f8fafc;border-radius:8px 8px 0 0;list-style:none;">${group.title}</summary>
+        <div style="padding:8px 12px;">${fieldsHTML}</div>
+      </details>`;
+    }).join("");
+
+    const aiBadge = opts.aiUsed
+      ? `<span style="background:#ddd6fe;color:#5b21b6;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:bold;">🤖 AI parsed</span>`
+      : `<span style="background:#fef3c7;color:#854d0e;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:bold;">⚠️ Regex only${opts.aiError ? ` (${opts.aiError.slice(0, 40)})` : ""}</span>`;
+
+    modal.innerHTML = `
+      <div style="background:white;border-radius:16px;width:100%;max-width:1100px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.25);overflow:hidden;">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(to right,#f0fdf4,#ecfdf5);">
+          <div>
+            <h2 style="margin:0;font-size:16px;font-weight:bold;color:#064e3b;">📄 Review Form Data Before Generation</h2>
+            <p style="margin:4px 0 0;font-size:11px;color:#065f46;">${opts.clientName} · ${opts.formType} ${aiBadge}</p>
+          </div>
+          <button id="__review_close__" style="background:none;border:none;font-size:24px;color:#94a3b8;cursor:pointer;line-height:1;">✕</button>
+        </div>
+        <div style="padding:8px 12px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:11px;color:#78350f;">
+          ✏️ Edit any field below before generating. Changes here only affect this PDF — they're not saved back to the case.
+        </div>
+        <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden;">
+          <div style="overflow-y:auto;padding:12px 16px;background:#fafafa;border-right:1px solid #e2e8f0;">
+            <h3 style="margin:0 0 8px;font-size:11px;font-weight:bold;color:#475569;text-transform:uppercase;letter-spacing:0.05em;">📝 What's Going Into the Form</h3>
+            ${groupsHTML}
+          </div>
+          <div style="overflow-y:auto;padding:12px 16px;background:white;">
+            <h3 style="margin:0 0 8px;font-size:11px;font-weight:bold;color:#475569;text-transform:uppercase;letter-spacing:0.05em;">💬 Client's Raw Answers</h3>
+            ${rawAnswersHTML}
+          </div>
+        </div>
+        <div style="padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;align-items:center;background:#f8fafc;">
+          <span id="__review_status__" style="margin-right:auto;font-size:11px;color:#7e22ce;font-weight:600;display:none;">⏳ Generating PDF...</span>
+          <button id="__review_cancel__" style="border:1px solid #e2e8f0;background:white;padding:7px 14px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">Cancel</button>
+          <button id="__review_confirm__" style="background:#10b981;color:white;padding:7px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">✅ Looks good — Generate PDF</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Event handlers
+    const close = () => modal.remove();
+    modal.addEventListener("click", (ev) => { if (ev.target === modal) close(); });
+    (document.getElementById("__review_close__") as HTMLButtonElement)?.addEventListener("click", close);
+    (document.getElementById("__review_cancel__") as HTMLButtonElement)?.addEventListener("click", close);
+
+    const confirmBtn = document.getElementById("__review_confirm__") as HTMLButtonElement;
+    const statusSpan = document.getElementById("__review_status__")!;
+    confirmBtn?.addEventListener("click", async () => {
+      // Collect every edited field — only include keys whose value actually changed from the original
+      const overrides: Record<string, any> = {};
+      const inputs = modal.querySelectorAll("input[data-key]");
+      inputs.forEach(inp => {
+        const el = inp as HTMLInputElement;
+        const key = el.dataset.key!;
+        const type = el.dataset.type;
+        const currentVal = type === "bool" ? el.checked : el.value;
+        const origVal = opts.clientData[key];
+        const changed = type === "bool"
+          ? currentVal !== (origVal === true || origVal === "true")
+          : currentVal !== (origVal === undefined || origVal === null ? "" : String(origVal));
+        // We send the FULL value (whether changed or not) to ensure intent is explicit
+        overrides[key] = currentVal;
+      });
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Generating...";
+      statusSpan.style.display = "inline";
+      try {
+        await opts.onConfirm(overrides);
+        close();
+      } catch (e) {
+        alert(`Error: ${(e as Error).message}`);
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "✅ Looks good — Generate PDF";
+        statusSpan.style.display = "none";
+      }
+    });
+  }
+
   if (loading) {
     return (
       <main className="mx-auto flex min-h-[60vh] max-w-4xl items-center justify-center px-4 py-8">
@@ -6006,26 +6243,55 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               </p>
                             </div>
                             <button onClick={async () => {
-                              setCaseActionStatus("Generating form...");
-                              const res = await apiFetch(`/cases/${selectedCase.id}/generate-forms`, {
+                              setCaseActionStatus("🤖 AI is parsing intake data...");
+                              const previewRes = await apiFetch(`/cases/${selectedCase.id}/generate-forms`, {
                                 method: "POST",
                                 headers: {"Content-Type":"application/json"},
                                 body: JSON.stringify({
                                   systemToken: "newton-recovery-2024",
-                                  intake: selectedCase.pgwpIntake || {}
+                                  intake: selectedCase.pgwpIntake || {},
+                                  previewOnly: true,
                                 })
                               }).catch(()=>null);
-                              const d = await res?.json().catch(()=>({}));
-                              if (res?.ok && d.generated?.length > 0) {
-                                setCaseActionStatus(`✅ Generated: ${d.generated.join(", ").toUpperCase()} — check Documents tab`);
-                                // Reload documents
-                                const docsRes = await apiFetch(`/cases/${selectedCase.id}/documents`);
-                                const docsData = await docsRes.json().catch(()=>({}));
-                                if (docsData.documents) setDocuments(docsData.documents);
-                              } else {
-                                setCaseActionStatus(d.message || "No forms generated — complete questionnaire first");
+                              const preview = await previewRes?.json().catch(()=>({}));
+                              if (!previewRes?.ok || !preview.clientData) {
+                                setCaseActionStatus(preview?.error || preview?.message || "❌ Could not parse intake — make sure questionnaire is complete");
+                                setTimeout(() => setCaseActionStatus(""), 5000);
+                                return;
                               }
-                              setTimeout(() => setCaseActionStatus(""), 4000);
+                              setCaseActionStatus("");
+                              openFormReviewModal({
+                                caseId: selectedCase.id,
+                                clientName: preview.clientName || selectedCase.client,
+                                formType: preview.formType || selectedCase.formType,
+                                clientData: preview.clientData,
+                                aiUsed: preview.aiStatus?.used,
+                                aiError: preview.aiStatus?.error,
+                                rawIntake: selectedCase.pgwpIntake || {},
+                                onConfirm: async (overrides: Record<string, any>) => {
+                                  setCaseActionStatus("📄 Generating PDF with reviewed data...");
+                                  const res = await apiFetch(`/cases/${selectedCase.id}/generate-forms`, {
+                                    method: "POST",
+                                    headers: {"Content-Type":"application/json"},
+                                    body: JSON.stringify({
+                                      systemToken: "newton-recovery-2024",
+                                      intake: selectedCase.pgwpIntake || {},
+                                      skipAI: true,
+                                      overrides,
+                                    })
+                                  }).catch(()=>null);
+                                  const d = await res?.json().catch(()=>({}));
+                                  if (res?.ok && d.generated?.length > 0) {
+                                    setCaseActionStatus(`✅ Generated: ${d.generated.join(", ").toUpperCase()} — check Documents tab`);
+                                    const docsRes = await apiFetch(`/cases/${selectedCase.id}/documents`);
+                                    const docsData = await docsRes.json().catch(()=>({}));
+                                    if (docsData.documents) setDocuments(docsData.documents);
+                                  } else {
+                                    setCaseActionStatus(d.message || "❌ PDF generation failed");
+                                  }
+                                  setTimeout(() => setCaseActionStatus(""), 4500);
+                                }
+                              });
                             }} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 shrink-0">
                               ⚡ Generate Now
                             </button>
