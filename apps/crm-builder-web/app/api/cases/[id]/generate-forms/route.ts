@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase, addDocument, updateCaseLinks } from "@/lib/store";
 import { mapIntakeToForm } from "@/lib/intake-to-form-mappers";
+import { parseIntakeWithAI, mergeAIIntoFormData } from "@/lib/intake-ai-parser";
 import { uploadFileToDriveFolder, getOrCreateDriveSubfolder } from "@/lib/google-drive";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
@@ -20,7 +21,47 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const intake = (caseItem.pgwpIntake as Record<string, unknown>) || {};
     const formType = caseItem.formType || "PGWP";
     const clientName = (caseItem.client as string) || "Client";
-    const clientData = mapIntakeToForm(intake, formType);
+
+    // Step 1: Run regex mapper (always, never fails) — produces a baseline form data object
+    const regexMapped = mapIntakeToForm(intake, formType);
+
+    // Step 2: Run AI parser in parallel for the messy fields. If body has skipAI=true,
+    //   skip this step (used by the review UI when user has already verified the data).
+    //   AI failure is non-fatal — falls back to regex output.
+    let clientData = regexMapped;
+    let aiStatus: { used: boolean; error?: string } = { used: false };
+    if (!body.skipAI) {
+      try {
+        const ai = await parseIntakeWithAI(intake, formType);
+        if (ai._ai_used) {
+          clientData = mergeAIIntoFormData(regexMapped, ai);
+          aiStatus = { used: true };
+        } else {
+          aiStatus = { used: false, error: ai._ai_error };
+        }
+      } catch (e) {
+        aiStatus = { used: false, error: (e as Error).message };
+      }
+    }
+
+    // Step 3: If body has overrides, apply them last (these come from the review UI's edits)
+    if (body.overrides && typeof body.overrides === "object") {
+      Object.assign(clientData, body.overrides);
+    }
+
+    // Step 4: If body.previewOnly = true, return the parsed data WITHOUT generating PDF.
+    //   This is what the review UI uses to show staff what's about to go into the form.
+    if (body.previewOnly) {
+      return NextResponse.json({
+        ok: true,
+        previewOnly: true,
+        clientData,
+        aiStatus,
+        formType,
+        clientName,
+      });
+    }
+
     const ft = formType.toLowerCase();
 
     let formId = "imm5710"; let formLabel = "IMM5710E";
