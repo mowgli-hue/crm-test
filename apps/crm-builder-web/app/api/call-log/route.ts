@@ -12,6 +12,7 @@ async function ensureSchema() {
       phone TEXT,
       contact_name TEXT,
       duration_minutes INTEGER,
+      duration_seconds INTEGER,
       outcome TEXT,
       service_interest TEXT,
       notes TEXT,
@@ -20,14 +21,32 @@ async function ensureSchema() {
       logged_by_name TEXT,
       linked_lead_phone TEXT,
       linked_case_id TEXT,
+      twilio_call_sid TEXT,
+      call_status TEXT,
+      voicemail_url TEXT,
+      voicemail_transcript TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
       called_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      answered_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Add columns if upgrading an existing table (idempotent)
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS duration_seconds INTEGER`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS twilio_call_sid TEXT`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS call_status TEXT`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS voicemail_url TEXT`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS voicemail_transcript TEXT`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS answered_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE call_log ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ`);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_log_phone ON call_log(phone)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_log_called_at ON call_log(called_at DESC)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_log_outcome ON call_log(outcome)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_log_twilio_sid ON call_log(twilio_call_sid)`);
 }
 
 // ── GET: list calls with filters ──

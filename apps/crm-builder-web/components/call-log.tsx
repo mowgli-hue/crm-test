@@ -26,6 +26,7 @@ type Call = {
   phone: string | null;
   contact_name: string | null;
   duration_minutes: number | null;
+  duration_seconds?: number | null;
   outcome: string | null;
   service_interest: string | null;
   notes: string | null;
@@ -34,7 +35,14 @@ type Call = {
   logged_by_name: string | null;
   linked_lead_phone: string | null;
   linked_case_id: string | null;
+  twilio_call_sid?: string | null;
+  call_status?: string | null;
+  voicemail_url?: string | null;
+  voicemail_transcript?: string | null;
+  source?: string | null;
   called_at: string;
+  answered_at?: string | null;
+  ended_at?: string | null;
   created_at: string;
 };
 
@@ -45,6 +53,12 @@ export function CallLog({ sessionUser, apiFetch }: { sessionUser: any; apiFetch:
   const [filterOutcome, setFilterOutcome] = useState("");
   const [showLogModal, setShowLogModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Service picker modal — for "Send Checklist" / "Send Fee Quote" actions on existing calls
+  const [pickerCall, setPickerCall] = useState<Call | null>(null);
+  const [pickerMode, setPickerMode] = useState<"checklist" | "fee_only">("checklist");
+  const [pickerService, setPickerService] = useState("");
+  const [pickerSending, setPickerSending] = useState(false);
 
   // Modal form state
   const [direction, setDirection] = useState<"inbound" | "outbound">("inbound");
@@ -126,6 +140,34 @@ export function CallLog({ sessionUser, apiFetch }: { sessionUser: any; apiFetch:
     if (!confirm("Delete this call log entry? This cannot be undone.")) return;
     await apiFetch(`/call-log/${id}`, { method: "DELETE" });
     load();
+  };
+
+  const sendFollowup = async () => {
+    if (!pickerCall || !pickerCall.phone || !pickerService) return;
+    setPickerSending(true);
+    try {
+      const r = await apiFetch("/call-followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: pickerCall.phone,
+          service: pickerService,
+          mode: pickerMode,
+          callId: pickerCall.id,
+        }),
+      });
+      if (r?.ok) {
+        setPickerCall(null);
+        setPickerService("");
+        load();
+      } else {
+        const err = await r?.json().catch(() => ({}));
+        alert(`Failed: ${err.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      alert("Error sending follow-up");
+    }
+    setPickerSending(false);
   };
 
   const formatTime = (iso: string) => {
@@ -225,12 +267,40 @@ export function CallLog({ sessionUser, apiFetch }: { sessionUser: any; apiFetch:
                   </div>
                 ) : null}
 
-                {call.notes && (
+                {call.voicemail_transcript ? (
+                  <div className="bg-amber-50 border-l-2 border-amber-300 px-2.5 py-1.5 mb-1.5 rounded">
+                    <p className="text-[10px] text-amber-700 font-semibold mb-0.5">🎤 Voicemail</p>
+                    <p className="text-sm text-slate-800 leading-relaxed italic">"{call.voicemail_transcript}"</p>
+                    {call.voicemail_url && (
+                      <a href={call.voicemail_url} target="_blank" rel="noreferrer"
+                        className="text-[10px] text-amber-700 hover:underline mt-1 inline-block">▶ Play recording</a>
+                    )}
+                  </div>
+                ) : null}
+
+                {call.notes && !call.voicemail_transcript && (
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{call.notes}</p>
+                )}
+
+                {/* Action buttons — only show for calls with a phone number that aren't already converted/dead */}
+                {call.phone && call.outcome !== "wrong_number" && call.outcome !== "not_interested" && !call.linked_case_id && (
+                  <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-slate-100">
+                    <button
+                      onClick={() => { setPickerCall(call); setPickerMode("checklist"); setPickerService(call.service_interest || ""); }}
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100">
+                      📋 Send Checklist + Fee
+                    </button>
+                    <button
+                      onClick={() => { setPickerCall(call); setPickerMode("fee_only"); setPickerService(call.service_interest || ""); }}
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100">
+                      💰 Send Fee Quote
+                    </button>
+                  </div>
                 )}
 
                 <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400">
                   {call.logged_by_name && <span>by {call.logged_by_name}</span>}
+                  {call.source === "twilio" && <span className="text-blue-500">📞 Auto-logged</span>}
                   {call.linked_case_id && (
                     <span className="text-emerald-600 font-mono">→ {call.linked_case_id}</span>
                   )}
@@ -335,6 +405,68 @@ export function CallLog({ sessionUser, apiFetch }: { sessionUser: any; apiFetch:
               <button onClick={submitCall} disabled={submitting}
                 className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
                 {submitting ? "Saving…" : "💾 Save Call"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Service picker modal — opens when user clicks "Send Checklist" or "Send Fee Quote" on a call card */}
+      {pickerCall && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !pickerSending && setPickerCall(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  {pickerMode === "checklist" ? "📋 Send Checklist + Fee" : "💰 Send Fee Quote"}
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  to {pickerCall.contact_name || pickerCall.phone} via WhatsApp
+                </p>
+              </div>
+              {!pickerSending && (
+                <button onClick={() => setPickerCall(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+              )}
+            </div>
+
+            <label className="text-[11px] font-semibold text-slate-700 block mb-1">Service type</label>
+            <select value={pickerService} onChange={e => setPickerService(e.target.value)} disabled={pickerSending}
+              className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm focus:outline-none focus:border-purple-400 disabled:bg-slate-50">
+              <option value="">— pick one —</option>
+              <option value="PGWP">PGWP — Post-Graduation Work Permit ($520)</option>
+              <option value="Study Permit Extension">Study Permit Extension ($465)</option>
+              <option value="Study Permit">Study Permit (Outside Canada) ($1,050)</option>
+              <option value="SOWP">SOWP — Spousal Open Work Permit</option>
+              <option value="Visitor Visa">Visitor Visa / TRV ($710)</option>
+              <option value="TRV Inside">TRV Inside Canada ($415)</option>
+              <option value="Visitor Record">Visitor Record ($415)</option>
+              <option value="Super Visa">Super Visa ($1,050)</option>
+              <option value="Spousal Sponsorship">Spousal Sponsorship</option>
+              <option value="Express Entry">Express Entry</option>
+              <option value="PR">Permanent Residence</option>
+              <option value="PR Card Renewal">PR Card Renewal ($525)</option>
+              <option value="Citizenship">Canadian Citizenship ($1,050)</option>
+              <option value="LMIA Work Permit">LMIA Work Permit</option>
+              <option value="Consultation">Consultation ($52.50)</option>
+            </select>
+
+            <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-2">
+              <p className="text-[10px] text-blue-700">
+                {pickerMode === "checklist"
+                  ? "ℹ️ Sends Newton's standard document checklist + fee breakdown for the selected service via WhatsApp."
+                  : "ℹ️ Sends just the fee breakdown for the selected service via WhatsApp."}
+              </p>
+            </div>
+
+            <div className="mt-4 flex gap-2 justify-end items-center">
+              {pickerSending && <span className="text-xs text-purple-600 font-semibold mr-auto">⏳ Sending…</span>}
+              <button onClick={() => setPickerCall(null)} disabled={pickerSending}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={sendFollowup} disabled={pickerSending || !pickerService}
+                className="rounded-lg bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
+                {pickerSending ? "Sending…" : "📲 Send WhatsApp"}
               </button>
             </div>
           </div>
