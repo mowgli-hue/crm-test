@@ -45,7 +45,7 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
   const [showNameInput, setShowNameInput] = useState<string | null>(null);
   const [archived, setArchived] = useState<Set<string>>(new Set());
   const [pinned, setPinned] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<"all"|"unread"|"archived">("all");
+  const [filter, setFilter] = useState<"all"|"unread"|"read"|"archived">("all");
   const [sending, setSending] = useState(false);
   const [convertingPhone, setConvertingPhone] = useState<string | null>(null);
   const [convertForm, setConvertForm] = useState<{ formType: string; assignedTo: string; leadEmail: string }>({ formType: "", assignedTo: "", leadEmail: "" });
@@ -127,6 +127,7 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
       (msgs[0]?.contact_name||"").toLowerCase().includes(q);
     if(!matchSearch) return false;
     if(filter==="unread") return msgs.some(m=>!m.is_read&&m.direction==="inbound");
+    if(filter==="read") return !msgs.some(m=>!m.is_read&&m.direction==="inbound");
     return true;
   }).sort((a,b)=>{
     // Pinned always first
@@ -211,7 +212,7 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
             className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-purple-400 mb-2" />
           {/* Filter tabs */}
           <div className="flex gap-1">
-            {(["all","unread","archived"] as const).map(f=>(
+            {(["all","unread","read","archived"] as const).map(f=>(
               <button key={f} onClick={()=>setFilter(f)}
                 className={`flex-1 py-1 rounded-lg text-[11px] font-semibold ${filter===f?"bg-slate-900 text-white":"text-slate-500 hover:bg-slate-100"}`}>
                 {f.charAt(0).toUpperCase()+f.slice(1)}

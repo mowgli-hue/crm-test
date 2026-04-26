@@ -502,6 +502,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [newtonBriefing, setNewtonBriefing] = useState<{loaded:boolean; data:any}>({loaded:false, data:null});
   const [inboxSearch, setInboxSearch] = useState<Record<string,string>>({});
   const [inboxGlobalSearch, setInboxGlobalSearch] = useState("");
+  const [inboxReadFilter, setInboxReadFilter] = useState<"all"|"unread"|"read">("all");
   const [inboxAttachment, setInboxAttachment] = useState<Record<string,{name:string;type:string;data:string}|null>>({});
   const [aiResult, setAiResult] = useState<{caseId:string;text:string;action:string}|null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -7903,8 +7904,33 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       value={inboxGlobalSearch||""}
                       onChange={e=>setInboxGlobalSearch(e.target.value)}
                       placeholder="🔍 Search all conversations..."
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400 mb-2"
                     />
+                    {/* Read/unread filter tabs */}
+                    <div className="flex gap-1">
+                      {(["all","unread","read"] as const).map(f=>{
+                        const count = (() => {
+                          if (f === "all") return new Set(inboxMessages.map(m=>m.phone)).size;
+                          if (f === "unread") {
+                            const phones = new Set<string>();
+                            inboxMessages.forEach(m=>{ if(!m.is_read && m.direction==="inbound") phones.add(m.phone); });
+                            return phones.size;
+                          }
+                          // read = phones that have NO unread inbound messages
+                          const allPhones = new Set(inboxMessages.map(m=>m.phone));
+                          const unreadPhones = new Set<string>();
+                          inboxMessages.forEach(m=>{ if(!m.is_read && m.direction==="inbound") unreadPhones.add(m.phone); });
+                          return [...allPhones].filter(p=>!unreadPhones.has(p)).length;
+                        })();
+                        return (
+                          <button key={f} onClick={()=>setInboxReadFilter(f)}
+                            className={`flex-1 py-1 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 ${inboxReadFilter===f?"bg-emerald-600 text-white":"text-slate-500 hover:bg-slate-100"}`}>
+                            <span>{f.charAt(0).toUpperCase()+f.slice(1)}</span>
+                            <span className={`text-[9px] px-1 rounded ${inboxReadFilter===f?"bg-white/20":"bg-slate-200 text-slate-600"}`}>{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
                   <div className="flex items-center gap-2">
@@ -7951,6 +7977,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           phone.includes(q)
                         );
                         if (!hasMatch) delete threads[phone];
+                      });
+                    }
+                    // Filter by read/unread tab
+                    if (inboxReadFilter !== "all") {
+                      Object.keys(threads).forEach(phone => {
+                        const hasUnread = threads[phone].some(m => !m.is_read && m.direction === "inbound");
+                        if (inboxReadFilter === "unread" && !hasUnread) delete threads[phone];
+                        if (inboxReadFilter === "read" && hasUnread) delete threads[phone];
                       });
                     }
                     const threadList = Object.entries(threads).map(([phone, msgs]) => {
