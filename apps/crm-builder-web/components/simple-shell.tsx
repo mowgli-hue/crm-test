@@ -5866,18 +5866,127 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           <button onClick={(e) => {
                             e.stopPropagation();
                             e.preventDefault();
-                            console.log("[RepLetter] Button clicked! Opening modal for case:", selectedCase?.id);
-                            // Pre-fill with any existing notes from the case so staff can extend rather than retype
-                            const existing = String((selectedCase as any)?.additionalNotes || "").trim();
-                            setRepLetterStory(existing);
-                            setRepLetterPronouns("they");
-                            setShowRepLetterModal(true);
-                            // Diagnostic: force a visible alert so we can confirm click is firing even if modal has issues
-                            setTimeout(() => {
-                              if (!document.querySelector("[data-rep-letter-modal]")) {
-                                alert("⚠️ Click registered but modal didn't render. Check browser console for errors.");
+                            console.log("[RepLetter v6] Vanilla modal injection triggered for case:", selectedCase?.id);
+
+                            // Remove any existing modal first
+                            const existing = document.getElementById("__rep_letter_modal__");
+                            if (existing) existing.remove();
+
+                            // Vanilla DOM injection — no React, no Tailwind, no portal — guaranteed to render
+                            const modal = document.createElement("div");
+                            modal.id = "__rep_letter_modal__";
+                            modal.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;`;
+                            const caseId = selectedCase?.id || "";
+                            const caseClient = selectedCase?.client || "this client";
+                            const caseType = selectedCase?.formType || "Application";
+                            const existingNotes = String((selectedCase as any)?.additionalNotes || "").trim();
+                            modal.innerHTML = `
+                              <div id="__rep_letter_panel__" style="background:white;border-radius:16px;padding:24px;width:100%;max-width:640px;box-shadow:0 25px 50px rgba(0,0,0,0.25);max-height:90vh;overflow-y:auto;">
+                                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+                                  <div>
+                                    <h2 style="margin:0;font-size:16px;font-weight:bold;color:#0f172a;">📜 Representative Letter</h2>
+                                    <p style="margin:4px 0 0;font-size:11px;color:#64748b;">${caseClient} · ${caseType}</p>
+                                  </div>
+                                  <button id="__rep_letter_close__" style="background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;line-height:1;">✕</button>
+                                </div>
+
+                                <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:12px;">
+                                  <p style="margin:0;font-size:11px;color:#78350f;line-height:1.5;">
+                                    ✍️ <strong>Write the client's story below.</strong> Include their journey, why they're applying, any unique circumstances. Claude AI will weave it into a professional IRCC submission letter.
+                                  </p>
+                                </div>
+
+                                <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Client's story / consultant notes <span style="color:#ef4444;">*</span></label>
+                                <textarea id="__rep_letter_story__" rows="10" placeholder="Example:&#10;&#10;Aarti began her studies at Capilano University and was progressing well. Due to outside influence she transferred to Granville College for one semester, but realized this was not the right fit. She returned to Capilano University to continue her Associate of Arts degree."
+                                  style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;box-sizing:border-box;resize:vertical;">${existingNotes}</textarea>
+                                <p id="__rep_letter_count__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;">${existingNotes.length} characters · Minimum 20 for AI generation</p>
+
+                                <div style="margin-top:12px;">
+                                  <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Client pronouns</label>
+                                  <div id="__rep_letter_pronouns__" style="display:flex;gap:8px;">
+                                    <button data-pronoun="they" class="__pronoun_btn__" style="flex:1;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #a855f7;background:#faf5ff;color:#7e22ce;border-radius:8px;cursor:pointer;">they/them/their</button>
+                                    <button data-pronoun="she" class="__pronoun_btn__" style="flex:1;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #e2e8f0;background:white;color:#475569;border-radius:8px;cursor:pointer;">she/her</button>
+                                    <button data-pronoun="he" class="__pronoun_btn__" style="flex:1;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #e2e8f0;background:white;color:#475569;border-radius:8px;cursor:pointer;">he/him</button>
+                                  </div>
+                                </div>
+
+                                <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:20px;">
+                                  <span id="__rep_letter_status__" style="margin-right:auto;font-size:12px;color:#7e22ce;font-weight:600;display:none;">⏳ AI is drafting your letter…</span>
+                                  <button id="__rep_letter_cancel__" style="border:1px solid #e2e8f0;background:white;padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">Cancel</button>
+                                  <button id="__rep_letter_submit__" style="background:#7e22ce;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">🪄 Generate</button>
+                                </div>
+                              </div>
+                            `;
+                            document.body.appendChild(modal);
+
+                            // Wire up event handlers
+                            let selectedPronoun = "they";
+                            const close = () => modal.remove();
+                            modal.addEventListener("click", (ev) => { if (ev.target === modal) close(); });
+                            (document.getElementById("__rep_letter_close__") as HTMLButtonElement)?.addEventListener("click", close);
+                            (document.getElementById("__rep_letter_cancel__") as HTMLButtonElement)?.addEventListener("click", close);
+
+                            const textarea = document.getElementById("__rep_letter_story__") as HTMLTextAreaElement;
+                            const counter = document.getElementById("__rep_letter_count__")!;
+                            textarea?.addEventListener("input", () => {
+                              const len = textarea.value.length;
+                              counter.textContent = `${len} characters · Minimum 20 for AI generation`;
+                            });
+
+                            // Pronoun toggle
+                            document.querySelectorAll(".__pronoun_btn__").forEach(btn => {
+                              btn.addEventListener("click", () => {
+                                selectedPronoun = (btn as HTMLElement).dataset.pronoun || "they";
+                                document.querySelectorAll(".__pronoun_btn__").forEach(b => {
+                                  (b as HTMLElement).style.cssText = "flex:1;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #e2e8f0;background:white;color:#475569;border-radius:8px;cursor:pointer;";
+                                });
+                                (btn as HTMLElement).style.cssText = "flex:1;padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #a855f7;background:#faf5ff;color:#7e22ce;border-radius:8px;cursor:pointer;";
+                              });
+                            });
+
+                            // Submit handler
+                            const submitBtn = document.getElementById("__rep_letter_submit__") as HTMLButtonElement;
+                            const statusSpan = document.getElementById("__rep_letter_status__")!;
+                            submitBtn?.addEventListener("click", async () => {
+                              const story = textarea.value.trim();
+                              submitBtn.disabled = true;
+                              submitBtn.textContent = "Generating…";
+                              statusSpan.style.display = "inline";
+                              try {
+                                const res = await apiFetch(`/cases/${caseId}/rep-letter`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    systemToken: "newton-recovery-2024",
+                                    clientStory: story,
+                                    pronouns: selectedPronoun,
+                                  }),
+                                });
+                                if (res?.ok) {
+                                  const blob = await res.blob();
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = url;
+                                  a.download = `${caseClient} - Representative Letter.pdf`;
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                  setCaseActionStatus("✅ Rep letter downloaded!");
+                                  close();
+                                } else {
+                                  const err = await res?.json().catch(() => ({}));
+                                  alert(`Failed: ${err.error || "Unknown error"}`);
+                                  submitBtn.disabled = false;
+                                  submitBtn.textContent = "🪄 Generate";
+                                  statusSpan.style.display = "none";
+                                }
+                              } catch (e: any) {
+                                alert(`Error: ${e?.message || "Unknown"}`);
+                                submitBtn.disabled = false;
+                                submitBtn.textContent = "🪄 Generate";
+                                statusSpan.style.display = "none";
                               }
-                            }, 200);
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            });
                           }} className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-700 shrink-0">
                             ✍️ Write Story & Generate
                           </button>
@@ -8982,8 +9091,8 @@ function ClientPortal({
       </div>
 
       {/* ── Representative Letter modal: write story → AI generates → download ── */}
-      {/* Rendered via React Portal directly into document.body, bypassing any parent CSS that might clip or hide it */}
-      {showRepLetterModal && typeof document !== "undefined" && createPortal((
+      {/* Always render via portal; hide via display:none when closed. Eliminates lifecycle issues. */}
+      {typeof document !== "undefined" && createPortal((
         <div
           data-rep-letter-modal="true"
           style={{
@@ -8991,7 +9100,7 @@ function ClientPortal({
             top: 0, left: 0, right: 0, bottom: 0,
             background: "rgba(0,0,0,0.7)",
             zIndex: 999999,
-            display: "flex",
+            display: showRepLetterModal ? "flex" : "none",
             alignItems: "center",
             justifyContent: "center",
             padding: "16px",
