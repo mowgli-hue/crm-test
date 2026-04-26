@@ -374,6 +374,18 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
               )}
               <button onClick={()=>setShowNameInput(showNameInput===thread?null:thread)}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">✏️ Name</button>
+
+              {/* WhatsApp call — opens WhatsApp on staff's device, ready to dial */}
+              <a
+                href={`https://wa.me/${thread.replace(/\D/g,"")}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Open in WhatsApp (call from there)"
+                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+              >
+                💬 Open WA
+              </a>
+
               <button onClick={()=>setPinned(prev=>{const n=new Set(prev);n.has(thread)?n.delete(thread):n.add(thread);return n;})}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">
                 {pinned.has(thread)?"📌":"📌"}
@@ -385,15 +397,44 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
             </div>
           </div>
 
-          {/* Save name inline */}
+          {/* Save contact panel — opens with proper save button + phone display + lead promotion */}
           {showNameInput===thread && (
-            <div className="px-4 py-2 bg-purple-50 border-b border-purple-100 flex gap-2 items-center">
-              <span className="text-xs text-purple-700 font-semibold">Save name:</span>
-              <input autoFocus placeholder="Client name..." defaultValue={threadName(thread)!==thread?threadName(thread):""}
-                className="flex-1 rounded-lg border border-purple-200 px-2 py-1 text-xs focus:outline-none"
-                onKeyDown={async e=>{if(e.key==="Enter"){await saveName(thread,(e.target as HTMLInputElement).value.trim());}}}
-              />
-              <button onClick={()=>setShowNameInput(null)} className="text-xs text-slate-400">✕</button>
+            <div className="px-4 py-3 bg-purple-50 border-b border-purple-100 space-y-2">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-purple-900 font-bold">💾 Save Contact</span>
+                <span className="text-purple-600">{thread}</span>
+                <button onClick={()=>setShowNameInput(null)} className="ml-auto text-slate-400 hover:text-slate-600 text-base leading-none">✕</button>
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  id={`name-input-${thread}`}
+                  autoFocus
+                  placeholder="Client name (e.g. Raj Sharma)"
+                  defaultValue={threadName(thread)!==thread?threadName(thread):""}
+                  className="flex-1 rounded-lg border border-purple-200 px-3 py-1.5 text-xs focus:outline-none focus:border-purple-500"
+                  onKeyDown={async e=>{
+                    if(e.key==="Enter"){
+                      const val = (e.target as HTMLInputElement).value.trim();
+                      if (val) { await saveName(thread, val); setShowNameInput(null); }
+                    }
+                  }}
+                />
+                <button
+                  onClick={async ()=>{
+                    const input = document.getElementById(`name-input-${thread}`) as HTMLInputElement;
+                    const val = input?.value?.trim();
+                    if (!val) { alert("Please enter a name first."); return; }
+                    await saveName(thread, val);
+                    setShowNameInput(null);
+                  }}
+                  className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700"
+                >
+                  💾 Save
+                </button>
+              </div>
+              <p className="text-[10px] text-purple-600">
+                💡 Tip: After saving, this contact appears in <strong>Lead Pipeline</strong> with the phone number {thread}. You can add more details (service interest, follow-up date, notes) there.
+              </p>
             </div>
           )}
 

@@ -285,9 +285,17 @@ export function CallLog({ sessionUser, apiFetch }: { sessionUser: any; apiFetch:
                 {/* Action buttons — only show for calls with a phone number that aren't already converted/dead */}
                 {call.phone && call.outcome !== "wrong_number" && call.outcome !== "not_interested" && !call.linked_case_id && (
                   <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-slate-100">
+                    <a href={`https://wa.me/${call.phone.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">
+                      💬 WhatsApp
+                    </a>
+                    <a href={`tel:${call.phone.replace(/\s+/g, "")}`}
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100">
+                      📞 Call back
+                    </a>
                     <button
                       onClick={() => { setPickerCall(call); setPickerMode("checklist"); setPickerService(call.service_interest || ""); }}
-                      className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100">
+                      className="rounded-lg border border-purple-200 bg-purple-50 px-2 py-1 text-[10px] font-semibold text-purple-700 hover:bg-purple-100">
                       📋 Send Checklist + Fee
                     </button>
                     <button

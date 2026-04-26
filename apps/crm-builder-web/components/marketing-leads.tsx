@@ -247,6 +247,12 @@ export function MarketingLeads({ sessionUser, apiFetch }: { sessionUser: any; ap
                       <div className="flex gap-1 flex-wrap">
                         <button onClick={() => { setEditingPhone(lead.phone); setEditing(lead); }}
                           className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200">✏️ Edit</button>
+                        {/* WhatsApp open — staff opens WA on their device with this contact pre-selected */}
+                        <a href={`https://wa.me/${lead.phone.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"
+                          className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-semibold">💬 WA</a>
+                        {/* Tel link — works on mobile, opens dialer; on desktop opens FaceTime/Skype/etc. Once Twilio is wired, this can be a real outbound call. */}
+                        <a href={`tel:${lead.phone.replace(/\s+/g, "")}`}
+                          className="text-[10px] px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold">📞 Call</a>
                         {lead.stage !== "converted" && (
                           <button onClick={() => { setConvertingPhone(lead.phone); setConvertForm({ ...convertForm, formType: lead.service_interest || "" }); }}
                             className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-semibold">→ Case</button>
