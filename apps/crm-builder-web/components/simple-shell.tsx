@@ -8982,8 +8982,33 @@ function ClientPortal({
 
       {/* ── Representative Letter modal: write story → AI generates → download ── */}
       {showRepLetterModal && (
-        <div data-rep-letter-modal="true" className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
-          <div className="bg-white rounded-2xl p-5 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div
+          data-rep-letter-modal="true"
+          style={{
+            position: "fixed",
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: "rgba(0,0,0,0.7)",
+            zIndex: 999999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+          onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}
+        >
+          <div
+            style={{
+              background: "white",
+              borderRadius: "16px",
+              padding: "20px",
+              width: "100%",
+              maxWidth: "640px",
+              boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900">📜 Representative Letter</h2>
