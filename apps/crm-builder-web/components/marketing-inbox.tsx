@@ -6,8 +6,37 @@ type Msg = {
   contact_name: string | null; is_read: boolean; created_at: string;
 };
 
+type Lead = {
+  phone: string;
+  contact_name: string | null;
+  stage: string;
+  source: string | null;
+  service_interest: string | null;
+  ai_enabled: boolean;
+  consultation_paid: boolean;
+  next_follow_up: string | null;
+  converted_case_id: string | null;
+};
+
+const STAGE_PILLS: Record<string, { label: string; cls: string }> = {
+  new: { label: "New", cls: "bg-blue-100 text-blue-700" },
+  contacted: { label: "Contacted", cls: "bg-amber-100 text-amber-700" },
+  consultation_booked: { label: "Consult Booked", cls: "bg-purple-100 text-purple-700" },
+  consultation_done: { label: "Consult Done", cls: "bg-indigo-100 text-indigo-700" },
+  converted: { label: "✅ Converted", cls: "bg-emerald-100 text-emerald-700" },
+  lost: { label: "Lost", cls: "bg-slate-100 text-slate-500" },
+};
+
+const FORM_TYPES = [
+  "PGWP", "SOWP", "BOWP", "VOWP", "Study Permit", "Study Permit Extension",
+  "Visitor Visa", "TRV Inside", "Visitor Record", "Super Visa",
+  "Spousal Sponsorship", "Family Sponsorship", "Express Entry", "PR",
+  "PR Card Renewal", "Citizenship", "LMIA Work Permit", "Work Permit",
+];
+
 export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; apiFetch: any }) {
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [leads, setLeads] = useState<Record<string, Lead>>({});
   const [thread, setThread] = useState<string | null>(null);
   const [reply, setReply] = useState("");
   const [search, setSearch] = useState("");
@@ -18,16 +47,71 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all"|"unread"|"archived">("all");
   const [sending, setSending] = useState(false);
+  const [convertingPhone, setConvertingPhone] = useState<string | null>(null);
+  const [convertForm, setConvertForm] = useState<{ formType: string; assignedTo: string; leadEmail: string }>({ formType: "", assignedTo: "", leadEmail: "" });
   const bottomRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
   const load = () => apiFetch("/marketing-inbox").then((r:any)=>r?.json()).then((d:any)=>{
     if(d.messages) setMessages(d.messages);
+    if(d.leads) setLeads(d.leads);
     setLoaded(true);
   }).catch(()=>setLoaded(true));
 
   useEffect(()=>{ load(); const t=setInterval(load,5000); return ()=>clearInterval(t); },[]);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[thread,messages]);
+
+  // Mark as read when opening a thread
+  useEffect(() => {
+    if (thread) {
+      apiFetch("/marketing-inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "markRead", phone: thread })
+      }).catch(() => {});
+    }
+  }, [thread]);
+
+  const toggleAI = async (phone: string, enabled: boolean) => {
+    await apiFetch("/marketing-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggleAI", phone, enabled })
+    });
+    setLeads(prev => ({ ...prev, [phone]: { ...(prev[phone] || {}), phone, ai_enabled: enabled } as Lead }));
+  };
+
+  const updateLeadStage = async (phone: string, stage: string) => {
+    await apiFetch(`/marketing-leads/${encodeURIComponent(phone)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage })
+    });
+    setLeads(prev => ({ ...prev, [phone]: { ...(prev[phone] || {}), phone, stage } as Lead }));
+  };
+
+  const convertToCase = async () => {
+    if (!convertingPhone || !convertForm.formType) return;
+    const r = await apiFetch(`/marketing-leads/${encodeURIComponent(convertingPhone)}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        formType: convertForm.formType,
+        assignedTo: convertForm.assignedTo || undefined,
+        leadEmail: convertForm.leadEmail || undefined,
+      }),
+    });
+    if (r?.ok) {
+      const d = await r.json();
+      alert(`✅ Converted to case ${d.case?.id || ""}`);
+      setConvertingPhone(null);
+      setConvertForm({ formType: "", assignedTo: "", leadEmail: "" });
+      load();
+    } else {
+      const err = await r?.json().catch(() => ({}));
+      alert(`Failed to convert: ${err.error || "unknown error"}`);
+    }
+  };
 
   // Build threads
   const allThreads: Record<string,Msg[]> = {};
@@ -175,6 +259,24 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
                           {unread>0 && <span className="h-4 w-4 rounded-full bg-purple-500 text-white text-[9px] font-bold flex items-center justify-center">{unread}</span>}
                         </div>
                       </div>
+                      {/* Stage pill + service interest */}
+                      {leads[phone] && (
+                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          {STAGE_PILLS[leads[phone].stage] && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${STAGE_PILLS[leads[phone].stage].cls}`}>
+                              {STAGE_PILLS[leads[phone].stage].label}
+                            </span>
+                          )}
+                          {leads[phone].service_interest && (
+                            <span className="text-[9px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded font-semibold">
+                              {leads[phone].service_interest}
+                            </span>
+                          )}
+                          {leads[phone].ai_enabled === false && (
+                            <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">🤚 Manual</span>
+                          )}
+                        </div>
+                      )}
                       <p className="text-[11px] text-slate-400 truncate mt-0.5">
                         {waitMins!==null?"⚠️ Needs reply · ":lastMsg?.direction==="outbound"?"You: ":""}{lastMsg?.message?.slice(0,45)}
                       </p>
@@ -224,20 +326,61 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
             <div className="h-9 w-9 rounded-full bg-purple-100 flex items-center justify-center text-sm font-bold text-purple-700">
               {threadName(thread).charAt(0).toUpperCase()}
             </div>
-            <div className="flex-1">
-              <p className="text-sm font-bold text-slate-900">{threadName(thread)}</p>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-sm font-bold text-slate-900 truncate">{threadName(thread)}</p>
+                {leads[thread] && STAGE_PILLS[leads[thread].stage] && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${STAGE_PILLS[leads[thread].stage].cls}`}>
+                    {STAGE_PILLS[leads[thread].stage].label}
+                  </span>
+                )}
+                {leads[thread]?.service_interest && (
+                  <span className="text-[10px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded font-semibold">
+                    {leads[thread].service_interest}
+                  </span>
+                )}
+                {leads[thread]?.converted_case_id && (
+                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-mono font-semibold">
+                    → {leads[thread].converted_case_id}
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400">{thread} · Marketing inquiry</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              {/* AI toggle */}
+              <button onClick={()=>toggleAI(thread, !(leads[thread]?.ai_enabled !== false))}
+                title={leads[thread]?.ai_enabled === false ? "AI auto-reply OFF — turn on" : "AI auto-reply ON — turn off"}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${leads[thread]?.ai_enabled === false ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
+                {leads[thread]?.ai_enabled === false ? "🤚 Manual" : "🤖 AI On"}
+              </button>
+              {/* Stage selector */}
+              {leads[thread] && leads[thread].stage !== "converted" && (
+                <select
+                  value={leads[thread]?.stage || "new"}
+                  onChange={e => updateLeadStage(thread, e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold hover:bg-slate-50">
+                  {Object.entries(STAGE_PILLS).map(([id, p]) => (
+                    <option key={id} value={id}>{p.label}</option>
+                  ))}
+                </select>
+              )}
+              {/* Convert to case */}
+              {!leads[thread]?.converted_case_id && (
+                <button onClick={() => { setConvertingPhone(thread); setConvertForm({ formType: leads[thread]?.service_interest || "", assignedTo: "", leadEmail: "" }); }}
+                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                  → Case
+                </button>
+              )}
               <button onClick={()=>setShowNameInput(showNameInput===thread?null:thread)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">✏️ Save Name</button>
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">✏️ Name</button>
               <button onClick={()=>setPinned(prev=>{const n=new Set(prev);n.has(thread)?n.delete(thread):n.add(thread);return n;})}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">
-                {pinned.has(thread)?"📌 Pinned":"📌 Pin"}
+                {pinned.has(thread)?"📌":"📌"}
               </button>
               <button onClick={()=>setArchived(prev=>{const n=new Set(prev);n.has(thread)?n.delete(thread):n.add(thread);return n;})}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">
-                {archived.has(thread)?"📥 Unarchive":"📦 Archive"}
+                {archived.has(thread)?"📥":"📦"}
               </button>
             </div>
           </div>
@@ -320,6 +463,43 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
             <p className="text-4xl mb-3">📣</p>
             <p className="text-sm font-semibold text-slate-600">Marketing Inbox</p>
             <p className="text-xs text-slate-400 mt-1">New client inquiries via +1 236-501-3524</p>
+          </div>
+        </div>
+      )}
+
+      {/* Convert-to-Case modal */}
+      {convertingPhone && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setConvertingPhone(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-base font-bold text-slate-900 mb-1">Convert to Case</h2>
+            <p className="text-xs text-slate-500 mb-3">Creates a real case in the CRM with this lead's contact info.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Form Type *</label>
+                <select value={convertForm.formType} onChange={e => setConvertForm({ ...convertForm, formType: e.target.value })}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-purple-400">
+                  <option value="">— Select —</option>
+                  {FORM_TYPES.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Email (optional)</label>
+                <input type="email" value={convertForm.leadEmail} onChange={e => setConvertForm({ ...convertForm, leadEmail: e.target.value })}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-purple-400" />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Assign To (optional)</label>
+                <input value={convertForm.assignedTo} onChange={e => setConvertForm({ ...convertForm, assignedTo: e.target.value })}
+                  placeholder="Staff name"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-purple-400" />
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2 justify-end">
+              <button onClick={() => setConvertingPhone(null)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50">Cancel</button>
+              <button onClick={convertToCase} disabled={!convertForm.formType}
+                className="rounded-lg bg-emerald-600 text-white px-3 py-1.5 text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50">→ Create Case</button>
+            </div>
           </div>
         </div>
       )}

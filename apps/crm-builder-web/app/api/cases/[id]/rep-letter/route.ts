@@ -1,30 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase } from "@/lib/store";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, PDFPage, PDFFont, PDFImage } from "pdf-lib";
+import fs from "fs";
+import path from "path";
+
+// ──────────────────────────────────────────────────────────────
+// Newton Immigration — Representative Submission Letter generator
+// Matches the Aarti reference: logo top-left, NEWTON IMMIGRATION wordmark,
+// red separator, contact strip top-right, red gradient strip on every page.
+// ──────────────────────────────────────────────────────────────
 
 const RCIC_NAME = "Navdeep Singh Sandhu";
 const RCIC_NUMBER = "R-705964";
-const RCIC_COMPANY = "Newton Immigration Inc.";
-const RCIC_ADDRESS = "Suite 300, 9850 King George Blvd, Surrey BC V3T 0P9";
+const RCIC_COMPANY = "NEWTON IMMIGRATION INC.";
+const RCIC_ADDRESS_LINE_1 = "17282 59A Avenue";
+const RCIC_ADDRESS_LINE_2 = "Surrey, BC V3S 5S5";
 const RCIC_EMAIL = "newtonimmigration@gmail.com";
-const RCIC_PHONE = "+1 778-723-6662";
+const RCIC_PHONE = "+1 778.723.6662";
+const RCIC_WEBSITE = "www.newtonimmigration.com";
 
-function wrapText(text: string, maxChars: number): string[] {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    if ((current + " " + word).trim().length > maxChars) {
-      if (current) lines.push(current.trim());
-      current = word;
-    } else {
-      current = (current + " " + word).trim();
-    }
-  }
-  if (current) lines.push(current.trim());
-  return lines;
-}
+// Page geometry (Letter size)
+const PAGE_W = 612;
+const PAGE_H = 792;
+const MARGIN_X = 60;
+const HEADER_H = 95;   // letterhead reserved space at top of every page
+const FOOTER_H = 30;   // red gradient strip at bottom of every page
+const CONTENT_TOP = PAGE_H - HEADER_H - 30;
+const CONTENT_BOTTOM = FOOTER_H + 30;
+
+// Colours
+const NEWTON_RED = rgb(0.84, 0.10, 0.13);     // ~#D6191F
+const NEWTON_RED_DARK = rgb(0.55, 0.05, 0.08);
+const TEXT_BLACK = rgb(0.10, 0.10, 0.10);
+const TEXT_GREY = rgb(0.40, 0.40, 0.40);
+
+// ──────────────────────────────────────────────────────────────
+// Form-type metadata
+// ──────────────────────────────────────────────────────────────
 
 function getFormTypeFull(formType: string): string {
   const ft = formType.toLowerCase();
@@ -39,11 +52,35 @@ function getFormTypeFull(formType: string): string {
   if (ft.includes("super visa")) return "Super Visa";
   if (ft.includes("family") || ft.includes("sponsorship")) return "Family Sponsorship";
   if (ft.includes("express entry") || ft.includes("pr")) return "Express Entry Permanent Residence";
-  return formType;
+  return formType || "Immigration Application";
+}
+
+function getSubjectLine(formType: string, clientName: string): string {
+  const ft = formType.toLowerCase();
+  if (ft.includes("study permit extension")) return `Study permit Extension Application for ${clientName}`;
+  if (ft.includes("pgwp")) return `Post-Graduation Work Permit Application for ${clientName}`;
+  if (ft.includes("sowp")) return `Spousal Open Work Permit Application for ${clientName}`;
+  if (ft.includes("study permit")) return `Study Permit Application for ${clientName}`;
+  if (ft.includes("visitor visa") || ft.includes("trv")) return `Visitor Visa Application for ${clientName}`;
+  if (ft.includes("visitor record")) return `Visitor Record Application for ${clientName}`;
+  if (ft.includes("super visa")) return `Super Visa Application for ${clientName}`;
+  if (ft.includes("family") || ft.includes("sponsorship")) return `Family Sponsorship Application for ${clientName}`;
+  if (ft.includes("work permit")) return `Work Permit Application for ${clientName}`;
+  return `${getFormTypeFull(formType)} for ${clientName}`;
 }
 
 function getDocumentsList(formType: string): string[] {
   const ft = formType.toLowerCase();
+  if (ft.includes("study permit extension")) return [
+    "IMM 5709 – Application to Change Conditions, Extend My Stay or Remain in Canada as a Student",
+    "IMM 5476 – Use of a Representative",
+    "Valid Study Permit",
+    "Confirmation of Enrollment / Letter of Enrollment",
+    "Official / Unofficial Transcripts",
+    "Proof of Tuition Payment",
+    "Passport (bio page + all relevant pages)",
+    "Digital Photograph (IRCC compliant)",
+  ];
   if (ft.includes("pgwp")) return [
     "IMM 5710 – Application to Change Conditions or Extend Stay in Canada",
     "IMM 5476 – Use of a Representative",
@@ -60,6 +97,7 @@ function getDocumentsList(formType: string): string[] {
     "Passport (bio page + all relevant pages)",
     "Current Permit / Status Document",
     "Proof of Employer / Job Offer (if applicable)",
+    "Marriage Certificate (if SOWP)",
     "Digital Photograph (IRCC compliant)",
   ];
   if (ft.includes("study permit")) return [
@@ -67,7 +105,16 @@ function getDocumentsList(formType: string): string[] {
     "IMM 5476 – Use of a Representative",
     "Passport (bio page + all relevant pages)",
     "Letter of Acceptance from DLI",
+    "Provincial Attestation Letter (PAL)",
     "Proof of Financial Support",
+    "Digital Photograph (IRCC compliant)",
+  ];
+  if (ft.includes("visitor record")) return [
+    "IMM 5708 – Application to Change Conditions or Extend Stay in Canada",
+    "IMM 5476 – Use of a Representative",
+    "Passport (bio page + all relevant pages)",
+    "Current Status Document",
+    "Reason for Extension",
     "Digital Photograph (IRCC compliant)",
   ];
   if (ft.includes("visitor") || ft.includes("trv")) return [
@@ -76,16 +123,27 @@ function getDocumentsList(formType: string): string[] {
     "Passport (bio page + all relevant pages)",
     "Proof of Funds",
     "Travel History Documents",
+    "Invitation Letter (if applicable)",
+    "Digital Photograph (IRCC compliant)",
+  ];
+  if (ft.includes("super visa")) return [
+    "IMM 5257 – Application for Visitor Visa (Super Visa)",
+    "IMM 5476 – Use of a Representative",
+    "Passport (bio page + all relevant pages)",
+    "Proof of Relationship to Sponsor",
+    "Sponsor's Notice of Assessment / Income Proof",
+    "Medical Insurance (1 year)",
+    "Upfront Medical Examination",
     "Digital Photograph (IRCC compliant)",
   ];
   if (ft.includes("family") || ft.includes("sponsorship")) return [
     "IMM 1344 – Application to Sponsor",
     "IMM 0008 – Generic Application Form",
     "IMM 5476 – Use of a Representative",
-    "Passport (bio page + all relevant pages)",
+    "Passport (bio page + all relevant pages) – both parties",
     "Marriage Certificate",
     "Police Clearance Certificate",
-    "Proof of Relationship",
+    "Proof of Genuine Relationship",
     "Sponsor Financial Documents",
   ];
   return [
@@ -95,6 +153,320 @@ function getDocumentsList(formType: string): string[] {
     "Digital Photograph (IRCC compliant)",
   ];
 }
+
+// ──────────────────────────────────────────────────────────────
+// Body content per form type (matches Aarti tone for Study Permit Ext)
+// ──────────────────────────────────────────────────────────────
+
+interface BodyParams {
+  clientName: string;
+  pronoun: { subject: string; object: string; possessive: string };
+  formType: string;
+  passportNo: string;
+  uci: string;
+  institution: string;
+  program: string;
+  arrivalDate: string;
+  permitExpiry: string;
+  programEndDate: string;
+}
+
+function getBodyParagraphs(p: BodyParams): string[] {
+  const ft = p.formType.toLowerCase();
+  const { clientName, pronoun, passportNo, institution, program, programEndDate, permitExpiry } = p;
+  const Sub = pronoun.subject.charAt(0).toUpperCase() + pronoun.subject.slice(1);
+
+  // Markers used in the body array:
+  //   HEADING:Title       — draws a bold section heading
+  //   BULLET:Label:|Rest  — draws a bullet with bold label + regular text
+  //   anything else       — body paragraph
+
+  if (ft.includes("study permit extension")) {
+    return [
+      `I am writing to formally request a study permit extension on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}, who is currently enrolled at ${institution || "[Institution]"}. ${clientName} is scheduled to complete ${pronoun.possessive} studies by ${programEndDate || "[Date]"}.`,
+      `${Sub} is committed to ${pronoun.possessive} academic program and has demonstrated genuine intent to complete ${pronoun.possessive} studies in Canada. We have attached ${pronoun.possessive} unofficial transcripts, which reflect ${pronoun.possessive} academic progress.`,
+
+      `HEADING:Eligibility for Study Permit Extension`,
+      `As per Canadian government regulations, an inside-Canada application to extend a study permit may be submitted if the applicant meets the following conditions:`,
+      `BULLET:Valid Study Permit:|Attached is ${clientName}'s valid study permit${permitExpiry ? `, which is valid until ${permitExpiry}` : ""}.`,
+      `BULLET:Confirmation of Enrollment:|We have included the confirmation of enrollment from ${institution || "the institution"}, indicating that ${clientName} meets this requirement.`,
+      `BULLET:Genuine Student Intent:|${clientName} has remained an active full-time student and intends to continue ${pronoun.possessive} studies until program completion.`,
+
+      `HEADING:Request for Consideration`,
+      `All required details have been provided in the application form. We respectfully request your understanding and consideration of this matter. Granting ${clientName} a study permit extension would not only benefit ${pronoun.object} personally but also align with Canada's goals of attracting and retaining talented international students.`,
+      `We trust in your team's expertise and commitment to fairness, and we kindly ask for a timely review of this request, given its potential impact on ${clientName}'s future and career.`,
+
+      `Thank you for your attention to this matter. We look forward to a positive resolution and appreciate your dedication to upholding the principles of equity and compassion in Canada's immigration system.`,
+    ];
+  }
+
+  if (ft.includes("pgwp")) {
+    return [
+      `I am writing to formally submit an application for a Post-Graduation Work Permit on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}, who has successfully completed ${pronoun.possessive} program of study${institution ? ` at ${institution}` : ""}${program ? ` (${program})` : ""}. ${Sub} now seeks authorization to gain Canadian work experience under the PGWP program.`,
+
+      `HEADING:Program Completion and Academic Compliance`,
+      `${clientName} has successfully completed all academic requirements of ${pronoun.possessive} program and has been issued a Program Completion Letter${institution ? ` by ${institution}` : ""}. This confirms that ${clientName} meets the core PGWP eligibility requirement of program completion at a Designated Learning Institution (DLI).`,
+
+      `HEADING:Full-Time Status and IRCC Compliance`,
+      `Throughout ${pronoun.possessive} studies, ${clientName} maintained continuous full-time student status, except where authorized, in full compliance with IRCC requirements. This demonstrates genuine student intent and adherence to immigration conditions.`,
+
+      `HEADING:Valid Temporary Resident Status`,
+      `${clientName} holds valid temporary resident status in Canada at the time of this application, satisfying the requirement to apply for a PGWP from within Canada.`,
+
+      `HEADING:Eligibility Summary`,
+      `${clientName} meets all eligibility requirements for the Post-Graduation Work Permit, including:`,
+      `BULLET:Program Completion:|Successful completion of an eligible program at a PGWP-eligible DLI.`,
+      `BULLET:Valid Study Permit:|Held a valid study permit at the time of program completion.`,
+      `BULLET:Full-Time Enrollment:|Maintained full-time status throughout the program.`,
+      `BULLET:Genuine Intent:|Clear intent to gain Canadian work experience and contribute to the Canadian economy.`,
+
+      `HEADING:Request for Consideration`,
+      `We respectfully request your prompt and favourable consideration of this application. Granting ${clientName} a PGWP will allow ${pronoun.object} to apply ${pronoun.possessive} education in a professional setting, gain valuable Canadian work experience, and contribute meaningfully to Canada's labour market and economic growth.`,
+
+      `Thank you for your attention to this matter. Should you require any additional information or documentation, please do not hesitate to contact our office.`,
+    ];
+  }
+
+  if (ft.includes("sowp")) {
+    return [
+      `I am writing to formally submit an application for a Spousal Open Work Permit on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}.`,
+
+      `HEADING:Eligibility for Spousal Open Work Permit`,
+      `${Sub} is the spouse of an eligible principal applicant who currently holds valid status as a student or worker in Canada. As such, ${clientName} qualifies for a Spousal Open Work Permit under the applicable IRCC provisions.`,
+
+      `HEADING:Genuine Relationship`,
+      `The relationship between ${clientName} and the principal applicant is genuine and continuing. Supporting evidence of this relationship has been included with the application, including the marriage certificate and additional relationship documents.`,
+
+      `HEADING:Supporting Documentation`,
+      `All required forms, identity documents, and proof of the principal applicant's status have been included with this application. ${clientName} meets all eligibility requirements for the SOWP.`,
+
+      `HEADING:Request for Consideration`,
+      `We respectfully request your prompt and favourable consideration of this application. Should you require any additional information or documentation, please do not hesitate to contact our office.`,
+
+      `Thank you for your attention to this matter.`,
+    ];
+  }
+
+  if (ft.includes("visitor visa") || ft.includes("trv")) {
+    return [
+      `I am writing to formally submit an application for a Temporary Resident Visa (Visitor Visa) on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}.`,
+
+      `HEADING:Purpose of Visit`,
+      `${Sub} intends to visit Canada for a temporary purpose and has demonstrated genuine intent to return to ${pronoun.possessive} home country at the end of the authorized period of stay.`,
+
+      `HEADING:Ties to Home Country`,
+      `${clientName} maintains strong personal, financial, and professional ties to ${pronoun.possessive} home country, supporting ${pronoun.possessive} clear intent to return after the visit. Documentation evidencing these ties has been included with the application.`,
+
+      `HEADING:Financial Capacity`,
+      `${clientName} has demonstrated sufficient funds to support ${pronoun.possessive} stay in Canada without recourse to public funds, as evidenced by the bank statements and supporting financial documents enclosed.`,
+
+      `HEADING:Request for Consideration`,
+      `We respectfully request your prompt and favourable consideration of this application. Should you require any additional information, please do not hesitate to contact our office.`,
+
+      `Thank you for your attention to this matter.`,
+    ];
+  }
+
+  if (ft.includes("visitor record")) {
+    return [
+      `I am writing to formally submit an application for a Visitor Record on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}.`,
+
+      `HEADING:Reason for Extension`,
+      `${Sub} seeks to extend ${pronoun.possessive} authorized stay in Canada as a visitor for a legitimate purpose. The reason for the extension has been documented in the application form and supporting submissions.`,
+
+      `HEADING:Compliance with Visitor Status`,
+      `Throughout ${pronoun.possessive} stay in Canada, ${clientName} has fully complied with the conditions of ${pronoun.possessive} visitor status and has not engaged in any unauthorized activity.`,
+
+      `HEADING:Request for Consideration`,
+      `We respectfully request your prompt and favourable consideration of this matter. All required documentation has been included with this application. Should you require any additional information, please do not hesitate to contact our office.`,
+
+      `Thank you for your attention to this matter.`,
+    ];
+  }
+
+  if (ft.includes("family") || ft.includes("sponsorship")) {
+    return [
+      `I am writing to formally submit a Family Sponsorship application on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}.`,
+
+      `HEADING:Application Category`,
+      `This application is submitted under the Family Class category. All eligibility requirements have been carefully reviewed and confirmed for both the sponsor and the principal applicant.`,
+
+      `HEADING:Genuine Relationship`,
+      `The relationship between the sponsor and the principal applicant is genuine and continuing. Supporting evidence — including marriage records, photographs, communication history, and joint financial documentation — has been included with the application.`,
+
+      `HEADING:Sponsor Eligibility`,
+      `The sponsor meets all financial and admissibility requirements set out by IRCC, and the corresponding documentation has been provided.`,
+
+      `HEADING:Request for Consideration`,
+      `We respectfully request your prompt and favourable consideration of this application. Should you require any additional information, please do not hesitate to contact our office.`,
+
+      `Thank you for your attention to this matter.`,
+    ];
+  }
+
+  // Generic fallback for any other form type
+  return [
+    `I am writing to formally submit an application for a ${getFormTypeFull(p.formType)} on behalf of my client, ${clientName}${passportNo ? ` (Passport No. ${passportNo})` : ""}.`,
+
+    `HEADING:Eligibility and Compliance`,
+    `As ${pronoun.possessive} authorized representative, I have reviewed all supporting documentation and confirm that ${clientName} meets the applicable eligibility requirements under the Immigration and Refugee Protection Act (IRPA) and associated regulations.`,
+
+    `HEADING:Supporting Documentation`,
+    `All required forms and supporting documents have been included with this application.`,
+
+    `HEADING:Request for Consideration`,
+    `We respectfully request your prompt and favourable consideration of this application. Should you require any additional information or documentation, please do not hesitate to contact our office.`,
+
+    `Thank you for your attention to this matter.`,
+  ];
+}
+
+// ──────────────────────────────────────────────────────────────
+// Layout helpers
+// ──────────────────────────────────────────────────────────────
+
+function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    const w = font.widthOfTextAtSize(candidate, size);
+    if (w > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function drawHeader(page: PDFPage, fonts: { bold: PDFFont; reg: PDFFont }, logoImg: PDFImage | null) {
+  const top = PAGE_H;
+
+  // ── TOP-LEFT: Newton emblem placed cleanly on white (no black box) ──
+  // The emblem image already shows the full circle + monogram + maple leaf in proper colors,
+  // so we let it stand on white — far cleaner and more professional than forcing a black box.
+  const logoTargetH = 60;
+  const logoX = MARGIN_X;
+  const logoY = top - logoTargetH - 18;
+
+  if (logoImg) {
+    const dims = logoImg.scale(1);
+    const ratio = dims.width / dims.height;
+    const drawH = logoTargetH;
+    const drawW = drawH * ratio;
+    page.drawImage(logoImg, {
+      x: logoX,
+      y: logoY,
+      width: drawW,
+      height: drawH,
+    });
+  } else {
+    // Fallback: red "N" if logo couldn't be embedded
+    page.drawText("N", {
+      x: logoX + 5,
+      y: logoY + 14,
+      size: 38,
+      font: fonts.bold,
+      color: NEWTON_RED,
+    });
+  }
+
+  // ── CENTER: "NEWTON IMMIGRATION" wordmark ──
+  // Vertically centered against the emblem; horizontally centred in the available space
+  // between the emblem and the contact strip.
+  const wordmarkY = top - 42;
+  const wordmarkSize = 22;
+  const letterSpacing = 1.5; // tracked-out letters for elegance (faked via individual draws)
+  const newtonText = "NEWTON";
+  const immText = "IMMIGRATION";
+
+  // Calculate widths with letter spacing
+  const newtonW = fonts.bold.widthOfTextAtSize(newtonText, wordmarkSize) + letterSpacing * (newtonText.length - 1);
+  const spaceW = fonts.bold.widthOfTextAtSize(" ", wordmarkSize) + 4;
+  const immW = fonts.bold.widthOfTextAtSize(immText, wordmarkSize) + letterSpacing * (immText.length - 1);
+  const totalW = newtonW + spaceW + immW;
+
+  // Horizontally centre between emblem (with 30pt buffer) and contact strip (with 30pt buffer)
+  const availStart = logoX + 70 + 25;
+  const availEnd = PAGE_W - MARGIN_X - 145;
+  const wordmarkX = availStart + ((availEnd - availStart) - totalW) / 2;
+
+  // Draw NEWTON in red, with letter spacing for elegance
+  let cursorX = wordmarkX;
+  for (const char of newtonText) {
+    page.drawText(char, { x: cursorX, y: wordmarkY, size: wordmarkSize, font: fonts.bold, color: NEWTON_RED });
+    cursorX += fonts.bold.widthOfTextAtSize(char, wordmarkSize) + letterSpacing;
+  }
+  // Space
+  cursorX += spaceW - letterSpacing;
+  // Draw IMMIGRATION in dark grey/black, also with letter spacing
+  for (const char of immText) {
+    page.drawText(char, { x: cursorX, y: wordmarkY, size: wordmarkSize, font: fonts.bold, color: rgb(0.10, 0.10, 0.10) });
+    cursorX += fonts.bold.widthOfTextAtSize(char, wordmarkSize) + letterSpacing;
+  }
+
+  // ── TOP-RIGHT: contact strip ──
+  const contactRightX = PAGE_W - MARGIN_X;
+  const drawRight = (text: string, y: number, size = 9, color = TEXT_GREY) => {
+    const w = fonts.reg.widthOfTextAtSize(text, size);
+    page.drawText(text, { x: contactRightX - w, y, size, font: fonts.reg, color });
+  };
+  drawRight(RCIC_PHONE, top - 30, 9, TEXT_BLACK);
+  drawRight(RCIC_EMAIL, top - 44);
+  drawRight(RCIC_WEBSITE, top - 58);
+
+  // ── Red separator with thin grey hairline below ──
+  // Spans from the right edge of the emblem all the way to the right margin
+  const sepY = top - 78;
+  const sepStartX = logoX + 75;
+  page.drawLine({
+    start: { x: sepStartX, y: sepY },
+    end: { x: PAGE_W - MARGIN_X, y: sepY },
+    thickness: 3,
+    color: NEWTON_RED,
+  });
+  page.drawLine({
+    start: { x: sepStartX, y: sepY - 5 },
+    end: { x: PAGE_W - MARGIN_X, y: sepY - 5 },
+    thickness: 0.6,
+    color: rgb(0.30, 0.30, 0.30),
+  });
+}
+
+function drawFooter(page: PDFPage) {
+  // Red gradient strip — simulate with stacked rectangles
+  const stripH = 10;
+  const segments = 30;
+  const segW = PAGE_W / segments;
+  for (let i = 0; i < segments; i++) {
+    const t = i / (segments - 1);
+    const r = 0.55 + t * 0.30;
+    const g = 0.05 + t * 0.05;
+    const b = 0.07 + t * 0.06;
+    page.drawRectangle({
+      x: i * segW,
+      y: 0,
+      width: segW + 0.5,
+      height: stripH,
+      color: rgb(Math.min(r, 0.88), Math.min(g, 0.12), Math.min(b, 0.15)),
+    });
+  }
+  page.drawRectangle({
+    x: 0,
+    y: stripH,
+    width: PAGE_W,
+    height: 1.5,
+    color: NEWTON_RED_DARK,
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
+// Main route
+// ──────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -114,157 +486,357 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const intake = (caseItem.pgwpIntake as Record<string, string>) || {};
     const clientName = caseItem.client || "Client";
     const formType = caseItem.formType || "Immigration Application";
-    const formTypeFull = getFormTypeFull(formType);
     const passportNo = intake.passportNumber || body.passportNumber || "";
     const uci = intake.uci || body.uci || "";
     const institution = intake.institution || body.institution || "";
     const program = intake.program || body.program || "";
     const arrivalDate = intake.originalEntryDate || body.arrivalDate || "";
+    const permitExpiry = intake.permitExpiry || body.permitExpiry || "";
+    const programEndDate = intake.programEndDate || body.programEndDate || "";
+
+    // Pronouns (defaults to they/them/their; caller can pass "he" or "she")
+    const pronounIn = String(body.pronouns || intake.pronouns || "they").toLowerCase();
+    let pronoun = { subject: "they", object: "them", possessive: "their" };
+    if (pronounIn.startsWith("he")) pronoun = { subject: "he", object: "him", possessive: "his" };
+    else if (pronounIn.startsWith("she")) pronoun = { subject: "she", object: "her", possessive: "her" };
+
     const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const subjectLine = getSubjectLine(formType, clientName);
     const docs = getDocumentsList(formType);
+    const bodyLines = getBodyParagraphs({
+      clientName, pronoun, formType, passportNo, uci, institution, program,
+      arrivalDate, permitExpiry, programEndDate,
+    });
 
-    // Create PDF
+    // Build PDF
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([612, 792]); // Letter size
-    const { width, height } = page.getSize();
-
-    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    const dark = rgb(0.1, 0.1, 0.17);
-    const grey = rgb(0.4, 0.4, 0.4);
-    const lightGrey = rgb(0.6, 0.6, 0.6);
-    const black = rgb(0, 0, 0);
+    // Embed Newton emblem (natural colours: black monogram + red maple leaf, on white).
+    // Loads emblem first; falls back to full logo if emblem not present.
+    let logoImg: PDFImage | null = null;
+    try {
+      const emblemPath = path.join(process.cwd(), "public", "newton_emblem.png");
+      const fallbackPath = path.join(process.cwd(), "public", "newton_logo.png");
+      const logoPath = fs.existsSync(emblemPath) ? emblemPath : fallbackPath;
+      const logoBytes = fs.readFileSync(logoPath);
+      logoImg = await pdfDoc.embedPng(logoBytes);
+    } catch (e) {
+      console.warn("Newton logo failed to load:", (e as Error).message);
+    }
 
-    let y = height - 50;
-    const leftX = 60;
-    const rightX = width - 60;
-    const contentWidth = rightX - leftX;
-    const charsPerLine = 85;
+    let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+    drawHeader(page, { bold: fontBold, reg: fontReg }, logoImg);
+    drawFooter(page);
 
-    const drawLine = (text: string, x: number, yPos: number, size: number, font = fontReg, color = black) => {
-      page.drawText(text, { x, y: yPos, size, font, color });
+    let y = CONTENT_TOP;
+    const contentWidth = PAGE_W - MARGIN_X * 2;
+    const lineGap = 4;
+
+    const newPage = () => {
+      page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+      drawHeader(page, { bold: fontBold, reg: fontReg }, logoImg);
+      drawFooter(page);
+      y = CONTENT_TOP;
     };
 
-    const drawWrapped = (text: string, x: number, yPos: number, size: number, font = fontReg, color = black, maxChars = charsPerLine): number => {
-      const lines = wrapText(text, maxChars);
-      let currentY = yPos;
+    const ensureSpace = (needed: number) => {
+      if (y - needed < CONTENT_BOTTOM) newPage();
+    };
+
+    const drawLineText = (text: string, opts: { x?: number; size?: number; font?: PDFFont; color?: any; bold?: boolean } = {}) => {
+      const size = opts.size ?? 11;
+      const font = opts.font ?? (opts.bold ? fontBold : fontReg);
+      const color = opts.color ?? TEXT_BLACK;
+      const x = opts.x ?? MARGIN_X;
+      ensureSpace(size + lineGap);
+      page.drawText(text, { x, y, size, font, color });
+      y -= size + lineGap;
+    };
+
+    const drawParagraph = (text: string, opts: { size?: number; font?: PDFFont; color?: any; indent?: number; gapAfter?: number } = {}) => {
+      const size = opts.size ?? 11;
+      const font = opts.font ?? fontReg;
+      const color = opts.color ?? TEXT_BLACK;
+      const indent = opts.indent ?? 0;
+      const lines = wrapText(text, font, size, contentWidth - indent);
+      const lh = size * 1.45;
       for (const line of lines) {
-        page.drawText(line, { x, y: currentY, size, font, color });
-        currentY -= size + 5;
+        ensureSpace(lh);
+        page.drawText(line, { x: MARGIN_X + indent, y, size, font, color });
+        y -= lh;
       }
-      return currentY;
+      y -= opts.gapAfter ?? 6;
     };
 
-    // ── HEADER ──
-    drawLine("NEWTON IMMIGRATION INC.", leftX + 130, y, 18, fontBold, dark);
-    y -= 22;
-    drawLine(`${RCIC_NAME}  •  RCIC ${RCIC_NUMBER}  •  Regulated Canadian Immigration Consultant`, leftX + 50, y, 8, fontReg, grey);
-    y -= 14;
-    drawLine(`${RCIC_ADDRESS}  •  ${RCIC_EMAIL}  •  ${RCIC_PHONE}`, leftX + 70, y, 8, fontReg, grey);
-    y -= 10;
+    const drawBullet = (boldPart: string, restPart: string) => {
+      const size = 11;
+      const lh = size * 1.45;
+      const indent = 22;
+      const bulletX = MARGIN_X + 8;
 
-    // Horizontal rule
-    page.drawLine({ start: { x: leftX, y }, end: { x: rightX, y }, thickness: 2, color: dark });
-    y -= 20;
+      ensureSpace(lh);
+      page.drawCircle({ x: bulletX, y: y + size * 0.35, size: 1.6, color: TEXT_BLACK });
 
-    // Date
-    drawLine(today, leftX, y, 10.5, fontReg, black);
-    y -= 24;
+      const boldW = fontBold.widthOfTextAtSize(boldPart + " ", size);
+      page.drawText(boldPart, {
+        x: MARGIN_X + indent,
+        y,
+        size,
+        font: fontBold,
+        color: TEXT_BLACK,
+      });
 
-    // To
-    drawLine("To:", leftX, y, 10.5, fontBold, black);
-    y -= 16;
-    drawLine("Immigration, Refugees and Citizenship Canada (IRCC)", leftX, y, 10.5, fontReg, black);
-    y -= 24;
-
-    // Subject
-    drawLine(`Re: Support Letter for ${clientName}'s ${formTypeFull} Application`, leftX, y, 10.5, fontBold, black);
-    y -= 15;
-    if (passportNo) {
-      drawLine(`Passport: ${passportNo}${uci ? `  •  UCI: ${uci}` : ""}`, leftX, y, 9, fontReg, grey);
-      y -= 20;
-    }
-    y -= 8;
-
-    // Body
-    drawLine("Dear Immigration Officer,", leftX, y, 10.5, fontReg, black);
-    y -= 20;
-
-    y = drawWrapped(
-      `I am writing in my capacity as a Regulated Canadian Immigration Consultant (RCIC ${RCIC_NUMBER}), authorized member of the College of Immigration and Citizenship Consultants (CICC), on behalf of my client ${clientName}, in support of their application for a ${formTypeFull}.`,
-      leftX, y, 10.5, fontReg, black
-    );
-    y -= 10;
-
-    // Application-specific paragraph
-    const ftLower = formType.toLowerCase();
-    if (ftLower.includes("pgwp")) {
-      y = drawWrapped(
-        `${clientName} first entered Canada${arrivalDate ? ` on ${arrivalDate}` : ""} for the purpose of pursuing post-secondary education. They successfully completed their program of study${institution ? ` at ${institution}` : ""}${program ? ` (${program})` : ""} and are now eligible to apply for a Post-Graduation Work Permit under IRCC regulations.`,
-        leftX, y, 10.5, fontReg, black
-      );
-      y -= 10;
-      drawLine("My client meets all eligibility requirements for the PGWP, including:", leftX, y, 10.5, fontReg, black);
-      y -= 18;
-      const points = [
-        "Successful completion of an eligible program of study at a PGWP-eligible DLI",
-        "Valid study permit at the time of application",
-        "Full-time enrollment throughout the program",
-        "Meeting the minimum language proficiency requirements",
-      ];
-      for (const pt of points) {
-        y = drawWrapped(`• ${pt}`, leftX + 15, y, 10.5, fontReg, black, charsPerLine - 5);
-        y -= 4;
+      const firstAvail = contentWidth - indent - boldW;
+      const restWords = restPart.split(" ");
+      let firstLine = "";
+      let i = 0;
+      while (i < restWords.length) {
+        const candidate = firstLine ? `${firstLine} ${restWords[i]}` : restWords[i];
+        if (fontReg.widthOfTextAtSize(candidate, size) > firstAvail) break;
+        firstLine = candidate;
+        i++;
       }
-    } else {
-      y = drawWrapped(
-        `${clientName} is applying for a ${formTypeFull}. As their authorized representative, I have reviewed all documentation and confirm that my client meets all applicable eligibility requirements under the Immigration and Refugee Protection Act (IRPA) and associated regulations.`,
-        leftX, y, 10.5, fontReg, black
-      );
+      page.drawText(firstLine, {
+        x: MARGIN_X + indent + boldW,
+        y,
+        size,
+        font: fontReg,
+        color: TEXT_BLACK,
+      });
+      y -= lh;
+
+      const remaining = restWords.slice(i).join(" ");
+      if (remaining) {
+        const lines = wrapText(remaining, fontReg, size, contentWidth - indent);
+        for (const ln of lines) {
+          ensureSpace(lh);
+          page.drawText(ln, { x: MARGIN_X + indent, y, size, font: fontReg, color: TEXT_BLACK });
+          y -= lh;
+        }
+      }
+      y -= 2;
+    };
+
+    // ── Title (centred, underlined) ──
+    const title = "REPRESENTATIVE SUBMISSION LETTER";
+    const titleW = fontBold.widthOfTextAtSize(title, 13);
+    ensureSpace(40);
+    page.drawText(title, {
+      x: (PAGE_W - titleW) / 2,
+      y,
+      size: 13,
+      font: fontBold,
+      color: TEXT_BLACK,
+    });
+    page.drawLine({
+      start: { x: (PAGE_W - titleW) / 2, y: y - 2 },
+      end: { x: (PAGE_W + titleW) / 2, y: y - 2 },
+      thickness: 0.8,
+      color: TEXT_BLACK,
+    });
+    y -= 30;
+
+    drawLineText(today, { size: 11 });
+    y -= 6;
+
+    drawLineText("Immigration, Refugees and Citizenship Canada", { size: 11 });
+    y -= 6;
+
+    drawLineText(`Subject: ${subjectLine}`, { size: 11, bold: true });
+    y -= 4;
+
+    drawLineText("Dear Sir/Madam,", { size: 11 });
+    y -= 6;
+
+    for (const para of bodyLines) {
+      if (para.startsWith("HEADING:")) {
+        const headingText = para.substring("HEADING:".length).trim();
+        // Reserve enough vertical space for the heading + at least one follow-up paragraph line
+        const HEADING_BLOCK_NEEDED = 56;
+        if (y - HEADING_BLOCK_NEEDED < CONTENT_BOTTOM) newPage();
+
+        // Generous gap above for clear section separation
+        y -= 14;
+
+        // Heading rendering — three coordinated visual elements:
+        //   1. Vertical red accent bar at the left edge (4pt wide × heading height)
+        //   2. Bold heading text with subtle letter spacing for elegance
+        //   3. Thin grey underline rule spanning the full content width below the heading
+        const headingSize = 13;
+        const headingHeight = headingSize + 2;
+
+        ensureSpace(headingHeight + 8);
+
+        // 1. Red vertical accent bar on the left
+        page.drawRectangle({
+          x: MARGIN_X - 8,
+          y: y - 2,
+          width: 3,
+          height: headingHeight,
+          color: NEWTON_RED,
+        });
+
+        // 2. Heading text — bold, slightly tracked
+        const trackedSpacing = 0.6;
+        let cursorX = MARGIN_X;
+        for (const char of headingText) {
+          page.drawText(char, {
+            x: cursorX,
+            y,
+            size: headingSize,
+            font: fontBold,
+            color: TEXT_BLACK,
+          });
+          cursorX += fontBold.widthOfTextAtSize(char, headingSize) + trackedSpacing;
+        }
+
+        y -= headingHeight + 3;
+
+        // 3. Thin grey underline rule across the content width
+        page.drawLine({
+          start: { x: MARGIN_X, y },
+          end: { x: PAGE_W - MARGIN_X, y },
+          thickness: 0.5,
+          color: rgb(0.78, 0.78, 0.78),
+        });
+
+        y -= 12; // breathing room before body content
+      } else if (para.startsWith("BULLET:")) {
+        const stripped = para.substring("BULLET:".length);
+        const [boldLabel, ...restArr] = stripped.split("|");
+        const rest = restArr.join("|").trim();
+        drawBullet(boldLabel.trim(), rest);
+      } else {
+        drawParagraph(para, { size: 11, gapAfter: 8 });
+      }
     }
+
+    y -= 6;
+
+    // Keep the signature block together — needs about 150pt of vertical space
+    const SIGNATURE_BLOCK_HEIGHT = 160;
+    if (y - SIGNATURE_BLOCK_HEIGHT < CONTENT_BOTTOM) {
+      newPage();
+    }
+
+    drawLineText("Sincerely,", { size: 11 });
+    y -= 32; // signature space
+
+    // Company name in bold, slightly larger
+    ensureSpace(16);
+    page.drawText(RCIC_COMPANY, {
+      x: MARGIN_X,
+      y,
+      size: 11.5,
+      font: fontBold,
+      color: TEXT_BLACK,
+    });
+    y -= 16;
+
+    // Name + RCIC number on same line, bold name
+    ensureSpace(15);
+    page.drawText(`${RCIC_NAME}, RCIC ${RCIC_NUMBER}`, {
+      x: MARGIN_X,
+      y,
+      size: 11,
+      font: fontBold,
+      color: TEXT_BLACK,
+    });
+    y -= 16;
+
+    // Address block (slightly muted)
+    drawLineText(RCIC_ADDRESS_LINE_1, { size: 10.5, color: TEXT_GREY });
+    drawLineText(RCIC_ADDRESS_LINE_2, { size: 10.5, color: TEXT_GREY });
+    y -= 4;
+    // Contact block
+    drawLineText(RCIC_EMAIL, { size: 10.5, color: TEXT_GREY });
+    drawLineText(RCIC_PHONE, { size: 10.5, color: TEXT_GREY });
+
+    // Keep "Enclosed Documents" header with at least its first 3 items
+    const ENCLOSED_HEADER_BLOCK = 110;
+    if (y - ENCLOSED_HEADER_BLOCK < CONTENT_BOTTOM) {
+      newPage();
+    } else {
+      y -= 26;
+    }
+
+    // ── Enclosed Documents heading (matches the body section heading style) ──
+    const headingText2 = "Enclosed Documents";
+    const headingSize2 = 13;
+    const headingHeight2 = headingSize2 + 2;
+
+    ensureSpace(headingHeight2 + 8);
+
+    // Red vertical accent bar
+    page.drawRectangle({
+      x: MARGIN_X - 8,
+      y: y - 2,
+      width: 3,
+      height: headingHeight2,
+      color: NEWTON_RED,
+    });
+
+    // Bold heading text with subtle tracking
+    let cursorX2 = MARGIN_X;
+    const trackedSpacing2 = 0.6;
+    for (const char of headingText2) {
+      page.drawText(char, {
+        x: cursorX2,
+        y,
+        size: headingSize2,
+        font: fontBold,
+        color: TEXT_BLACK,
+      });
+      cursorX2 += fontBold.widthOfTextAtSize(char, headingSize2) + trackedSpacing2;
+    }
+
+    y -= headingHeight2 + 3;
+
+    // Grey underline rule
+    page.drawLine({
+      start: { x: MARGIN_X, y },
+      end: { x: PAGE_W - MARGIN_X, y },
+      thickness: 0.5,
+      color: rgb(0.78, 0.78, 0.78),
+    });
+
     y -= 14;
 
-    // Documents
-    drawLine("Enclosed Documents:", leftX, y, 10.5, fontBold, black);
-    y -= 18;
     docs.forEach((doc, i) => {
-      y = drawWrapped(`${i + 1}. ${doc}`, leftX + 15, y, 10.5, fontReg, black, charsPerLine - 5);
+      // Render as numbered list with consistent indent
+      const number = `${i + 1}.`;
+      const numberW = fontBold.widthOfTextAtSize(number, 10.5);
+      ensureSpace(16);
+      page.drawText(number, {
+        x: MARGIN_X + 6,
+        y,
+        size: 10.5,
+        font: fontBold,
+        color: NEWTON_RED,
+      });
+      // Wrap doc text after the number
+      const docLines = wrapText(doc, fontReg, 10.5, contentWidth - 30);
+      const lh = 10.5 * 1.45;
+      docLines.forEach((line, idx) => {
+        ensureSpace(lh);
+        page.drawText(line, {
+          x: MARGIN_X + 6 + numberW + 4,
+          y,
+          size: 10.5,
+          font: fontReg,
+          color: TEXT_BLACK,
+        });
+        y -= lh;
+      });
       y -= 2;
     });
-    y -= 10;
-
-    // Closing
-    y = drawWrapped(
-      "I respectfully request that this application receive your prompt and favourable consideration. Should you require any additional information or documentation, please do not hesitate to contact our office directly.",
-      leftX, y, 10.5, fontReg, black
-    );
-    y -= 20;
-
-    drawLine("Sincerely,", leftX, y, 10.5, fontReg, black);
-    y -= 50; // Signature space
-
-    drawLine(RCIC_NAME, leftX, y, 10.5, fontBold, black);
-    y -= 16;
-    drawLine(`RCIC ${RCIC_NUMBER}`, leftX, y, 9, fontReg, grey);
-    y -= 14;
-    drawLine(RCIC_COMPANY, leftX, y, 9, fontReg, grey);
-    y -= 14;
-    drawLine(RCIC_ADDRESS, leftX, y, 9, fontReg, grey);
-    y -= 14;
-    drawLine(`${RCIC_EMAIL}  •  ${RCIC_PHONE}`, leftX, y, 9, fontReg, grey);
-
-    // Footer
-    y = 40;
-    page.drawLine({ start: { x: leftX, y: y + 10 }, end: { x: rightX, y: y + 10 }, thickness: 0.5, color: lightGrey });
-    drawLine(`${RCIC_COMPANY}  •  ${RCIC_NAME}, RCIC ${RCIC_NUMBER}  •  ${RCIC_ADDRESS}`, leftX + 30, y, 7, fontReg, lightGrey);
-    y -= 11;
-    drawLine(`${RCIC_EMAIL}  •  ${RCIC_PHONE}  •  Confidential`, leftX + 120, y, 7, fontReg, lightGrey);
 
     const pdfBytes = await pdfDoc.save();
-    const fileName = `${clientName.replace(/[^a-zA-Z0-9 ]/g, "").trim()}- Representative Letter.pdf`;
+    const safeName = clientName.replace(/[^a-zA-Z0-9 ]/g, "").trim() || "Client";
+    const fileName = `${safeName} - Representative Letter.pdf`;
 
-    // Try to upload to Drive
     let driveLink = "";
     try {
       const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
@@ -280,7 +852,6 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       console.error("Drive upload failed (returning PDF directly):", (e as Error).message);
     }
 
-    // Return PDF as download
     return new NextResponse(pdfBytes, {
       headers: {
         "Content-Type": "application/pdf",

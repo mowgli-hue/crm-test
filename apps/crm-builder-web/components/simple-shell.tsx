@@ -1,6 +1,8 @@
 "use client" // v2.0.1;
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
+import { MarketingLeads } from "@/components/marketing-leads";
+import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { NewtonAiAgent } from "@/components/newton-ai-agent";
 import { AiAssistantPanel } from "@/components/ai-assistant-panel";
 
@@ -377,7 +379,9 @@ const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "inbox", label: "Inbox", icon: <MessageCircle size={16} /> },
   { id: "team", label: "Team", icon: <Users size={16} /> },
   { id: "newton-ai", label: "Newton AI", icon: <span>🤖</span> },
-  { id: "marketing-inbox", label: "Marketing Inbox", icon: <span>📣</span> }
+  { id: "marketing-inbox", label: "Marketing Inbox", icon: <span>📣</span> },
+  { id: "marketing-leads", label: "Lead Pipeline", icon: <span>📊</span> },
+  { id: "marketing-dashboard", label: "Marketing Stats", icon: <span>📈</span> }
 ];
 
 function filterCasesByRole(allCases: CaseItem[], role: Role, userName?: string) {
@@ -4170,6 +4174,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           <div className="space-y-4">
           {screen === "marketing-inbox" ? (
               <MarketingInbox sessionUser={sessionUser} apiFetch={apiFetch} />
+            ) : screen === "marketing-leads" ? (
+              <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
+            ) : screen === "marketing-dashboard" ? (
+              <MarketingDashboard apiFetch={apiFetch} onNavigate={(s: any) => setScreen(s)} />
             ) : screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />
