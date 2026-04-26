@@ -5864,12 +5864,19 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                           <button onClick={(e) => {
                             e.stopPropagation();
-                            console.log("[RepLetter] Opening modal for case:", selectedCase?.id);
+                            e.preventDefault();
+                            console.log("[RepLetter] Button clicked! Opening modal for case:", selectedCase?.id);
                             // Pre-fill with any existing notes from the case so staff can extend rather than retype
                             const existing = String((selectedCase as any)?.additionalNotes || "").trim();
                             setRepLetterStory(existing);
                             setRepLetterPronouns("they");
                             setShowRepLetterModal(true);
+                            // Diagnostic: force a visible alert so we can confirm click is firing even if modal has issues
+                            setTimeout(() => {
+                              if (!document.querySelector("[data-rep-letter-modal]")) {
+                                alert("⚠️ Click registered but modal didn't render. Check browser console for errors.");
+                              }
+                            }, 200);
                           }} className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-700 shrink-0">
                             ✍️ Write Story & Generate
                           </button>
@@ -8975,7 +8982,7 @@ function ClientPortal({
 
       {/* ── Representative Letter modal: write story → AI generates → download ── */}
       {showRepLetterModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
+        <div data-rep-letter-modal="true" className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4" onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}>
           <div className="bg-white rounded-2xl p-5 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-3">
               <div>
