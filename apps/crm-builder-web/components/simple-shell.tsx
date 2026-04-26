@@ -8,6 +8,7 @@ import { NewtonAiAgent } from "@/components/newton-ai-agent";
 import { AiAssistantPanel } from "@/components/ai-assistant-panel";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import UnderReviewPanel from "@/components/under-review-panel";
 import {
   Bell,
@@ -8981,7 +8982,8 @@ function ClientPortal({
       </div>
 
       {/* ── Representative Letter modal: write story → AI generates → download ── */}
-      {showRepLetterModal && (
+      {/* Rendered via React Portal directly into document.body, bypassing any parent CSS that might clip or hide it */}
+      {showRepLetterModal && typeof document !== "undefined" && createPortal((
         <div
           data-rep-letter-modal="true"
           style={{
@@ -9117,7 +9119,7 @@ function ClientPortal({
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </main>
   );
 }
