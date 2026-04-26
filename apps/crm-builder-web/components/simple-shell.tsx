@@ -8073,24 +8073,53 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         {isUnknown && (
                           <div className="flex items-center gap-2 flex-wrap">
                             <input
-                              placeholder="💾 Save name (Enter)"
-                              className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700 w-36 focus:outline-none focus:border-orange-400"
+                              id={`save-name-${phone}`}
+                              placeholder="Client name..."
+                              className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700 w-44 focus:outline-none focus:border-orange-400"
                               onKeyDown={async e => {
                                 if (e.key !== "Enter") return;
                                 const name = (e.target as HTMLInputElement).value.trim();
                                 if (!name) return;
+                                // 1. Save name to inbox messages
                                 await apiFetch(`/inbox`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"saveName", phone, name})});
+                                // 2. Promote to lead pipeline so they're tracked properly
+                                try {
+                                  await apiFetch(`/marketing-leads`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, contact_name: name, source: "whatsapp", stage: "new"})});
+                                } catch {}
                                 setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
                                 (e.target as HTMLInputElement).value = "";
+                                setCaseActionStatus?.(`✅ Saved "${name}" — added to Lead Pipeline`);
+                                setTimeout(() => setCaseActionStatus?.(""), 4000);
                               }}
                             />
+                            <button
+                              onClick={async () => {
+                                const input = document.getElementById(`save-name-${phone}`) as HTMLInputElement;
+                                const name = input?.value?.trim();
+                                if (!name) { alert("Please enter a name first."); input?.focus(); return; }
+                                // 1. Save name to inbox messages
+                                await apiFetch(`/inbox`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"saveName", phone, name})});
+                                // 2. Promote to lead pipeline
+                                try {
+                                  await apiFetch(`/marketing-leads`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, contact_name: name, source: "whatsapp", stage: "new"})});
+                                } catch {}
+                                setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
+                                input.value = "";
+                                setCaseActionStatus?.(`✅ Saved "${name}" — added to Lead Pipeline`);
+                                setTimeout(() => setCaseActionStatus?.(""), 4000);
+                              }}
+                              className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-700 shrink-0"
+                              title="Save contact + add to Lead Pipeline"
+                            >
+                              💾 Save
+                            </button>
                             <select defaultValue="" onChange={async e => {
                               const cId = e.target.value; if (!cId) return;
                               await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
                               setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
                               setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
                             }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
-                              <option value="">⚠️ Link to case...</option>
+                              <option value="">⚠️ Link to existing case...</option>
                               {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
                             </select>
                           </div>
