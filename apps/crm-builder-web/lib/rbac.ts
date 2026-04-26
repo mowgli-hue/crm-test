@@ -16,15 +16,16 @@ export type AppScreen =
   | "marketing-inbox"
   | "marketing-leads"
   | "marketing-dashboard"
+  | "call-log"
   | "newton-ai";
 
 // Each role only sees what they need
 const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Admin sees everything
-  Admin: ["dashboard", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "team", "settings", "newton-ai"],
+  Admin: ["dashboard", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
 
-  // Marketing creates cases, tracks leads, sees accounting
-  Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "team", "newton-ai"],
+  // Marketing creates cases, tracks leads, logs calls, sees accounting
+  Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "newton-ai"],
 
   // Processing works cases assigned to them — no need to create cases or see accounting
   Processing: ["dashboard", "cases", "submission", "tasks", "inbox", "team", "newton-ai"],

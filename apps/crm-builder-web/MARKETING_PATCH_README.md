@@ -1,69 +1,12 @@
-# Newton CRM — Marketing Build + AI-Powered Rep Letter (v5)
+# Newton CRM — Marketing Build + Rep Letter Rebuild
 
-Drop the contents of this zip into `apps/crm-builder-web/` in your repo,
-replacing the existing files at the same paths.
-
-## What's new in v5: AI-powered Rep Letter ✨
-
-Each client has their own story — transfers, gaps, hardships, achievements.
-The rep letter generator now lets staff write the client's story and Claude AI
-weaves it into a properly structured IRCC submission letter.
-
-### Flow
-
-1. Open any case → click **"✍️ Write Story & Generate"** (purple button)
-2. Modal opens with a textarea + pronoun selector
-3. Staff writes the client's situation — anything relevant:
-   academic journey, transfers, achievements, refusals, gaps, personal hardships, unique circumstances
-4. Click **"🪄 Generate with AI"**
-5. **Claude Haiku 4.5** analyses the story and produces a structured letter body:
-   intro paragraphs → 2-4 themed sections (e.g. "Background and Academic Journey",
-   "Eligibility for Study Permit Extension", "Request for Consideration") →
-   eligibility bullets → polite closing
-6. PDF generates with Newton letterhead + the AI-personalized body
-7. Auto-downloads + uploads to the client's Drive folder
-
-### Example
-
-**Story written by staff:**
-
-> Aarti began her studies at Capilano University and was progressing well. Due
-> to outside influence she transferred to Granville College for one semester,
-> but realized this was not the right fit. She returned to Capilano University
-> to continue her Associate of Arts degree.
-
-**AI-generated section in the letter:**
-
-> **Background and Academic Journey**
->
-> Aarti initially began her studies at Capilano University and was progressing
-> well in her chosen program. However, due to unforeseen circumstances and
-> external influence, she was convinced to transfer to Granville College.
-> After one semester at Granville College, Aarti realized that this decision
-> was not in her best interest...
-
-The AI is also smart about the Enclosed Documents — it added "(Capilano
-University and Granville College)" to the transcripts entry because both
-institutions were relevant to the story.
-
-### Fallback
-
-If AI fails or no story is provided (or the story is under 20 characters),
-the letter falls back to the existing template-based body. The button always
-works even without `ANTHROPIC_API_KEY` set.
-
-### Required env var
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Already set on Railway from the existing AI features. No env change needed.
+This patch contains every file changed across the three turns. Drop these into
+`apps/crm-builder-web/` in your repo, replacing the existing files at the same paths.
 
 ## Files in this patch
 
 ```
-app/api/cases/[id]/rep-letter/route.ts             [REWRITTEN — adds AI body generation]
+app/api/cases/[id]/rep-letter/route.ts             [REWRITTEN]
 app/api/marketing-inbox/route.ts                   [REWRITTEN]
 app/api/marketing-whatsapp/route.ts                [REWRITTEN]
 app/api/marketing-leads/route.ts                   [NEW]
@@ -74,67 +17,65 @@ app/api/marketing-stats/route.ts                   [NEW]
 components/marketing-inbox.tsx                     [MODIFIED]
 components/marketing-leads.tsx                     [NEW]
 components/marketing-dashboard.tsx                 [NEW]
-components/simple-shell.tsx                        [MODIFIED — adds Rep Letter modal]
+components/simple-shell.tsx                        [MODIFIED]
 lib/rbac.ts                                        [MODIFIED]
-public/newton_logo.png                             [REPLACED — high-res 1275x1650]
-public/newton_emblem.png                           [NEW — clean colour emblem]
-public/newton_emblem_dark.png                      [NEW — white-on-black variant]
-public/newton_lockup.png                           [NEW — emblem + wordmark stack]
 ```
 
-## Rep letter design
+## What's new
 
-- Clean Newton emblem on white (no awkward black box)
-- "NEWTON IMMIGRATION" wordmark with elegant letter spacing
+### 1. Representative Letter (matches the Aarti reference format)
+- Newton logo embedded directly from `public/newton_logo.png`
+- "NEWTON IMMIGRATION" wordmark (red NEWTON, black IMMIGRATION)
 - Contact strip top-right (phone, email, website)
-- Red separator with thin grey hairline below
-- **Section headings**: red vertical accent bar + bold heading + thin grey rule
-- **Bullets**: red dots with bold labels
-- **Title**: centred, red underline
-- **Enclosed Documents**: red-numbered list with the new heading style
+- Red separator line under the header
 - Red gradient strip at the bottom of every page
-- Letterhead repeats on every page
+- Letterhead repeats on every page (multi-page support)
+- Body copy matches the Aarti tone for Study Permit Extension; 8 other form
+  types have their own templates
+- Pronoun support: pass `pronouns: "he"` or `"she"` in the POST body, or set
+  `pronouns` in `pgwpIntake`. Defaults to they/them/their.
+- Keep-together logic prevents the signature block from being split across pages
 
-Form types with custom template fallbacks:
-Study Permit Extension, PGWP, SOWP, Visitor Visa/TRV, Visitor Record,
-Family Sponsorship, plus a generic fallback.
-
-## Marketing CRM features
-
-### Lead Pipeline (Kanban)
-
-6-stage board: New → Contacted → Consult Booked → Consult Done → Converted → Lost
+### 2. Marketing Lead Pipeline (new feature)
+- 6-stage Kanban board: New → Contacted → Consult Booked → Consult Done → Converted → Lost
 - Lead source tagging (WhatsApp, Facebook, Instagram, TikTok, Referral, Walk-in, Google, Website, Other)
-- Auto-detects source from FB/IG click-to-WhatsApp ad referrals
-- Auto-detects service interest from message content
+- Auto-detection of source from FB/IG click-to-WhatsApp ad referrals
+- Service interest auto-detection from message content (PGWP, Study Permit, Visitor Visa, etc.)
 - Per-lead notes, tags, assigned-to, next follow-up date
-- Per-thread AI auto-reply toggle
-- Convert lead → real Case in one click
+- Per-thread AI auto-reply toggle (so staff can take over a conversation)
+- Convert lead → real Case in one click (creates Drive folder, client record, etc.)
 
-### Marketing Dashboard
-
-- Today's stats: New today, Inbound today, Unread, Follow-ups due, Converted today
-- Pipeline breakdown bar chart
+### 3. Marketing Dashboard (new feature)
+- Today's stats cards: New today, Inbound today, Unread, Follow-ups due, Converted today
+- Pipeline breakdown bar chart by stage
 - Lead source breakdown
 - 14-day new-leads trend chart
+- Stat cards are clickable — jump to the relevant screen
 
-### Marketing Inbox upgrades
-
-- Stage badges and service interest tags on every thread
-- AI on/off toggle in chat header
-- Stage selector + "→ Case" button in chat header
+### 4. Marketing Inbox upgrades
+- Stage badges visible on every thread in the left list
+- Service interest tag visible on every thread
+- "Manual" indicator when AI auto-reply is off for that thread
+- AI on/off toggle in the chat header
+- Stage selector in the chat header
+- "→ Case" button to convert lead to case without leaving the inbox
+- Linked case ID shown in header for converted leads
+- `saveName` action now properly handled by backend (was previously broken)
 - Auto mark-read when opening a thread
 
-### Broadcast
-
-- Send single message to many leads
+### 5. Broadcast feature
+- Send a single message to many leads at once
 - Filter by stage, source, or tags
 - `{name}` and `{phone}` template variables
-- Throttled at 800ms per send, capped at 250 recipients
+- Throttled at 800ms per send to respect WhatsApp rate limits
+- Capped at 250 recipients per broadcast
+- Auto-excludes converted/lost leads
+- Sent messages saved to inbox so staff can see what was sent
 
 ## Database schema
 
-Auto-creates on first hit. No manual migration needed.
+The `marketing_leads` table is auto-created on first hit by any of the
+marketing endpoints. No manual migration needed.
 
 ```sql
 CREATE TABLE marketing_leads (
@@ -157,6 +98,10 @@ CREATE TABLE marketing_leads (
 
 ### Optional back-fill
 
+To populate `marketing_leads` rows for phone numbers that already exist in
+`marketing_inbox` (so existing chats show up in the pipeline), run this once
+after deploying:
+
 ```sql
 INSERT INTO marketing_leads (phone, contact_name, stage, ai_enabled)
 SELECT DISTINCT phone, MAX(contact_name), 'new', TRUE
@@ -167,57 +112,47 @@ GROUP BY phone;
 
 ## Deployment
 
-```bash
-cd ~/Documents/New\ project/newton-crm-test
-unzip -o ~/Downloads/newton-marketing-patch-v5.zip
-git add apps/crm-builder-web
-git commit -m "feat: marketing CRM + AI-powered rep letter"
-git push origin codex/crm-production-launch
-```
-
-Railway redeploys automatically.
+1. Copy the files in this patch into `apps/crm-builder-web/` (preserving the
+   directory structure).
+2. Commit + push to `codex/crm-production-launch`.
+3. Railway redeploys automatically — no env var changes needed.
+4. (Optional) Run the back-fill SQL above in your Postgres console.
+5. (Optional) Test the Aarti rep letter by opening any Study Permit Extension
+   case and clicking 📜 Representative Letter → 📥 Generate & Download.
 
 ## Endpoints reference
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/cases/[id]/rep-letter` | **Body: `{ clientStory?, pronouns? }`** — AI-personalized rep letter PDF |
 | GET | `/api/marketing-inbox` | List all messages + leads map |
-| POST | `/api/marketing-inbox` | Send · `action: saveName/markRead/deleteThread/toggleAI` |
-| GET | `/api/marketing-leads` | List leads with filters |
+| POST | `/api/marketing-inbox` | Send message · `action: saveName` · `markRead` · `deleteThread` · `toggleAI` |
+| GET | `/api/marketing-leads?stage=&source=&dueToday=&q=` | List leads with filters |
 | POST | `/api/marketing-leads` | Manually create/upsert a lead |
 | PATCH | `/api/marketing-leads/[phone]` | Update any lead field |
 | DELETE | `/api/marketing-leads/[phone]` | Remove a lead |
 | POST | `/api/marketing-leads/[phone]/convert` | Convert lead → real Case |
-| POST | `/api/marketing-broadcast` | Send to many leads |
+| POST | `/api/marketing-broadcast` | Send to many leads with filter or explicit phone list |
 | GET | `/api/marketing-stats` | Pipeline / source / today / trend counts |
 
-## Rep letter API direct usage
+## Roles & access
 
-```bash
-curl -X POST https://yourapp/api/cases/CASE-1234/rep-letter \
-  -H "Content-Type: application/json" \
-  -d '{
-    "systemToken": "newton-recovery-2024",
-    "clientStory": "Aarti began at Capilano, transferred to Granville for one semester, returned to Capilano...",
-    "pronouns": "she"
-  }' --output letter.pdf
-```
-
-Body parameters:
-- `clientStory` (optional): if 20+ chars and `ANTHROPIC_API_KEY` is set, AI generates the body
-- `pronouns` (optional): `"they"` (default), `"he"`, or `"she"`
-- `passportNumber`, `uci`, `institution`, `program`, `arrivalDate`, `permitExpiry`, `programEndDate` (optional): override case data
-- `systemToken` (optional): bypasses auth if equals `AUTH_RECOVERY_TOKEN`
+- **Admin**: full access to all marketing screens
+- **Marketing**: full access to all marketing screens
+- **Processing / ProcessingLead / Reviewer**: cannot see marketing screens
 
 ## Things to test on first deploy
 
-1. Open a Study Permit Extension case → click "✍️ Write Story & Generate"
-2. Modal opens — type a 2-3 sentence story, pick pronouns, click "🪄 Generate with AI"
-3. Wait ~3-5 seconds → PDF downloads
-4. Open PDF → verify the body has section headings woven from your story
-5. Try with empty story → should still generate a default-template letter
-6. Open Marketing Inbox → existing threads visible with stage badges
-7. Open Lead Pipeline → Kanban board with 6 columns
-8. Open Marketing Stats → counts and trend chart
-9. Test broadcast with 1-2 recipients first
+1. Open Marketing Inbox → existing threads should show up. Threads from new
+   phone numbers will get a `marketing_leads` row auto-created on the next
+   inbound message.
+2. Click a thread → should mark inbound messages as read. AI toggle button
+   visible. Stage selector visible.
+3. Click "→ Case" button → modal opens with form-type dropdown. Pick one,
+   submit → success alert with case ID.
+4. Open Lead Pipeline tab → should see Kanban board with 6 columns. Existing
+   leads grouped by stage.
+5. Open Marketing Stats tab → should see counts. New leads chart should show
+   trend over last 14 days.
+6. Test broadcast with stage filter and 1-2 recipients first.
+7. Generate a rep letter for a Study Permit Extension case → PDF should look
+   like the Aarti reference (logo top-left, red strips, body copy matches).
