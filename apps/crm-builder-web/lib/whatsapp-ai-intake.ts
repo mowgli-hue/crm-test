@@ -322,13 +322,58 @@ export async function handleIncomingReply(params: {
     const currentQuestion = session.questions[qIndex];
     const firstName = session.clientName.split(" ")[0];
 
-    // Save this answer
-    if (currentQuestion && text) {
-      session.answers[`q${qIndex + 1}`] = text;
-      session.answers[currentQuestion.slice(0, 50)] = text;
+    // ── Smart batch detection ──
+    // The question prompt explicitly asks the client to "reply with all answers numbered (1. answer, 2. answer...)"
+    // so we must honor that format. Detect numbered answers in the reply and assign each to the
+    // corresponding question. Handles separators "1.", "1)", "1.)", "1:" with or without spaces,
+    // and answers separated by either newlines or just spaces.
+    let answersCaptured = 0;
+    if (text) {
+      // Find all positions of number markers like "1.", "2)", "3.)", "4:" — at start OR after whitespace
+      const markerRegex = /(?:^|\s)(\d{1,2})[.)\:]+\s*/g;
+      const positions: Array<{ num: number; start: number; end: number }> = [];
+      let m: RegExpExecArray | null;
+      while ((m = markerRegex.exec(text)) !== null) {
+        // Capture position right after the marker so we can extract the answer text
+        positions.push({
+          num: parseInt(m[1], 10),
+          start: m.index + (m[0].length - m[0].trimStart().length),
+          end: markerRegex.lastIndex,
+        });
+      }
+
+      // Need at least 2 markers to qualify as a multi-answer reply
+      if (positions.length >= 2) {
+        for (let i = 0; i < positions.length; i++) {
+          const pos = positions[i];
+          const nextStart = i + 1 < positions.length ? positions[i + 1].start : text.length;
+          const answerText = text.substring(pos.end, nextStart).trim();
+          if (!answerText) continue;
+          // The client's numbering is relative to the current section — "1" = first question of this section.
+          // qIndex is the question we're currently asking (0-based), so client's "1" maps to qIndex,
+          // client's "2" maps to qIndex + 1, etc.
+          const targetIdx = qIndex + (pos.num - 1);
+          if (targetIdx >= 0 && targetIdx < session.questions.length) {
+            const q = session.questions[targetIdx];
+            session.answers[`q${targetIdx + 1}`] = answerText;
+            session.answers[q.slice(0, 50)] = answerText;
+            answersCaptured++;
+          }
+        }
+      }
     }
 
-    session.chatTurns++;
+    // Fall back to single-answer save if batch detection didn't fire
+    if (answersCaptured === 0 && currentQuestion && text) {
+      // Strip a leading "N." / "N)" / "N.)" prefix if present (e.g. "4.) No" → "No")
+      const cleaned = text.replace(/^\s*\d{1,2}[.)\:]+\s*/, "").trim() || text.trim();
+      session.answers[`q${qIndex + 1}`] = cleaned;
+      session.answers[currentQuestion.slice(0, 50)] = cleaned;
+      answersCaptured = 1;
+    }
+
+    // Advance the question pointer by however many answers we just captured
+    session.chatTurns += answersCaptured;
     const nextIndex = session.chatTurns;
     const isDone = nextIndex >= session.questions.length;
 
@@ -360,8 +405,16 @@ export async function handleIncomingReply(params: {
     } else {
       await setSession(phone, session);
       const nextQuestion = session.questions[nextIndex];
-      const ackPhrases = ["Got it! ✓", "Perfect! ✓", "Thank you! ✓", "Noted! ✓", "Great! ✓"];
-      const ack = ackPhrases[qIndex % ackPhrases.length];
+      // Choose ack phrase based on how many answers we captured at once
+      let ack: string;
+      if (answersCaptured >= 3) {
+        ack = `🎉 Got all ${answersCaptured} answers! ✓`;
+      } else if (answersCaptured === 2) {
+        ack = "Got both answers! ✓";
+      } else {
+        const ackPhrases = ["Got it! ✓", "Perfect! ✓", "Thank you! ✓", "Noted! ✓", "Great! ✓"];
+        ack = ackPhrases[qIndex % ackPhrases.length];
+      }
       const msg = `${ack}\n\n*(${nextIndex + 1}/${session.questions.length})* ${nextQuestion}`;
       await sendAndSave(phone, msg, session.caseId, session.clientName);
     }
