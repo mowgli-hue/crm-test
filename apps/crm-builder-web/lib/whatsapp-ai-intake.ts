@@ -7,6 +7,74 @@ import { sendWhatsAppText, sendWhatsAppTemplate, sendDocumentChecklist } from "@
 import { getCase, updateCaseProcessing, addMessage } from "@/lib/store";
 import { Pool } from "pg";
 
+// ── Pre-answer detection ──
+// Returns a map of { questionIndex (0-based) → already-known answer } for
+// questions whose answers we can derive from the passport scan / existing intake data.
+// This lets the WhatsApp bot SKIP asking these questions.
+//
+// Each prompt string has identifying keywords; we match against them so this works
+// across all 17 form types without per-form mapping.
+function getPreAnsweredQuestions(
+  prompts: string[],
+  intake: Record<string, any>
+): Record<number, string> {
+  const known: Record<number, string> = {};
+  if (!intake) return known;
+
+  // Helper: does the prompt mention any of these keywords (case-insensitive)?
+  const matchesAny = (prompt: string, keywords: string[]) => {
+    const lower = prompt.toLowerCase();
+    return keywords.some(k => lower.includes(k.toLowerCase()));
+  };
+
+  // Build the auto-answers from intake data
+  const fullName = String(intake.fullName || "").trim();
+  const dob = String(intake.dateOfBirth || "").trim();
+  const sex = String(intake.sex || intake.gender || "").trim();
+  const cityOfBirth = String(intake.cityOfBirth || "").trim();
+  const countryOfBirth = String(intake.countryOfBirth || "").trim();
+  const citizenship = String(intake.citizenship || countryOfBirth).trim();
+  const passportNumber = String(intake.passportNumber || "").trim();
+  const passportIssue = String(intake.passportIssueDate || "").trim();
+  const passportExpiry = String(intake.passportExpiryDate || "").trim();
+
+  prompts.forEach((prompt, i) => {
+    // Skip if the prompt is asking specifically about a CHILD or SPOUSE name — those
+    // aren't on the principal applicant's passport
+    if (/spouse|partner|child|parent|sibling|father|mother/i.test(prompt)) return;
+
+    // Q: "Full name as on passport"
+    if (fullName && matchesAny(prompt, ["full name", "name as on passport", "name on passport"])) {
+      known[i] = fullName;
+    }
+    // Q: "Date of birth"
+    else if (dob && /YYYY-MM-DD/.test(prompt) && matchesAny(prompt, ["date of birth", "dob"])) {
+      known[i] = dob;
+    }
+    // Q: "Gender / Sex"
+    else if (sex && matchesAny(prompt, ["gender", "sex (m"]) && /male|female/i.test(prompt)) {
+      const s = sex.toLowerCase();
+      known[i] = s.startsWith("f") ? "Female" : s.startsWith("m") ? "Male" : sex;
+    }
+    // Q: "Country of birth and city of birth"
+    else if ((countryOfBirth || cityOfBirth) && matchesAny(prompt, ["country of birth", "place of birth", "country and city of birth"])) {
+      const parts = [countryOfBirth, cityOfBirth].filter(Boolean);
+      if (parts.length >= 1) known[i] = parts.join(", ");
+    }
+    // Q: "Country of citizenship"
+    else if (citizenship && matchesAny(prompt, ["country of citizenship", "citizenship"]) && !matchesAny(prompt, ["spouse", "partner"])) {
+      known[i] = citizenship;
+    }
+    // Q: "Passport number, issuing country, issue date and expiry date"
+    else if (passportNumber && matchesAny(prompt, ["passport number"])) {
+      const parts = [passportNumber, citizenship, passportIssue, passportExpiry].filter(Boolean);
+      known[i] = parts.join(", ");
+    }
+  });
+
+  return known;
+}
+
 // Send message AND save to inbox so it shows in chat
 async function sendAndSave(phone: string, message: string, caseId: string | null, caseName: string | null): Promise<void> {
   await sendWhatsAppText(phone, message);
@@ -38,6 +106,9 @@ export type IntakeSession = {
   conversationHistory: Array<{ role: "assistant" | "user"; content: string }>;
   collectedFields: Record<string, string>;
   chatTurns: number;
+  // Map of question index → pre-known answer from passport / case data.
+  // Skipped during the WhatsApp Q&A; pre-filled into answers automatically.
+  preAnswered?: Record<number, string>;
 };
 
 // Session store in case DB
@@ -125,11 +196,28 @@ export async function startIntakeSession(params: {
   phone: string;
   clientName: string;
   formType: string;
-}): Promise<{ success: boolean; error?: string }> {
-  const { caseId, companyId, phone, clientName, formType } = params;
+  // Optional — case's existing intake data (passport scan, manual entries).
+  // When provided, questions whose answers are already known will be SKIPPED,
+  // saving the client from having to retype passport details.
+  existingIntake?: Record<string, any>;
+}): Promise<{ success: boolean; error?: string; skippedCount?: number }> {
+  const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
   const questions = getQuestionPromptsForFormType(formType);
   const rawBatches = getQuestionBatchesForFormType(formType);
   const firstName = clientName.split(" ")[0];
+
+  // Detect which questions are already answered by passport/case data
+  const preAnswered = existingIntake ? getPreAnsweredQuestions(questions, existingIntake) : {};
+  const skippedCount = Object.keys(preAnswered).length;
+
+  // Pre-fill answers slot for skipped questions, so they're saved in `session.answers`
+  // and the form mapper can read them later
+  const seedAnswers: Record<string, string> = {};
+  Object.entries(preAnswered).forEach(([idx, val]) => {
+    const i = parseInt(idx, 10);
+    seedAnswers[`q${i + 1}`] = val;
+    seedAnswers[questions[i].slice(0, 50)] = val;
+  });
 
   const session: IntakeSession = {
     caseId, companyId, phone, clientName, formType,
@@ -138,14 +226,19 @@ export async function startIntakeSession(params: {
     batchTitles: rawBatches.map(b => b.title),
     currentBatch: 0,
     currentIndex: 0,
-    answers: {},
+    answers: seedAnswers,
     phase: "awaiting_template_reply",
     conversationHistory: [],
     collectedFields: {},
     chatTurns: 0,
+    preAnswered,
   };
 
   await setSession(phone, session);
+
+  if (skippedCount > 0) {
+    console.log(`✅ Pre-answered ${skippedCount} question(s) from passport/case data for ${phone}`);
+  }
 
   // Send template greeting first
   const templateResult = await sendWhatsAppTemplate({
@@ -163,7 +256,7 @@ export async function startIntakeSession(params: {
 
   if (templateResult.success) {
     console.log(`✅ Template sent to ${phone} — waiting for reply to start AI chat`);
-    return { success: true };
+    return { success: true, skippedCount };
   }
 
   // Fallback — start AI chat immediately
@@ -171,7 +264,7 @@ export async function startIntakeSession(params: {
   await setSession(phone, session);
   const firstMsg = await getAiNextMessage(session, null);
   await sendWhatsAppText(phone, firstMsg);
-  return { success: true };
+  return { success: true, skippedCount };
 }
 
 // Get AI's next message based on conversation history
@@ -271,6 +364,61 @@ If the answer is unclear or evasive return: {"raw_answer": "${answer.slice(0,100
   }
 }
 
+// Helper — sends the next batch of questions after the start when ALL of the first batch
+// was pre-answered. Called recursively from the awaiting_template_reply handler.
+async function sendNextBatchAfterPreAnswers(session: IntakeSession): Promise<void> {
+  const batches = session.batches || [session.questions];
+  const batchTitles = session.batchTitles || [];
+  const totalBatches = batches.length;
+  const allQuestions = session.questions;
+  const preAnswered = session.preAnswered || {};
+
+  let batchIdx = session.currentBatch || 1;
+  while (batchIdx < totalBatches) {
+    const batchPrompts = batches[batchIdx];
+    const batchIndices = batchPrompts
+      .map(prompt => allQuestions.findIndex(q => q === prompt))
+      .filter(i => i >= 0);
+    const askIndices = batchIndices.filter(i => preAnswered[i] === undefined);
+    const askPrompts = askIndices.map(i => allQuestions[i]);
+
+    if (askPrompts.length > 0) {
+      const sectionTitle = batchTitles[batchIdx] || `Part ${batchIdx + 1}`;
+      const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+      const msg = [
+        `${sectionTitle} *(Section ${batchIdx + 1} of ${totalBatches})*`,
+        `━━━━━━━━━━━━━━━`,
+        questionsText,
+        `━━━━━━━━━━━━━━━`,
+        ``,
+        `Please reply with all answers numbered 🙏`,
+      ].join("\n");
+      session.chatTurns = askIndices[0];
+      session.currentBatch = batchIdx;
+      await setSession(session.phone, session);
+      await sendAndSave(session.phone, msg, session.caseId, session.clientName);
+      return;
+    }
+    // Entire batch was pre-answered, advance
+    batchIdx++;
+  }
+
+  // All batches pre-answered — mark session complete
+  session.phase = "complete";
+  await setSession(session.phone, session);
+  const firstName = session.clientName.split(" ")[0];
+  const doneMsg = [
+    `✅ *Thank you ${firstName}!*`,
+    ``,
+    `Based on your passport and case details, we already have everything we need.`,
+    ``,
+    `Our team will prepare your forms and be in touch shortly! 🙏`,
+    ``,
+    `— Newton Immigration Team 🍁`,
+  ].join("\n");
+  await sendAndSave(session.phone, doneMsg, session.caseId, session.clientName);
+}
+
 // Handle incoming reply from client
 export async function handleIncomingReply(params: {
   phone: string;
@@ -294,15 +442,66 @@ export async function handleIncomingReply(params: {
     const batches = session.batches || [session.questions];
     const batchTitles = session.batchTitles || [];
     const totalBatches = batches.length;
-    const firstBatch = batches[0];
     const firstTitle = batchTitles[0] || "Part 1";
+    const preAnswered = session.preAnswered || {};
 
-    const questionsText = firstBatch.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
-    const firstMsg = [
+    // Find which absolute question indices belong to the first batch.
+    // We figure this out by matching prompt text since `batches` stores strings,
+    // not original indices.
+    const allQuestions = session.questions;
+    const firstBatchPrompts = batches[0];
+    const firstBatchIndices: number[] = firstBatchPrompts
+      .map(prompt => allQuestions.findIndex(q => q === prompt))
+      .filter(i => i >= 0);
+
+    // Filter out pre-answered ones
+    const askIndices = firstBatchIndices.filter(i => preAnswered[i] === undefined);
+    const askPrompts = askIndices.map(i => allQuestions[i]);
+    const skippedCount = firstBatchIndices.length - askPrompts.length;
+
+    // If ALL questions in this batch are pre-answered, skip to next batch
+    if (askPrompts.length === 0 && totalBatches > 1) {
+      session.chatTurns = firstBatchIndices[firstBatchIndices.length - 1] + 1;
+      session.currentBatch = 1;
+      await setSession(phone, session);
+      // Recursively trigger next batch handling — easiest: send the next batch directly
+      const intro = [
+        `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
+        ``,
+        `Great news — we already have all your passport details on file ✓`,
+        ``,
+        `Just a few quick questions to complete your *${session.formType}* application 🙏`,
+      ].join("\n");
+      await sendAndSave(phone, intro, session.caseId, session.clientName);
+      // Fall through to send the second batch — exit early and let the next-batch handler take over
+      // We do this by calling ourselves recursively after small delay
+      session.phase = "ai_chat";
+      await setSession(phone, session);
+      // Trigger sending the next batch by simulating a "ready" reply
+      await new Promise(r => setTimeout(r, 600));
+      await sendNextBatchAfterPreAnswers(session);
+      return;
+    }
+
+    // Build the questions list with renumbered display (1, 2, 3...) for the client
+    const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+
+    // Friendly preamble — varies based on whether we skipped anything
+    const preambleLines: string[] = [
       `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
       ``,
-      `To prepare your *${session.formType}* application, I have *${totalBatches} sections* of questions.`,
-      `Please answer each section before I send the next one.`,
+    ];
+    if (skippedCount > 0) {
+      preambleLines.push(`Great news — we already have your passport details on file ✓`);
+      preambleLines.push(``);
+      preambleLines.push(`To complete your *${session.formType}* application, I just need answers to *${totalBatches} short sections*.`);
+    } else {
+      preambleLines.push(`To prepare your *${session.formType}* application, I have *${totalBatches} sections* of questions.`);
+    }
+    preambleLines.push(`Please answer each section before I send the next one.`);
+
+    const firstMsg = [
+      ...preambleLines,
       ``,
       `${firstTitle} *(Section 1 of ${totalBatches})*`,
       `━━━━━━━━━━━━━━━`,
@@ -374,6 +573,12 @@ export async function handleIncomingReply(params: {
 
     // Advance the question pointer by however many answers we just captured
     session.chatTurns += answersCaptured;
+
+    // Skip past any pre-answered questions (passport-derivable ones we already know)
+    while (session.preAnswered && session.preAnswered[session.chatTurns] !== undefined) {
+      session.chatTurns++;
+    }
+
     const nextIndex = session.chatTurns;
     const isDone = nextIndex >= session.questions.length;
 

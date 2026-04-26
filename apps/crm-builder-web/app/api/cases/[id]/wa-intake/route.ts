@@ -34,12 +34,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       phone,
       clientName: caseItem.client || "Client",
       formType: caseItem.formType || "PGWP",
+      // Pass existing intake (passport scan data + manual fields). Pre-answers any questions
+      // we can derive from this — saves the client from re-typing passport details.
+      existingIntake: (caseItem.pgwpIntake as Record<string, any>) || {},
     });
 
     return NextResponse.json({ 
       ok: result.success, 
       message: result.success 
-        ? `AI intake started for ${caseItem.client} — waiting for client reply`
+        ? `AI intake started for ${caseItem.client} — waiting for client reply${result.skippedCount ? ` (${result.skippedCount} questions pre-answered from passport)` : ""}`
         : `Failed: ${result.error}` 
     });
   } catch (e) {
