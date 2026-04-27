@@ -378,22 +378,42 @@ export function mergeAIIntoFormData(
   }
 
   // Background flags
+  // IMPORTANT: When has=false, FORCE-clear the details field. Don't trust AI to send empty.
+  // This prevents the form from showing "Visitor visa refused 2019" while ALSO ticking the
+  // No checkbox — which is a real failure mode that confuses IRCC officers.
   if (ai.refusal) {
-    setIf("prev_application_refused", ai.refusal.has);
-    setIf("prev_refused_to_canada", ai.refusal.to_canada);
-    setIf("prev_refused_details", ai.refusal.details);
+    if (ai.refusal.has !== undefined) merged.prev_application_refused = ai.refusal.has;
+    if (ai.refusal.to_canada !== undefined) merged.prev_refused_to_canada = ai.refusal.to_canada;
+    if (ai.refusal.has === false) {
+      merged.prev_refused_details = "";
+      merged.prev_refused_to_canada = false;
+    } else if (ai.refusal.details) {
+      merged.prev_refused_details = ai.refusal.details;
+    }
   }
   if (ai.medical) {
-    setIf("has_medical_condition", ai.medical.has);
-    setIf("medical_details", ai.medical.details);
+    if (ai.medical.has !== undefined) merged.has_medical_condition = ai.medical.has;
+    if (ai.medical.has === false) {
+      merged.medical_details = "";
+    } else if (ai.medical.details) {
+      merged.medical_details = ai.medical.details;
+    }
   }
   if (ai.criminal) {
-    setIf("has_criminal_record", ai.criminal.has);
-    setIf("criminal_details", ai.criminal.details);
+    if (ai.criminal.has !== undefined) merged.has_criminal_record = ai.criminal.has;
+    if (ai.criminal.has === false) {
+      merged.criminal_details = "";
+    } else if (ai.criminal.details) {
+      merged.criminal_details = ai.criminal.details;
+    }
   }
   if (ai.overstay) {
-    setIf("has_overstayed", ai.overstay.has);
-    setIf("overstay_details", ai.overstay.details);
+    if (ai.overstay.has !== undefined) merged.has_overstayed = ai.overstay.has;
+    if (ai.overstay.has === false) {
+      merged.overstay_details = "";
+    } else if (ai.overstay.details) {
+      merged.overstay_details = ai.overstay.details;
+    }
   }
 
   // Visit details (visitor visa / record)
