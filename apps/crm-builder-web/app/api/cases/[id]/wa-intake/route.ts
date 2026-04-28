@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ 
       ok: result.success, 
       message: result.success 
-        ? `AI intake started for ${caseItem.client} — waiting for client reply${result.skippedCount ? ` (${result.skippedCount} questions pre-answered from passport)` : ""}`
+        ? `AI intake started for ${caseItem.client} — waiting for client reply${result.skippedCount ? ` (${result.skippedCount} questions pre-answered from passport)` : ""}${result.recoveredCount ? ` (${result.recoveredCount} answer(s) recovered from previous WhatsApp reply)` : ""}`
         : `Failed: ${result.error}` 
     });
   } catch (e) {

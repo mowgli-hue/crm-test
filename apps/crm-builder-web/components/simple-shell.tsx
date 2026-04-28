@@ -5782,6 +5782,36 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                         </div>
 
+                        {/* ⚠️ Warning banner — intake started but never completed */}
+                        {(() => {
+                          const intake = selectedCase.pgwpIntake as Record<string, any> | undefined;
+                          if (!intake) return null;
+                          const phase = intake.whatsappIntakePhase;
+                          const hasSession = !!intake.whatsappSession;
+                          const answerKeys = Object.keys(intake).filter(k => /^q\d+$/.test(k));
+                          // If a session exists but phase isn't "complete" AND we have no Q answers → stuck/abandoned
+                          const stuck = hasSession && phase !== "complete" && answerKeys.length === 0;
+                          // If a session is in progress with some answers but not complete → in-progress
+                          const inProgress = hasSession && phase !== "complete" && answerKeys.length > 0;
+                          if (stuck) {
+                            return (
+                              <div className="mt-3 rounded-lg border-l-4 border-amber-500 bg-amber-50 px-3 py-2">
+                                <p className="text-xs font-bold text-amber-900">⚠️ Intake started but never completed</p>
+                                <p className="text-[11px] text-amber-800 mt-0.5">A WhatsApp intake session was created for this case but no answers were saved. Check the WhatsApp inbox for this client to see if they replied — or restart intake.</p>
+                              </div>
+                            );
+                          }
+                          if (inProgress) {
+                            return (
+                              <div className="mt-3 rounded-lg border-l-4 border-blue-500 bg-blue-50 px-3 py-2">
+                                <p className="text-xs font-bold text-blue-900">📝 Intake in progress · {answerKeys.length} answer(s) saved</p>
+                                <p className="text-[11px] text-blue-800 mt-0.5">Client has started answering but hasn't completed all sections yet.</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+
                         {/* Progress bar — intake completion */}
                         {(() => {
                           const intake = selectedCase.pgwpIntake as Record<string,string> | undefined;

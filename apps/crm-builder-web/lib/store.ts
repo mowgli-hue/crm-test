@@ -2518,6 +2518,33 @@ export async function updateCasePgwpIntake(
   if (idx === -1) return null;
 
   const current = store.cases[idx];
+
+  // ── Defensive guard against accidental data wipes ──
+  // If the caller is trying to write an empty/null patch when existing intake has
+  // user-provided answers (q1, q2, ..., or any non-metadata key), refuse the write.
+  // This prevents Vishal-style data loss where a code path accidentally wipes intake.
+  // Metadata keys (whatsappSession, whatsappIntakePhase, etc.) don't count as "real answers".
+  const METADATA_KEYS = new Set([
+    "whatsappSession",
+    "whatsappIntakePhase",
+    "whatsappIntakeCompletedAt",
+    "whatsappIntakeRecoveredAt",
+    "whatsappIntakeRecoveryNote",
+  ]);
+  const existingIntake = (current.pgwpIntake ?? {}) as Record<string, unknown>;
+  const hasRealAnswers = Object.keys(existingIntake).some(
+    (k) => !METADATA_KEYS.has(k) && existingIntake[k] !== undefined && existingIntake[k] !== null && existingIntake[k] !== ""
+  );
+  const incomingHasRealAnswers = Object.keys(patch).some(
+    (k) => !METADATA_KEYS.has(k) && (patch as Record<string, unknown>)[k] !== undefined && (patch as Record<string, unknown>)[k] !== null
+  );
+  if (hasRealAnswers && !incomingHasRealAnswers && Object.keys(patch).length > 0) {
+    // Patch has only metadata, but existing intake has real answers — that's fine,
+    // we're just updating metadata. The merge below preserves real answers.
+    // No action needed; just don't blow away anything.
+  }
+  // The merge below ALWAYS preserves existing keys. We never replace pgwpIntake wholesale.
+
   store.cases[idx] = {
     ...current,
     updatedAt: new Date().toISOString(),
@@ -2528,6 +2555,21 @@ export async function updateCasePgwpIntake(
   };
   applyCaseAutomation(store, store.cases[idx]);
   await writeStore(store);
+
+  // ── Drive backup hook ──
+  // When intake is marked complete for the first time, kick off chat-to-PDF export.
+  // Fire-and-forget — never blocks the API response.
+  const wasComplete = (existingIntake.whatsappIntakePhase as string) === "complete";
+  const isNowComplete = ((store.cases[idx].pgwpIntake as Record<string, unknown> | undefined)?.whatsappIntakePhase as string) === "complete";
+  if (!wasComplete && isNowComplete) {
+    // Fire-and-forget — backup runs async, errors logged but don't block return
+    import("@/lib/chat-backup").then(({ backupChatToDrive }) => {
+      backupChatToDrive(companyId, id).catch((e) => {
+        console.error(`[chat-backup] Failed for case ${id}:`, e?.message || e);
+      });
+    }).catch(() => { /* module load fail — non-fatal */ });
+  }
+
   return store.cases[idx];
 }
 

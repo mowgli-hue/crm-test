@@ -75,6 +75,79 @@ function getPreAnsweredQuestions(
   return known;
 }
 
+// ── Inbox recovery helper ──
+// Look for the most recent inbound message from this phone that LOOKS like a
+// numbered batch reply (e.g. "1. No\n2. single\n3. NA"). If found, parse it
+// using the same multi-numbered parser used for live replies, and return
+// a {q1: ..., q2: ...} map. This is what saves Vishal-style cases where the
+// client answered to an old template that didn't have a parser.
+async function scanInboxForBatchedAnswers(phone: string, maxQuestions: number): Promise<Record<string, string> | null> {
+  if (!process.env.DATABASE_URL) return null;
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  try {
+    const cleanPhone = phone.replace(/\D/g, "");
+    const last9 = cleanPhone.slice(-9);
+    // Get most recent inbound messages — look at last 30 days
+    const res = await pool.query(
+      `SELECT message, created_at
+       FROM whatsapp_inbox
+       WHERE direction = 'inbound'
+         AND (phone = $1 OR phone LIKE $2)
+         AND created_at > NOW() - INTERVAL '30 days'
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [phone, `%${last9}`]
+    );
+    if (res.rows.length === 0) return null;
+
+    // Find the message with the most numbered markers (likely the batch reply)
+    let bestMessage: string | null = null;
+    let bestCount = 0;
+    for (const row of res.rows) {
+      const text = String(row.message || "");
+      // Quick filter — needs at least 3 numbered markers to be considered a batch
+      const markers = (text.match(/(?:^|\n|\s)(\d{1,2})[.)\:]+\s/g) || []).length;
+      if (markers > bestCount && markers >= 3) {
+        bestCount = markers;
+        bestMessage = text;
+      }
+    }
+    if (!bestMessage) return null;
+
+    // Parse using same logic as the live batch parser
+    // Markers like "1.", "1)", "1.)", "1:" with or without spaces
+    const markerRegex = /(?:^|\s)(\d{1,2})[.)\:]+\s*/g;
+    const positions: Array<{ num: number; start: number; end: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = markerRegex.exec(bestMessage)) !== null) {
+      positions.push({
+        num: parseInt(m[1], 10),
+        start: m.index + (m[0].length - m[0].trimStart().length),
+        end: markerRegex.lastIndex,
+      });
+    }
+    if (positions.length < 2) return null;
+
+    const answers: Record<string, string> = {};
+    for (let i = 0; i < positions.length; i++) {
+      const pos = positions[i];
+      const nextStart = i + 1 < positions.length ? positions[i + 1].start : bestMessage.length;
+      const answerText = bestMessage.substring(pos.end, nextStart).trim();
+      if (!answerText) continue;
+      // The number in the reply IS the question number (1-indexed) — keep as-is
+      if (pos.num >= 1 && pos.num <= maxQuestions) {
+        answers[`q${pos.num}`] = answerText;
+      }
+    }
+    return Object.keys(answers).length > 0 ? answers : null;
+  } finally {
+    await pool.end().catch(() => {});
+  }
+}
+
 // Send message AND save to inbox so it shows in chat
 async function sendAndSave(phone: string, message: string, caseId: string | null, caseName: string | null): Promise<void> {
   await sendWhatsAppText(phone, message);
@@ -200,7 +273,7 @@ export async function startIntakeSession(params: {
   // When provided, questions whose answers are already known will be SKIPPED,
   // saving the client from having to retype passport details.
   existingIntake?: Record<string, any>;
-}): Promise<{ success: boolean; error?: string; skippedCount?: number }> {
+}): Promise<{ success: boolean; error?: string; skippedCount?: number; recoveredCount?: number }> {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
   const questions = getQuestionPromptsForFormType(formType);
   const rawBatches = getQuestionBatchesForFormType(formType);
@@ -218,6 +291,33 @@ export async function startIntakeSession(params: {
     seedAnswers[`q${i + 1}`] = val;
     seedAnswers[questions[i].slice(0, 50)] = val;
   });
+
+  // ── Inbox recovery ──
+  // Before starting a new session, check if the client has already sent a batched
+  // numbered reply (e.g. "1. Yes\n2. Single\n3. NA...") to a previous intake template.
+  // This is what happened with Vishal — answered to old flat template, his answers
+  // were saved to inbox but never parsed. Pull them now.
+  let recoveredCount = 0;
+  try {
+    const recovered = await scanInboxForBatchedAnswers(phone, questions.length);
+    if (recovered && Object.keys(recovered).length > 0) {
+      for (const [k, v] of Object.entries(recovered)) {
+        // Don't overwrite passport-derived pre-answers
+        const idx = parseInt(k.replace("q", ""), 10) - 1;
+        if (preAnswered[idx] !== undefined) continue;
+        if (!seedAnswers[k]) {
+          seedAnswers[k] = v as string;
+          if (questions[idx]) seedAnswers[questions[idx].slice(0, 50)] = v as string;
+          recoveredCount++;
+        }
+      }
+      if (recoveredCount > 0) {
+        console.log(`✅ Recovered ${recoveredCount} answer(s) from inbox for ${phone}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[startIntakeSession] inbox recovery failed:`, (e as Error).message);
+  }
 
   const session: IntakeSession = {
     caseId, companyId, phone, clientName, formType,
