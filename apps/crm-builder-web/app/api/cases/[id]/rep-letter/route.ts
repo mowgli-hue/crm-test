@@ -1012,7 +1012,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         const structure = await createCaseDriveStructure({ clientName, caseId: params.id, companyId });
         folderId = structure.mainFolderId;
       }
-      const driveRes = await uploadFileToDriveFolder({ folderId, fileName, mimeType: "application/pdf", buffer: Buffer.from(pdfBytes) });
+      const driveRes = await uploadFileToDriveFolder({ folderId, fileName, mimeType: "application/pdf", fileBuffer: Buffer.from(pdfBytes) });
       driveLink = driveRes.webViewLink || "";
       console.log(`✅ Rep letter uploaded to Drive: ${fileName}`);
     } catch (e) {
