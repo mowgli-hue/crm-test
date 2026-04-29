@@ -2968,12 +2968,16 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       return;
     }
     if (action.type === "tasks") {
-      setCaseDetailTab("tasks");
+      // Tasks tab removed — fallback to overview
+      setCaseDetailTab("overview");
       await loadCaseDetail(caseItem.id);
       return;
     }
     if (action.type === "communication") {
-      setCaseDetailTab("communication");
+      // Chat tab removed — open WhatsApp directly with the client
+      const phone = String((caseItem as any).leadPhone || "").replace(/\D/g, "");
+      if (phone) window.open(`https://wa.me/${phone}`, "_blank");
+      setCaseDetailTab("overview");
       await loadCaseDetail(caseItem.id);
       return;
     }
@@ -5860,13 +5864,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">
                             {getCaseNextAction(selectedCase).label}
                           </button>
-                          <button onClick={() => setCaseDetailTab("communication")}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                          <button onClick={() => {
+                            // Open WhatsApp directly with the client (Click-to-Chat link)
+                            const phone = String(selectedCase.leadPhone || "").replace(/\D/g, "");
+                            if (phone) window.open(`https://wa.me/${phone}`, "_blank");
+                          }}
+                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
                             💬 Message
-                          </button>
-                          <button onClick={() => void runAiIntakeCheck(true)}
-                            className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
-                            🤖 AI Check
                           </button>
                           <button onClick={async () => {
                             setAiLoading(true);
@@ -5886,14 +5890,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           }} disabled={aiLoading} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50">
                             {aiLoading ? "..." : "✍️ Draft Notes"}
                           </button>
-                          <button onClick={() => void runAutofill()} disabled={autofillRunning}
-                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-                            {autofillRunning ? "Filling…" : "✨ Autofill"}
-                          </button>
-                          <button onClick={() => void syncToSheets()} disabled={sheetSyncRunning}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-                            {sheetSyncRunning ? "Syncing…" : "↗ Sheets"}
-                          </button>
                           <button onClick={async () => {
                             setAiLoading(true);
                             const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"overdue_check"})}).catch(()=>null);
@@ -5912,9 +5908,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           {id:"overview", icon:"📋", label:"Overview"},
                           {id:"profile",  icon:"👤", label:"Profile"},
                           {id:"documents",icon:"📎", label:"Docs"},
-                          {id:"tasks",    icon:"✅", label:"Tasks"},
-                          {id:"ai",       icon:"🤖", label:"Ask AI"},
-                          {id:"communication",icon:"💬",label:"Chat"},
                           {id:"notes",    icon:"📝", label:"Notes"},
                         ] as const).map(tab => (
                           <button key={tab.id} onClick={() => setCaseDetailTab(tab.id)}
@@ -5941,132 +5934,95 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     <div className="p-5">
 
                     {caseDetailTab === "profile" ? (
-                      <div className="mt-3 space-y-3 text-xs">
-                        <div className="grid gap-2 md:grid-cols-4">
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="text-slate-500">Client Name</p>
-                            <p className="font-semibold">{selectedCase.client || "Client"}</p>
+                      <div className="mt-3 space-y-3">
+                        {/* Identity & Contact */}
+                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                          <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Identity & Contact</p>
                           </div>
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="text-slate-500">Phone</p>
-                            <p className="font-semibold">{selectedCase.leadPhone || "-"}</p>
-                          </div>
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="text-slate-500">Email</p>
-                            <p className="font-semibold">{selectedCase.leadEmail || "-"}</p>
-                          </div>
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="text-slate-500">Client ID</p>
-                            <p className="font-semibold">{selectedCase.clientId || "Not linked yet"}</p>
-                          </div>
-                        </div>
-
-                        <div className="rounded border border-slate-200 p-2">
-                          <p className="font-semibold">Current Status</p>
-                          <div className="mt-2 grid gap-2 md:grid-cols-4">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 text-xs">
                             <div>
-                              <p className="text-slate-500">Application</p>
-                              <p className="font-semibold">{selectedCase.formType}</p>
+                              <p className="text-slate-400">Full Name</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{selectedCase.client || "—"}</p>
                             </div>
                             <div>
-                              <p className="text-slate-500">Stage</p>
-                              <p className="font-semibold">{selectedCase.stage}</p>
+                              <p className="text-slate-400">Phone</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{selectedCase.leadPhone || "—"}</p>
                             </div>
                             <div>
-                              <p className="text-slate-500">Assigned Staff</p>
-                              <p className="font-semibold">{selectedCase.assignedTo || selectedCase.owner || "Unassigned"}</p>
+                              <p className="text-slate-400">Email</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{selectedCase.leadEmail || "—"}</p>
                             </div>
                             <div>
-                              <p className="text-slate-500">Pending Tasks</p>
-                              <p className="font-semibold">{caseTasks.filter((t) => t.status !== "completed").length}</p>
+                              <p className="text-slate-400">Date of Birth</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.dateOfBirth || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-400">Citizenship</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.citizenship || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-400">Marital Status</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.maritalStatus || "—"}</p>
                             </div>
                           </div>
                         </div>
 
-                        <div className="rounded border border-slate-200 p-2">
-                          <p className="font-semibold">Application History</p>
-                          <div className="mt-2 space-y-2">
-                            {clientRelatedCases.map((c) => (
-                              <div key={c.id} className="rounded border border-slate-200 p-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="font-semibold">
-                                    {c.id} - {c.formType}
-                                  </p>
-                                  <p className="text-slate-500">
-                                    Submitted: {c.submittedAt ? new Date(c.submittedAt).toLocaleDateString() : "-"}
-                                  </p>
-                                </div>
-                                <p className="text-slate-600">
-                                  {c.finalOutcome
-                                    ? `${c.finalOutcome === "approved" ? "Approved" : c.finalOutcome === "refused" ? "Refused" : c.finalOutcome === "request_letter" ? "Request Letter" : "Withdrawn"}${c.decisionDate ? ` on ${new Date(c.decisionDate).toLocaleDateString()}` : ""}`
-                                    : "Outcome pending"}
-                                </p>
-                                {c.remarks ? <p className="mt-1 text-slate-600">Notes: {c.remarks}</p> : null}
-                              </div>
-                            ))}
-                            {clientRelatedCases.length === 0 ? <p className="text-slate-500">No timeline records yet.</p> : null}
+                        {/* Passport */}
+                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                          <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Passport</p>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 text-xs">
+                            <div>
+                              <p className="text-slate-400">Number</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.passportNumber || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-400">Issue Date</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.passportIssueDate || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-400">Expiry Date</p>
+                              <p className="font-semibold text-slate-900 mt-0.5">{(selectedCase.pgwpIntake as any)?.passportExpiryDate || "—"}</p>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="font-semibold">Documents</p>
-                            <div className="mt-2 space-y-2">
-                              {documents.map((d) => (
-                                <div key={d.id} className="rounded border border-slate-100 p-2">
-                                  <p className="font-semibold">{d.name}</p>
-                                  <p className="text-slate-500">
-                                    Type: {d.fileType || d.category || "general"} • Version: {Number(d.version || 1)}
-                                  </p>
-                                </div>
-                              ))}
-                              {documents.length === 0 ? <p className="text-slate-500">No documents uploaded.</p> : null}
-                            </div>
+                        {/* Address */}
+                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                          <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Address</p>
                           </div>
+                          <div className="p-4 text-xs">
+                            <p className="text-slate-700">
+                              {(selectedCase.pgwpIntake as any)?.q5 || (selectedCase.pgwpIntake as any)?.address || "Not provided"}
+                            </p>
+                          </div>
+                        </div>
 
-                          <div className="rounded border border-slate-200 p-2">
-                            <p className="font-semibold">Communication</p>
-                            <div className="mt-2 space-y-2">
-                              {messages.slice(0, 6).map((m) => (
-                                <div key={m.id} className="rounded border border-slate-100 p-2">
-                                  <p className="font-semibold">
-                                    {m.senderName} <span className="font-normal text-slate-500">({m.senderType})</span>
-                                  </p>
-                                  <p>{m.text}</p>
+                        {/* Application History (other cases for same client) */}
+                        {clientRelatedCases.length > 0 && (
+                          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                            <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Other Applications by This Client</p>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                              {clientRelatedCases.map((c) => (
+                                <div key={c.id} className="p-3 text-xs">
+                                  <div className="flex items-center justify-between flex-wrap gap-2">
+                                    <p className="font-semibold text-slate-900">{c.id} · {c.formType}</p>
+                                    <p className="text-slate-500">
+                                      {c.finalOutcome
+                                        ? `${c.finalOutcome === "approved" ? "✅ Approved" : c.finalOutcome === "refused" ? "❌ Refused" : c.finalOutcome === "request_letter" ? "📨 Request Letter" : "Withdrawn"}${c.decisionDate ? ` · ${new Date(c.decisionDate).toLocaleDateString()}` : ""}`
+                                        : "Pending"}
+                                    </p>
+                                  </div>
                                 </div>
                               ))}
-                              {messages.length === 0 ? <p className="text-slate-500">No communication records yet.</p> : null}
                             </div>
                           </div>
-                        </div>
-
-                        <div className="rounded border border-slate-200 p-2">
-                          <p className="font-semibold">Internal Flags</p>
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
-                            <div className="rounded border border-slate-100 p-2">
-                              <p className="text-slate-500">Previous refusals</p>
-                              <p className="font-semibold">
-                                {String(selectedCase.pgwpIntake?.refusedAnyCountry || "").trim() || "Not flagged"}
-                              </p>
-                            </div>
-                            <div className="rounded border border-slate-100 p-2">
-                              <p className="text-slate-500">Criminal history</p>
-                              <p className="font-semibold">
-                                {String(selectedCase.pgwpIntake?.criminalHistory || "").trim() || "Not flagged"}
-                              </p>
-                            </div>
-                            <div className="rounded border border-slate-100 p-2">
-                              <p className="text-slate-500">Medical history</p>
-                              <p className="font-semibold">
-                                {String(selectedCase.pgwpIntake?.medicalHistory || "").trim() || "Not flagged"}
-                              </p>
-                            </div>
-                            <div className="rounded border border-slate-100 p-2">
-                              <p className="text-slate-500">Missing docs</p>
-                              <p className="font-semibold">{docRequests.filter((r) => r.status === "open").length}</p>
-                            </div>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     ) : null}
 
@@ -6476,112 +6432,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           )}
                         </div>
 
-                                                {/* ── Fees ── */}
-                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                          <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Fees</p>
+                                                {/* ── IRCC Fee at submission (processing reminder only) ── */}
+                        {Number(selectedCase.irccFees ?? 0) > 0 && (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 flex items-center justify-between">
+                            <p className="text-xs text-slate-600">
+                              <span className="font-semibold text-slate-800">IRCC Fee due at submission:</span> ${Number(selectedCase.irccFees ?? 0).toLocaleString()}
+                            </p>
+                            <span className="text-[10px] font-semibold text-slate-500 px-2 py-1 rounded bg-white border border-slate-200">
+                              {selectedCase.irccFeePayer === "sir_card" ? "Sir's Card" : "Client Card"}
+                            </span>
                           </div>
-                          <div className="grid grid-cols-3 divide-x divide-slate-100">
-                            <div className="px-4 py-3">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Service Fee</p>
-                              <p className="text-lg font-bold text-slate-900 mt-0.5">${Number(selectedCase.totalCharges ?? selectedCase.servicePackage?.retainerAmount ?? 0).toLocaleString()}</p>
-                            </div>
-                            <div className="px-4 py-3">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">IRCC Fees</p>
-                              <p className="text-lg font-bold text-slate-900 mt-0.5">${Number(selectedCase.irccFees ?? 0).toLocaleString()} <span className="text-xs font-medium text-slate-400">({selectedCase.irccFeePayer === "sir_card" ? "Sir Card" : "Client Card"})</span></p>
-                            </div>
-                            <div className="px-4 py-3">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">Amount Paid</p>
-                              <p className={`text-lg font-bold mt-0.5 ${Number((selectedCase as any).amountPaid || 0) >= Number(selectedCase.totalCharges ?? selectedCase.servicePackage?.retainerAmount ?? 0) ? "text-emerald-700" : "text-amber-700"}`}>
-                                ${Number((selectedCase as any).amountPaid || 0).toLocaleString()}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* ── Portal Link ── */}
-                        <div className="rounded-xl border border-slate-200 bg-white p-4">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Client Portal</p>
-                          <div className="flex flex-wrap gap-2">
-                            <input value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} placeholder="Phone (WhatsApp)"
-                              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none" />
-                            <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="Email (optional)"
-                              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none" />
-                            <button onClick={() => void createClientInvite()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
-                              {inviteUrl ? "Refresh Link" : "Create Link"}
-                            </button>
-                            {inviteUrl && (
-                              <button onClick={() => void shareInvite("whatsapp")} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                                📱 Send WhatsApp
-                              </button>
-                            )}
-                            {inviteUrl && (
-                              <a href={inviteUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100">
-                                Open Link ↗
-                              </a>
-                            )}
-                          </div>
-                          {inviteStatus && <p className="mt-2 text-xs text-slate-600">{inviteStatus}</p>}
-                        </div>
-
-                        {/* ── Tools ── */}
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <p className="text-sm font-bold text-slate-800 mb-1">AI Intake Check</p>
-                            <p className="text-xs text-slate-400 mb-3">Check what's missing from the client's file</p>
-                            <div className="flex gap-2 flex-wrap">
-                              <button onClick={() => void runAiIntakeCheck(true)} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700">Check + Create Tasks</button>
-                              <button onClick={() => void runAiIntakeCheck(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">Check Only</button>
-                            </div>
-                            {intakeCheckStatus && <p className="mt-2 text-xs text-slate-600">{intakeCheckStatus}</p>}
-                            {intakeCheckSummary && (
-                              <div className="mt-2 grid grid-cols-3 gap-2">
-                                <div className={`rounded-lg p-2 text-center ${intakeCheckSummary.questionnaireComplete ? "bg-emerald-50" : "bg-amber-50"}`}>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase">Form</p>
-                                  <p className={`text-xs font-bold mt-0.5 ${intakeCheckSummary.questionnaireComplete ? "text-emerald-700" : "text-amber-700"}`}>{intakeCheckSummary.questionnaireComplete ? "✓ Done" : "Pending"}</p>
-                                </div>
-                                <div className={`rounded-lg p-2 text-center ${intakeCheckSummary.missingIntakeItems.length === 0 ? "bg-emerald-50" : "bg-amber-50"}`}>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase">Missing</p>
-                                  <p className={`text-xs font-bold mt-0.5 ${intakeCheckSummary.missingIntakeItems.length === 0 ? "text-emerald-700" : "text-amber-700"}`}>{intakeCheckSummary.missingIntakeItems.length} fields</p>
-                                </div>
-                                <div className={`rounded-lg p-2 text-center ${intakeCheckSummary.missingRequiredDocs.length === 0 ? "bg-emerald-50" : "bg-amber-50"}`}>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase">Docs</p>
-                                  <p className={`text-xs font-bold mt-0.5 ${intakeCheckSummary.missingRequiredDocs.length === 0 ? "text-emerald-700" : "text-amber-700"}`}>{intakeCheckSummary.missingRequiredDocs.length} missing</p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <p className="text-sm font-bold text-slate-800 mb-1">AI Autofill</p>
-                            <p className="text-xs text-slate-400 mb-3">Fill blank intake fields from existing data</p>
-                            <input value={autofillHint} onChange={(e) => setAutofillHint(e.target.value)}
-                              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs mb-2 focus:border-slate-400 focus:outline-none"
-                              placeholder="Optional hint — e.g. passport DOB 1999-03-12" />
-                            <button onClick={() => void runAutofill()} disabled={autofillRunning}
-                              className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
-                              {autofillRunning ? "Running…" : "Run Autofill"}
-                            </button>
-                            {autofillStatus && <p className={`mt-2 text-xs font-semibold ${autofillResult && autofillResult.fieldsAdded > 0 ? "text-emerald-700" : "text-slate-600"}`}>{autofillStatus}</p>}
-                          </div>
-                        </div>
-
-                        {/* ── Google Sheets Sync ── */}
-                        <div className="rounded-xl border border-slate-200 bg-white p-4">
-                          <div className="flex items-center justify-between flex-wrap gap-3">
-                            <div>
-                              <p className="text-sm font-bold text-slate-800">Google Sheets Sync</p>
-                              <p className="text-xs text-slate-400 mt-0.5">Sync this case to the Newton Master Tracker</p>
-                            </div>
-                            <button onClick={() => void syncToSheets()} disabled={sheetSyncRunning}
-                              className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-                              {sheetSyncRunning ? "Syncing…" : "↗ Sync to Sheets"}
-                            </button>
-                          </div>
-                          {sheetSyncStatus && <p className={`mt-2 text-xs font-semibold ${sheetSyncStatus.startsWith("✓") ? "text-emerald-700" : "text-slate-600"}`}>{sheetSyncStatus}</p>}
-                          {(selectedCase as any).intakeSheetUrl && (
-                            <a href={(selectedCase as any).intakeSheetUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-blue-700 underline font-semibold">Open Intake Sheet ↗</a>
-                          )}
-                        </div>
+                        )}
 
                         {selectedCase.updatedAt && (
                           <p className="text-[10px] text-slate-400 text-right">Last updated: {new Date(selectedCase.updatedAt).toLocaleString()}</p>
