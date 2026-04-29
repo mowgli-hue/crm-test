@@ -5537,7 +5537,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           ) : null}
 
           {screen === "cases" ? (
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-4 -mt-4 -mx-4 px-4 pt-4" style={{height: "calc(100vh - 3.5rem)"}}>
+              {/* ── LEFT COLUMN: List ── */}
+              <div className="overflow-y-auto pr-1 space-y-4 lg:border-r lg:border-slate-100 lg:pr-4">
               {caseBoardView === "home" ? (
                 <>
                   {/* Page header */}
@@ -5719,10 +5721,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   {caseActionStatus ? <p className="mt-2 text-sm text-slate-600">{caseActionStatus}</p> : null}
                 </>
               )}
+              </div>
+              {/* ── /LEFT COLUMN ── */}
+
+              {/* ── RIGHT COLUMN: Detail panel ── */}
+              <div className="overflow-y-auto">
 
               {selectedCase ? (
                 <>
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                     {/* Case detail sticky header */}
                     <div className="sticky top-14 z-10 border-b border-slate-100 bg-white">
                       {/* Top bar — name + status */}
@@ -6725,11 +6732,19 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 </div>
                 </>
               ) : (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-white py-12 text-center">
-                  <p className="text-sm font-semibold text-slate-700 mb-1">No case selected</p>
-                  <p className="text-xs text-slate-400">Pick a case from the list above to open its details.</p>
+                <div className="flex h-full min-h-[60vh] items-center justify-center">
+                  <div className="text-center px-6">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100">
+                      <span className="text-2xl">📋</span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700">Select a case</p>
+                    <p className="text-xs text-slate-400 mt-1">Pick a case from the list to view its details.</p>
+                  </div>
                 </div>
               )}
+
+              </div>
+              {/* ── /RIGHT COLUMN ── */}
             </div>
           ) : null}
 
