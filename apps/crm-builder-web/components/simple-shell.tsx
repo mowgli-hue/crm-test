@@ -518,6 +518,8 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   // Sidebar groups: which sections are open. Default: all open.
   const [sidebarOpenGroups, setSidebarOpenGroups] = useState<Set<string>>(() => new Set(["processing", "review", "marketing", "system"]));
+  // Collapse state for "All Submitted Cases" section on the Submission tab
+  const [submittedCasesExpanded, setSubmittedCasesExpanded] = useState(false);
   const toggleSidebarGroup = (id: string) => setSidebarOpenGroups((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -7893,6 +7895,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <p className="mt-0.5 text-xs text-slate-500">Mark cases as submitted and track application numbers</p>
               </div>
 
+              {/* ── Submission Log Sheet (TOP — main daily-use view) ── */}
+              <SubmissionLogPage
+                apiFetch={apiFetch}
+                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
+                team={processingAssigneeOptions}
+                currentUser={sessionUser?.name || ""}
+              />
+
               {/* Mark as submitted form */}
               <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 space-y-3">
                 <p className="text-sm font-bold text-emerald-900">✅ Mark Case as Submitted</p>
@@ -7935,15 +7945,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 {caseActionStatus && <p className="text-sm font-semibold text-emerald-700">{caseActionStatus}</p>}
               </div>
 
-              {/* Submitted cases list */}
+              {/* All submitted cases list — collapsible (default collapsed) */}
               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-bold text-slate-900">All Submitted Cases ({cases.filter(c => c.processingStatus === "submitted").length})</p>
-                </div>
-                {cases.filter(c => c.processingStatus === "submitted").length === 0 ? (
-                  <p className="px-4 py-10 text-center text-sm text-slate-400">No submitted cases yet</p>
-                ) : (
-                  <div className="divide-y divide-slate-100">
+                <button
+                  onClick={() => setSubmittedCasesExpanded((p) => !p)}
+                  className="w-full flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-3 hover:bg-slate-100 transition-colors"
+                >
+                  <p className="text-sm font-bold text-slate-900">
+                    <span className="mr-2 text-xs">{submittedCasesExpanded ? "▾" : "▸"}</span>
+                    All Submitted Cases ({cases.filter(c => c.processingStatus === "submitted").length})
+                  </p>
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500">
+                    {submittedCasesExpanded ? "Hide" : "Show"}
+                  </span>
+                </button>
+                {submittedCasesExpanded && (
+                  cases.filter(c => c.processingStatus === "submitted").length === 0 ? (
+                    <p className="px-4 py-10 text-center text-sm text-slate-400">No submitted cases yet</p>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
                     {cases.filter(c => c.processingStatus === "submitted")
                       .sort((a,b) => ((b as any).submittedAt || b.createdAt || "").localeCompare((a as any).submittedAt || a.createdAt || ""))
                       .map(c => (
@@ -7994,16 +8014,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         </div>
                     ))}
                   </div>
+                  )
                 )}
               </div>
-
-              {/* ── Submission Log Sheet (auto + manual entries) ── */}
-              <SubmissionLogPage
-                apiFetch={apiFetch}
-                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
-                team={processingAssigneeOptions}
-                currentUser={sessionUser?.name || ""}
-              />
             </section>
           ) : null}
 
