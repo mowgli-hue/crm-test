@@ -1782,7 +1782,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       body: JSON.stringify({
         client: commClientName.trim(),
         formType: effectiveFormType,
-        leadPhone: commPhone.trim() || undefined,
+        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
         leadEmail: commEmail.trim() || undefined,
         totalCharges,
         irccFees,
@@ -1857,7 +1857,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       body: JSON.stringify({
         client: commClientName.trim(),
         formType: effectiveFormType,
-        leadPhone: commPhone.trim() || undefined,
+        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
         leadEmail: commEmail.trim() || undefined,
         totalCharges,
         irccFees,
@@ -2788,6 +2788,16 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     return digits;
   }
 
+  // Format phone for display/storage: e.g. "6047224151" → "+1 604-722-4151"
+  // Handles 10-digit NA, 11-digit NA with country code, and other lengths (preserves with leading +)
+  function formatPhoneDisplay(raw: string): string {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (!digits) return "";
+    if (digits.length === 10) return `+1 ${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+1 ${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
+    return `+${digits}`;
+  }
+
   function buildInviteMessage(caseItem: CaseItem, url: string) {
     const amount = Number(setupRetainerAmount || caseItem.servicePackage.retainerAmount || 0);
     return [
@@ -3276,6 +3286,24 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       if (!res.ok) { setSubmitModalStatus(String(payload.error || "Could not save.")); return; }
       const updated = payload.case as CaseItem;
       setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+
+      // Auto-create row in Submission Log sheet (idempotent — server-side dedupe by caseId)
+      try {
+        await apiFetch("/submissions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            caseId: updated.id,
+            clientName: updated.client || "",
+            clientPhone: updated.leadPhone || "",
+            appType: updated.formType || "",
+            submittedDate: new Date().toISOString().slice(0, 10),
+            irccReference: appNo || "",
+            status: "submitted",
+            submittedBy: sessionUser?.name || updated.assignedTo || "",
+          }),
+        });
+      } catch { /* non-blocking */ }
 
       // Send WhatsApp confirmation to client
       const phone = submitModalPhone.trim() || updated.leadPhone || "";
@@ -5981,6 +6009,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
+                <select
+                  value={caseStatusFilter}
+                  onChange={(e) => setCaseStatusFilter(e.target.value as "all"|"docs_pending"|"under_review"|"submitted"|"other")}
+                  className="rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2.5 text-sm focus:border-slate-300 focus:outline-none"
+                >
+                  <option value="all">All status</option>
+                  <option value="docs_pending">Docs Pending</option>
+                  <option value="under_review">Under Review</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="other">Other</option>
+                </select>
               </div>
 
               {/* Filtered list */}
@@ -6112,6 +6151,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 setScreen("inbox");
                               }} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
                                 💬 Message
+                              </button>
+                            )}
+                            {/* Edit Case — jumps to the New Case tab in edit mode (Marketing + Admin only) */}
+                            {(sessionUser?.role === "Admin" || sessionUser?.role === "Marketing") && (
+                              <button onClick={() => {
+                                setScreen("communications");
+                                loadCaseIntoCommForm(selectedCase.id);
+                              }} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100">
+                                ✏️ Edit
                               </button>
                             )}
                           </div>
@@ -7402,6 +7450,22 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         >
                           {commEditCaseId && commEditCaseId !== "__pick__" ? "💾 Save Changes" : "Create Case →"}
                         </button>
+                        {/* Cancel button — only in edit mode, asks for confirmation if there are unsaved changes */}
+                        {commEditCaseId && (
+                          <button
+                            onClick={() => {
+                              const hasChanges = commClientName.trim() || commPhone.trim() || commEmail.trim();
+                              if (hasChanges && commEditCaseId !== "__pick__") {
+                                if (!confirm("Discard unsaved changes? Your edits will be lost.")) return;
+                              }
+                              resetCommForm();
+                              setCommEditCaseId(null);
+                            }}
+                            className="rounded-xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 active:scale-95 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        )}
                         {commCreateStatus ? (
                           <p className={`text-sm font-semibold ${commCreateStatus.includes("created") || commCreateStatus.includes("updated") || commCreateStatus.includes("Case") || commCreateStatus.includes("✓") ? "text-emerald-600" : commCreateStatus.includes("Editing") ? "text-blue-600" : "text-red-600"}`}>
                             {commCreateStatus}
