@@ -35,8 +35,8 @@ const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Processing Lead can also see results and reassign
   ProcessingLead: ["dashboard", "cases", "results", "submission", "tasks", "inbox", "web-forms", "team", "settings", "newton-ai"],
 
-  // Reviewer just reviews cases
-  Reviewer: ["dashboard", "cases", "tasks", "inbox", "team", "newton-ai"],
+  // Reviewer reviews cases — needs to see under-review cases, what's being submitted, and results
+  Reviewer: ["dashboard", "cases", "submission", "results", "tasks", "inbox", "team", "newton-ai"],
 };
 
 function normalizeRole(role: Role | string): Role {

@@ -522,6 +522,39 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+
+  // Resizable cases list column — drag the divider to adjust width.
+  // Persists in localStorage so the user's preferred width survives reloads.
+  const [casesListWidth, setCasesListWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 480;
+    const saved = window.localStorage.getItem("crm.casesListWidth");
+    const parsed = saved ? parseInt(saved, 10) : 480;
+    return Number.isFinite(parsed) && parsed >= 320 && parsed <= 800 ? parsed : 480;
+  });
+  const [resizingCases, setResizingCases] = useState(false);
+  // Update width on mouse move while dragging
+  useEffect(() => {
+    if (!resizingCases) return;
+    const onMove = (e: MouseEvent) => {
+      const sidebarWidth = 224; // sidebar (w-56 = 14rem = 224px)
+      const next = Math.max(320, Math.min(800, e.clientX - sidebarWidth - 16));
+      setCasesListWidth(next);
+    };
+    const onUp = () => {
+      setResizingCases(false);
+      try { window.localStorage.setItem("crm.casesListWidth", String(casesListWidth)); } catch { /* ignore */ }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [resizingCases, casesListWidth]);
   const [caseDetailTab, setCaseDetailTab] = useState<CaseDetailTab>("overview");
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
@@ -4392,9 +4425,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 // Group definitions — each section + which tab IDs belong to it
                 const groups: { id: string; label: string; tabIds: string[] }[] = [
                   { id: "_dashboard", label: "", tabIds: ["dashboard", "newton-ai"] },
-                  { id: "processing", label: "Processing Team", tabIds: ["cases", "communications", "tasks", "inbox", "web-forms"] },
+                  { id: "processing", label: "Processing Team", tabIds: ["cases", "tasks", "inbox", "web-forms"] },
                   { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
-                  { id: "marketing", label: "Marketing Team", tabIds: ["marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "pr-consultations", "accounting"] },
+                  { id: "marketing", label: "Marketing Team", tabIds: ["communications", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "pr-consultations", "accounting"] },
                   { id: "system", label: "System", tabIds: ["team", "settings"] },
                 ];
                 const tabById = new Map(visibleTabs.map(t => [t.id, t]));
@@ -4447,6 +4480,27 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       </button>
                       {isOpen && (
                         <div className="space-y-0.5">
+                          {/* Virtual entry for Review Team: "Under Review Cases" jumps directly to the under-review filter */}
+                          {group.id === "review" && (
+                            <button
+                              onClick={() => { setScreen("cases"); setCaseBoardView("under_review_cases"); }}
+                              className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                                screen === "cases" && caseBoardView === "under_review_cases"
+                                  ? "bg-white text-slate-900"
+                                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                              }`}
+                            >
+                              <span className="shrink-0 opacity-70">👁</span>
+                              Under Review Cases
+                              {visibleCases.filter((c) => c.processingStatus === "under_review").length > 0 && (
+                                <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                                  screen === "cases" && caseBoardView === "under_review_cases" ? "bg-slate-900 text-white" : "bg-amber-500 text-white"
+                                }`}>
+                                  {visibleCases.filter((c) => c.processingStatus === "under_review").length}
+                                </span>
+                              )}
+                            </button>
+                          )}
                           {groupTabs.map(renderTab)}
                         </div>
                       )}
@@ -5600,9 +5654,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           ) : null}
 
           {screen === "cases" ? (
-            <div className="grid grid-cols-1 lg:grid-cols-[480px_1fr] gap-4 -mt-4 -mx-4 px-4 pt-4" style={{height: "calc(100vh - 3.5rem)"}}>
+            <div className="flex gap-0 -mt-4 -mx-4 pt-0" style={{height: "calc(100vh - 3.5rem)"}}>
               {/* ── LEFT COLUMN: List ── */}
-              <div className="overflow-y-auto pr-1 space-y-4 lg:border-r lg:border-slate-100 lg:pr-4">
+              <div
+                className="overflow-y-auto px-4 pt-4 pr-3 space-y-4 lg:border-r lg:border-slate-100"
+                style={{width: `${casesListWidth}px`, flexShrink: 0}}
+              >
               {caseBoardView === "home" ? (
                 <>
                   {/* Page header */}
@@ -5787,8 +5844,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               </div>
               {/* ── /LEFT COLUMN ── */}
 
+              {/* Drag handle between columns */}
+              <div
+                onMouseDown={(e) => { e.preventDefault(); setResizingCases(true); }}
+                className="hidden lg:flex w-1 cursor-col-resize bg-transparent hover:bg-blue-300 active:bg-blue-500 transition-colors group"
+                title="Drag to resize"
+              >
+                <div className="w-px h-full bg-slate-100 group-hover:bg-transparent" />
+              </div>
+
               {/* ── RIGHT COLUMN: Detail panel ── */}
-              <div className="overflow-y-auto">
+              <div className="flex-1 overflow-y-auto px-4 pt-4 min-w-0">
 
               {selectedCase ? (
                 <>
