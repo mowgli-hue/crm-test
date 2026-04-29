@@ -7929,11 +7929,31 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     }).catch(()=>null);
                     if (submitRes?.ok) {
                       const d = await submitRes.json().catch(()=>({}));
+                      const updatedCase = d.case || cases.find(c => c.id === caseId);
                       if (d.case) setCases(prev => prev.map(c => c.id === caseId ? d.case : c));
                       else setCases(prev => prev.map(c => c.id === caseId ? {...c, processingStatus: "submitted", applicationNumber: appNum} as any : c));
+
+                      // Auto-create row in Submission Log sheet (idempotent — server-side dedupe by caseId)
+                      try {
+                        await apiFetch("/submissions", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            caseId: updatedCase?.id || caseId,
+                            clientName: updatedCase?.client || "",
+                            clientPhone: updatedCase?.leadPhone || "",
+                            appType: updatedCase?.formType || "",
+                            submittedDate: new Date().toISOString().slice(0, 10),
+                            irccReference: appNum,
+                            status: "submitted",
+                            submittedBy: sessionUser?.name || updatedCase?.assignedTo || "",
+                          }),
+                        });
+                      } catch { /* non-blocking */ }
+
                       (document.getElementById("submit-case-select") as HTMLSelectElement).value = "";
                       (document.getElementById("submit-app-number") as HTMLInputElement).value = "";
-                      setCaseActionStatus("✅ Submitted + lookup synced!");
+                      setCaseActionStatus("✅ Submitted + log updated!");
                     } else {
                       setCaseActionStatus("❌ Failed");
                     }
