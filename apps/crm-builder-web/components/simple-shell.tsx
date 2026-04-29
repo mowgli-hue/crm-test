@@ -576,6 +576,9 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [retainerSignatureValue, setRetainerSignatureValue] = useState("");
   const [retainerStatus, setRetainerStatus] = useState("");
   const [commClientName, setCommClientName] = useState("");
+  // Edit mode for New Case tab — when set, the form is editing an existing case
+  // instead of creating a new one. null = create mode (default).
+  const [commEditCaseId, setCommEditCaseId] = useState<string | null>(null);
   const [commFormType, setCommFormType] = useState("PGWP");
   const [commFormTypeOther, setCommFormTypeOther] = useState("");
   const [commPhone, setCommPhone] = useState("");
@@ -1668,6 +1671,141 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     if (status === "sent") return "sent";
     if (status === "provider_missing") return "provider_missing";
     return "failed";
+  }
+
+  // Reset all comm* form fields back to defaults (used when leaving edit mode or after submit)
+  function resetCommForm() {
+    setCommClientName("");
+    setCommPhone("");
+    setCommEmail("");
+    setCommFormType("PGWP");
+    setCommFormTypeOther("");
+    setCommTotalCharges("");
+    setCommIrccFees("");
+    setCommIrccFeePayer("client_card");
+    setCommAdditionalApplicants([]);
+    setCommApplicantDraftName("");
+    setCommApplicantDraftPhone("");
+    setCommApplicantDraftType("");
+    setCommFamilyTotalCharges("");
+    setCommAdditionalNotes("");
+    setCommAssignedTo("Unassigned");
+    setCommUrgent(false);
+    setCommUrgentDays("5");
+    setCommPermitExpiryDate("");
+    setCommCreateStatus("");
+  }
+
+  // Load existing case data into the New Case form fields for editing
+  function loadCaseIntoCommForm(caseId: string) {
+    const c = cases.find((x) => x.id === caseId);
+    if (!c) {
+      setCommCreateStatus("Could not find that case.");
+      return;
+    }
+    setCommEditCaseId(c.id);
+    setCommClientName(c.client || "");
+    setCommPhone(c.leadPhone || "");
+    setCommEmail((c as any).leadEmail || "");
+    // Form type: if it's in the standard list, use it directly; otherwise set to "Other"
+    const standardTypes = APPLICATION_TYPES;
+    if (c.formType && standardTypes.includes(c.formType)) {
+      setCommFormType(c.formType);
+      setCommFormTypeOther("");
+    } else {
+      setCommFormType("Other");
+      setCommFormTypeOther(c.formType || "");
+    }
+    // Fees
+    const sp = (c as any).servicePackage || {};
+    setCommTotalCharges(sp.totalCharges != null ? String(sp.totalCharges) : "");
+    setCommIrccFees(sp.irccFees != null ? String(sp.irccFees) : "");
+    setCommIrccFeePayer(sp.irccFeePayer === "sir_card" ? "sir_card" : "client_card");
+    setCommFamilyTotalCharges(sp.familyTotalCharges != null ? String(sp.familyTotalCharges) : "");
+    // Family / additional applicants — best-effort
+    const fam = String((c as any).familyMembers || "").trim();
+    if (fam) {
+      const names = fam.split(",").map((s) => s.trim()).filter(Boolean);
+      setCommAdditionalApplicants(names.map((name) => ({ name, phone: "", formType: "" })));
+    } else {
+      setCommAdditionalApplicants([]);
+    }
+    // Assignment
+    setCommAssignedTo(c.assignedTo || "Unassigned");
+    // Urgent
+    setCommUrgent(Boolean((c as any).isUrgent));
+    setCommUrgentDays(String((c as any).dueInDays || 5));
+    // Permit expiry
+    setCommPermitExpiryDate((c as any).permitExpiryDate || "");
+    // Notes
+    setCommAdditionalNotes((c as any).additionalNotes || "");
+    setCommCreateStatus(`✏️ Editing ${c.id} · ${c.client}`);
+  }
+
+  // Save edits to an existing case (PATCH instead of POST)
+  async function saveEditedCase() {
+    if (!commEditCaseId) {
+      setCommCreateStatus("No case selected for editing.");
+      return;
+    }
+    const effectiveFormType =
+      commFormType === "Other" ? commFormTypeOther.trim() : commFormType.trim();
+    if (!commClientName.trim() || !effectiveFormType) {
+      setCommCreateStatus("Client name and application type are required.");
+      return;
+    }
+    const totalChargesRaw = commTotalCharges.trim();
+    const irccFeesRaw = commIrccFees.trim();
+    const totalCharges = totalChargesRaw ? Number(totalChargesRaw) : 0;
+    const irccFees = irccFeesRaw ? Number(irccFeesRaw) : 0;
+    if (!Number.isFinite(totalCharges) || totalCharges < 0) {
+      setCommCreateStatus("Enter a valid Total Charges amount.");
+      return;
+    }
+    if (!Number.isFinite(irccFees) || irccFees < 0) {
+      setCommCreateStatus("Enter a valid IRCC Fees amount.");
+      return;
+    }
+    const familyTotalChargesRaw = commFamilyTotalCharges.trim();
+    const familyTotalCharges = familyTotalChargesRaw ? Number(familyTotalChargesRaw) : undefined;
+    if (familyTotalChargesRaw && (!Number.isFinite(Number(familyTotalCharges)) || Number(familyTotalCharges) < 0)) {
+      setCommCreateStatus("Enter a valid Family Total Charges amount.");
+      return;
+    }
+    const normalizedAdditionalApplicants = commAdditionalApplicants
+      .map((a) => String(a.name || "").trim())
+      .filter(Boolean);
+    setCommCreateStatus("Saving changes...");
+    const res = await apiFetch(`/cases/${commEditCaseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client: commClientName.trim(),
+        formType: effectiveFormType,
+        leadPhone: commPhone.trim() || undefined,
+        leadEmail: commEmail.trim() || undefined,
+        totalCharges,
+        irccFees,
+        irccFeePayer: commIrccFeePayer,
+        familyMembers: normalizedAdditionalApplicants.length > 0 ? normalizedAdditionalApplicants.join(", ") : undefined,
+        familyTotalCharges,
+        assignedTo: commAssignedTo && commAssignedTo !== "Unassigned" ? commAssignedTo : undefined,
+        additionalNotes: commAdditionalNotes.trim() || undefined,
+        isUrgent: commUrgent,
+        dueInDays: commUrgent ? Number(commUrgentDays || 0) : undefined,
+        permitExpiryDate: commPermitExpiryDate || undefined,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setCommCreateStatus(String(payload.error || "Could not save changes."));
+      return;
+    }
+    const updated = payload.case as CaseItem;
+    setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    setCommCreateStatus(`✓ ${updated.id} updated.`);
+    // Stay in edit mode but clear status after a moment so they can edit again or exit
+    setTimeout(() => setCommCreateStatus(""), 2500);
   }
 
   async function createCaseFromCommunications() {
@@ -6988,13 +7126,60 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
           {screen === "communications" ? (
             <div className="space-y-4">
-              {/* Page header */}
-              <div className="flex items-center justify-between">
+              {/* Page header with mode toggle */}
+              <div className="flex items-start justify-between flex-wrap gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">➕ New Case</h2>
-                  <p className="mt-0.5 text-sm text-slate-500">Fill client details below to create a case and send their portal link automatically.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    {commEditCaseId ? "✏️ Edit Case" : "➕ New Case"}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    {commEditCaseId
+                      ? "Update the original case details below — fixes saved to the case."
+                      : "Fill client details below to create a case and send their portal link automatically."}
+                  </p>
+                </div>
+                {/* Mode toggle: New Case | Edit Existing Case */}
+                <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    onClick={() => { if (commEditCaseId) { resetCommForm(); setCommEditCaseId(null); } }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${!commEditCaseId ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                  >
+                    + New Case
+                  </button>
+                  <button
+                    onClick={() => { if (!commEditCaseId) { resetCommForm(); setCommEditCaseId("__pick__"); } }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${commEditCaseId ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                  >
+                    ✏️ Edit Existing
+                  </button>
                 </div>
               </div>
+
+              {/* Edit-mode case picker — appears only when in edit mode */}
+              {commEditCaseId && (
+                <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
+                  <label className="block text-xs font-bold uppercase tracking-widest text-blue-700 mb-2">
+                    Select case to edit
+                  </label>
+                  <select
+                    value={commEditCaseId === "__pick__" ? "" : commEditCaseId}
+                    onChange={(e) => { if (e.target.value) loadCaseIntoCommForm(e.target.value); }}
+                    className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 focus:border-blue-400 focus:outline-none"
+                  >
+                    <option value="">— Choose a case —</option>
+                    {visibleCases.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.id} — {c.client} · {c.formType}
+                      </option>
+                    ))}
+                  </select>
+                  {commEditCaseId !== "__pick__" && (
+                    <p className="mt-2 text-xs text-blue-700">
+                      Form below pre-filled with current values. Make changes and click <strong>Save Changes</strong> to update.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Case selector */}
               <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -7015,9 +7200,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               <div className="space-y-3">
                 <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                   {/* Header */}
-                  <div className="bg-slate-900 px-6 py-4">
-                    <h2 className="text-base font-bold text-white">➕ Create New Case</h2>
-                    <p className="text-xs text-slate-400 mt-0.5">Payment received — fill details below. Portal link auto-sends to client.</p>
+                  <div className={`px-6 py-4 ${commEditCaseId ? "bg-blue-900" : "bg-slate-900"}`}>
+                    <h2 className="text-base font-bold text-white">
+                      {commEditCaseId && commEditCaseId !== "__pick__" ? `✏️ Editing ${commEditCaseId}` : commEditCaseId === "__pick__" ? "✏️ Pick a case above to start editing" : "➕ Create New Case"}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {commEditCaseId ? "Make corrections below — only the fields you change will be updated." : "Payment received — fill details below. Portal link auto-sends to client."}
+                    </p>
                   </div>
 
                   <div className="p-5 space-y-5">
@@ -7199,13 +7388,22 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       </div>
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => void createCaseFromCommunications()}
-                          className="rounded-xl bg-slate-900 px-8 py-3.5 text-sm font-bold text-white hover:bg-slate-700 active:scale-95 transition-all"
+                          onClick={() => {
+                            if (commEditCaseId && commEditCaseId !== "__pick__") {
+                              void saveEditedCase();
+                            } else if (commEditCaseId === "__pick__") {
+                              setCommCreateStatus("Please pick a case to edit first.");
+                            } else {
+                              void createCaseFromCommunications();
+                            }
+                          }}
+                          disabled={commEditCaseId === "__pick__"}
+                          className={`rounded-xl px-8 py-3.5 text-sm font-bold text-white active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${commEditCaseId && commEditCaseId !== "__pick__" ? "bg-blue-700 hover:bg-blue-800" : "bg-slate-900 hover:bg-slate-700"}`}
                         >
-                          Create Case →
+                          {commEditCaseId && commEditCaseId !== "__pick__" ? "💾 Save Changes" : "Create Case →"}
                         </button>
                         {commCreateStatus ? (
-                          <p className={`text-sm font-semibold ${commCreateStatus.includes("created") || commCreateStatus.includes("Case") ? "text-emerald-600" : "text-red-600"}`}>
+                          <p className={`text-sm font-semibold ${commCreateStatus.includes("created") || commCreateStatus.includes("updated") || commCreateStatus.includes("Case") || commCreateStatus.includes("✓") ? "text-emerald-600" : commCreateStatus.includes("Editing") ? "text-blue-600" : "text-red-600"}`}>
                             {commCreateStatus}
                           </p>
                         ) : null}

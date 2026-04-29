@@ -2855,3 +2855,74 @@ export async function autoCreateSubmissionFromCase(
     submittedBy: options?.submittedBy || caseItem.assignedTo || "",
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// updateCaseProfile — edit the original case-creation fields after the fact.
+// Used by the "Edit Case" mode in the New Case form. Only updates fields
+// that are explicitly provided in the patch (others stay unchanged).
+// ─────────────────────────────────────────────────────────────────────────
+export async function updateCaseProfile(
+  companyId: string,
+  id: string,
+  patch: {
+    client?: string;
+    formType?: string;
+    leadPhone?: string;
+    leadEmail?: string;
+    totalCharges?: number;
+    irccFees?: number;
+    irccFeePayer?: "sir_card" | "client_card";
+    familyMembers?: string;
+    familyTotalCharges?: number;
+    assignedTo?: string;
+    additionalNotes?: string;
+    isUrgent?: boolean;
+    dueInDays?: number;
+    permitExpiryDate?: string;
+  }
+): Promise<CaseItem | null> {
+  const store = await readStore();
+  const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+  if (idx === -1) return null;
+  const current = store.cases[idx];
+
+  // Compute new servicePackage (preserves milestones, name, etc.)
+  const currentPackage = current.servicePackage ?? {
+    name: "Standard Service",
+    retainerAmount: 0,
+    balanceAmount: Number(current.balanceAmount || 0),
+    milestones: [],
+  };
+  const nextServicePackage: any = { ...currentPackage };
+  if (patch.totalCharges !== undefined) nextServicePackage.totalCharges = patch.totalCharges;
+  if (patch.irccFees !== undefined) nextServicePackage.irccFees = patch.irccFees;
+  if (patch.irccFeePayer !== undefined) nextServicePackage.irccFeePayer = patch.irccFeePayer;
+  if (patch.familyTotalCharges !== undefined) nextServicePackage.familyTotalCharges = patch.familyTotalCharges;
+
+  // If totalCharges was updated, reflect in retainerAmount + balance unless already paid
+  if (patch.totalCharges !== undefined) {
+    nextServicePackage.retainerAmount = patch.totalCharges;
+    if (current.paymentStatus !== "paid") {
+      nextServicePackage.balanceAmount = patch.totalCharges - Number(current.amountPaid || 0);
+    }
+  }
+
+  store.cases[idx] = {
+    ...current,
+    updatedAt: new Date().toISOString(),
+    client: patch.client !== undefined && patch.client.trim() ? patch.client.trim() : current.client,
+    formType: patch.formType !== undefined && patch.formType.trim() ? patch.formType.trim() : current.formType,
+    leadPhone: patch.leadPhone !== undefined ? patch.leadPhone : current.leadPhone,
+    leadEmail: patch.leadEmail !== undefined ? patch.leadEmail : (current as any).leadEmail,
+    assignedTo: patch.assignedTo !== undefined ? patch.assignedTo : current.assignedTo,
+    servicePackage: nextServicePackage,
+    familyMembers: patch.familyMembers !== undefined ? patch.familyMembers : (current as any).familyMembers,
+    additionalNotes: patch.additionalNotes !== undefined ? patch.additionalNotes : (current as any).additionalNotes,
+    isUrgent: patch.isUrgent !== undefined ? patch.isUrgent : (current as any).isUrgent,
+    dueInDays: patch.dueInDays !== undefined ? patch.dueInDays : (current as any).dueInDays,
+    permitExpiryDate: patch.permitExpiryDate !== undefined ? patch.permitExpiryDate : (current as any).permitExpiryDate,
+  } as CaseItem;
+
+  await writeStore(store);
+  return store.cases[idx];
+}

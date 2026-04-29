@@ -3,7 +3,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { stageOrder } from "@/lib/data";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolderId, syncCaseToUnderReviewSheet } from "@/lib/google-drive";
-import { addAuditLog, getCase, resolveCaseDriveRootLink, updateCaseLinks, updateCaseProcessing, updateCaseStage } from "@/lib/store";
+import { addAuditLog, getCase, resolveCaseDriveRootLink, updateCaseLinks, updateCaseProcessing, updateCaseProfile, updateCaseStage } from "@/lib/store";
 import { boundedText } from "@/lib/validation";
 
 export async function PATCH(
@@ -25,6 +25,72 @@ export async function PATCH(
   if (!canStaffAccessCase(user.role, user.name, currentCase.assignedTo)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // ── Profile-edit branch ──
+  // If the body contains any of the original case-creation fields (client name, formType, leadPhone, etc.),
+  // route to updateCaseProfile. Restricted to Marketing + Admin (creators-only rule).
+  const isProfileEdit =
+    body?.client !== undefined ||
+    body?.leadPhone !== undefined ||
+    body?.leadEmail !== undefined ||
+    body?.totalCharges !== undefined ||
+    body?.irccFees !== undefined ||
+    body?.irccFeePayer !== undefined ||
+    body?.familyMembers !== undefined ||
+    body?.familyTotalCharges !== undefined ||
+    body?.additionalNotes !== undefined ||
+    body?.isUrgent !== undefined ||
+    body?.dueInDays !== undefined ||
+    body?.permitExpiryDate !== undefined ||
+    // formType alone is workflow OR profile — only treat as profile if not paired with workflow fields
+    (body?.formType !== undefined && body?.processingStatus === undefined && body?.applicationNumber === undefined);
+
+  if (isProfileEdit) {
+    if (user.role !== "Admin" && user.role !== "Marketing") {
+      return NextResponse.json({ error: "Only Marketing and Admin can edit case details." }, { status: 403 });
+    }
+    const totalCharges = body?.totalCharges !== undefined ? Number(body.totalCharges) : undefined;
+    const irccFees = body?.irccFees !== undefined ? Number(body.irccFees) : undefined;
+    const familyTotalCharges = body?.familyTotalCharges !== undefined ? Number(body.familyTotalCharges) : undefined;
+    const dueInDays = body?.dueInDays !== undefined ? Number(body.dueInDays) : undefined;
+    if (totalCharges !== undefined && (!Number.isFinite(totalCharges) || totalCharges < 0)) {
+      return NextResponse.json({ error: "Invalid totalCharges" }, { status: 400 });
+    }
+    if (irccFees !== undefined && (!Number.isFinite(irccFees) || irccFees < 0)) {
+      return NextResponse.json({ error: "Invalid irccFees" }, { status: 400 });
+    }
+    const profilePatch: any = {};
+    if (body?.client !== undefined) profilePatch.client = String(body.client).trim();
+    if (body?.formType !== undefined) profilePatch.formType = String(body.formType).trim();
+    if (body?.leadPhone !== undefined) profilePatch.leadPhone = String(body.leadPhone).trim();
+    if (body?.leadEmail !== undefined) profilePatch.leadEmail = String(body.leadEmail).trim();
+    if (totalCharges !== undefined) profilePatch.totalCharges = totalCharges;
+    if (irccFees !== undefined) profilePatch.irccFees = irccFees;
+    if (body?.irccFeePayer !== undefined) profilePatch.irccFeePayer = body.irccFeePayer === "sir_card" ? "sir_card" : "client_card";
+    if (body?.familyMembers !== undefined) profilePatch.familyMembers = String(body.familyMembers || "");
+    if (familyTotalCharges !== undefined) profilePatch.familyTotalCharges = familyTotalCharges;
+    if (body?.assignedTo !== undefined) profilePatch.assignedTo = String(body.assignedTo);
+    if (body?.additionalNotes !== undefined) profilePatch.additionalNotes = boundedText(String(body.additionalNotes), 2000);
+    if (body?.isUrgent !== undefined) profilePatch.isUrgent = Boolean(body.isUrgent);
+    if (dueInDays !== undefined) profilePatch.dueInDays = dueInDays;
+    if (body?.permitExpiryDate !== undefined) profilePatch.permitExpiryDate = String(body.permitExpiryDate);
+
+    const updated = await updateCaseProfile(user.companyId, params.id, profilePatch);
+    if (!updated) return NextResponse.json({ error: "Could not update" }, { status: 500 });
+
+    await addAuditLog({
+      companyId: user.companyId,
+      actorUserId: user.id,
+      actorName: user.name,
+      action: "case.update.profile",
+      resourceType: "case",
+      resourceId: updated.id,
+      metadata: { fieldsChanged: Object.keys(profilePatch) }
+    });
+
+    return NextResponse.json({ case: updated });
+  }
+
   const stage = String(body.stage ?? "");
   const assignedTo = body?.assignedTo !== undefined ? String(body.assignedTo) : undefined;
   const processingStatusRaw = body?.processingStatus !== undefined ? String(body.processingStatus) : undefined;
