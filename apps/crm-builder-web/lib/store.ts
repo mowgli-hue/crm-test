@@ -23,7 +23,8 @@ import {
   Stage,
   TaskItem,
   UserType,
-  WebFormEntry
+  WebFormEntry,
+  PrConsultationEntry
 } from "@/lib/models";
 import { sampleCases, seedCompany, seedUsers } from "@/lib/data";
 import { getMissingChecklistDocs } from "@/lib/application-checklists";
@@ -2667,6 +2668,83 @@ export async function deleteWebForm(companyId: string, id: string): Promise<bool
   const before = store.webForms.length;
   store.webForms = store.webForms.filter((f) => !(f.companyId === companyId && f.id === id));
   if (store.webForms.length === before) return false;
+  await writeStore(store);
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PR Consultations
+// Standalone consultation records. Not cases — clients pay for a single
+// consultation about PR/permanent residency. Rolls up to Accounting revenue.
+// ─────────────────────────────────────────────────────────────────────────
+
+export async function listPrConsultations(companyId: string): Promise<PrConsultationEntry[]> {
+  const store = await readStore();
+  const rows = (store.prConsultations ?? []).filter((c) => c.companyId === companyId);
+  return rows.sort((a, b) => (b.consultationDate || b.createdAt).localeCompare(a.consultationDate || a.createdAt));
+}
+
+export async function createPrConsultation(input: {
+  companyId: string;
+  clientName?: string;
+  clientPhone?: string;
+  clientEmail?: string;
+  paymentAmount?: number;
+  paymentReceived?: boolean;
+  paymentMethod?: string;
+  consultationDate?: string;
+  consultant?: string;
+  status?: "pending" | "done";
+  notes?: string;
+}): Promise<PrConsultationEntry> {
+  const store = await readStore();
+  const now = new Date().toISOString();
+  const entry: PrConsultationEntry = {
+    id: `PR-${randomUUID().slice(0, 8)}`,
+    companyId: input.companyId,
+    clientName: String(input.clientName || "").trim(),
+    clientPhone: String(input.clientPhone || "").trim(),
+    clientEmail: String(input.clientEmail || "").trim(),
+    paymentAmount: Number(input.paymentAmount || 0),
+    paymentReceived: input.paymentReceived === true,
+    paymentMethod: String(input.paymentMethod || "").trim(),
+    consultationDate: input.consultationDate || now.slice(0, 10),
+    consultant: String(input.consultant || "").trim(),
+    status: input.status === "done" ? "done" : "pending",
+    notes: String(input.notes || "").trim(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(store.prConsultations)) store.prConsultations = [];
+  store.prConsultations.push(entry);
+  await writeStore(store);
+  return entry;
+}
+
+export async function updatePrConsultation(
+  companyId: string,
+  id: string,
+  patch: Partial<Omit<PrConsultationEntry, "id" | "companyId" | "createdAt">>
+): Promise<PrConsultationEntry | null> {
+  const store = await readStore();
+  if (!Array.isArray(store.prConsultations)) store.prConsultations = [];
+  const idx = store.prConsultations.findIndex((c) => c.companyId === companyId && c.id === id);
+  if (idx === -1) return null;
+  store.prConsultations[idx] = {
+    ...store.prConsultations[idx],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeStore(store);
+  return store.prConsultations[idx];
+}
+
+export async function deletePrConsultation(companyId: string, id: string): Promise<boolean> {
+  const store = await readStore();
+  if (!Array.isArray(store.prConsultations)) return false;
+  const before = store.prConsultations.length;
+  store.prConsultations = store.prConsultations.filter((c) => !(c.companyId === companyId && c.id === id));
+  if (store.prConsultations.length === before) return false;
   await writeStore(store);
   return true;
 }

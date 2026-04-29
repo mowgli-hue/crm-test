@@ -2,6 +2,7 @@
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
+import PrConsultationsPage from "@/components/pr-consultations-page";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -386,7 +387,8 @@ const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "marketing-inbox", label: "Marketing Inbox", icon: <span>📣</span> },
   { id: "marketing-leads", label: "Lead Pipeline", icon: <span>📊</span> },
   { id: "marketing-dashboard", label: "Marketing Stats", icon: <span>📈</span> },
-  { id: "call-log", label: "Call Log", icon: <span>📞</span> }
+  { id: "call-log", label: "Call Log", icon: <span>📞</span> },
+  { id: "pr-consultations", label: "PR Consultation", icon: <span>🍁</span> }
 ];
 
 function filterCasesByRole(allCases: CaseItem[], role: Role, userName?: string) {
@@ -4392,7 +4394,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   { id: "_dashboard", label: "", tabIds: ["dashboard", "newton-ai"] },
                   { id: "processing", label: "Processing Team", tabIds: ["cases", "communications", "tasks", "inbox", "web-forms"] },
                   { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
-                  { id: "marketing", label: "Marketing Team", tabIds: ["marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "accounting"] },
+                  { id: "marketing", label: "Marketing Team", tabIds: ["marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "pr-consultations", "accounting"] },
                   { id: "system", label: "System", tabIds: ["team", "settings"] },
                 ];
                 const tabById = new Map(visibleTabs.map(t => [t.id, t]));
@@ -4481,6 +4483,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               <WebFormsPage
                 apiFetch={apiFetch}
                 cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType }))}
+                team={processingAssigneeOptions}
+              />
+            ) : screen === "pr-consultations" ? (
+              <PrConsultationsPage
+                apiFetch={apiFetch}
                 team={processingAssigneeOptions}
               />
             ) : screen === "call-log" ? (

@@ -428,6 +428,23 @@ export interface WebFormEntry {
   updatedAt: string;
 }
 
+export interface PrConsultationEntry {
+  id: string;
+  companyId: string;
+  clientName: string;
+  clientPhone?: string;
+  clientEmail?: string;
+  paymentAmount: number;          // CAD
+  paymentReceived?: boolean;       // optional flag — true if paid
+  paymentMethod?: string;          // cash / e-transfer / card / etc.
+  consultationDate: string;        // ISO date string
+  consultant?: string;             // Newton team member name
+  status: "pending" | "done";
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AppStore = {
   companies: Company[];
   users: AppUser[];
@@ -444,4 +461,5 @@ export type AppStore = {
   sessions: Session[];
   invites: ClientInvite[];
   webForms?: WebFormEntry[];
+  prConsultations?: PrConsultationEntry[];
 };
