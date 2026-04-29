@@ -605,11 +605,45 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [repLetterPronouns, setRepLetterPronouns] = useState<"they" | "he" | "she">("they");
   const [repLetterGenerating, setRepLetterGenerating] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
+  // Resizable inbox thread list — drag the divider to adjust width.
+  const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 288; // ~ md:w-72 default
+    const saved = window.localStorage.getItem("crm.inboxListWidth");
+    const parsed = saved ? parseInt(saved, 10) : 288;
+    return Number.isFinite(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 288;
+  });
+  const [resizingInbox, setResizingInbox] = useState(false);
+  useEffect(() => {
+    if (!resizingInbox) return;
+    const onMove = (e: MouseEvent) => {
+      const sidebarWidth = 224;
+      const next = Math.max(240, Math.min(600, e.clientX - sidebarWidth));
+      setInboxListWidth(next);
+    };
+    const onUp = () => {
+      setResizingInbox(false);
+      try { window.localStorage.setItem("crm.inboxListWidth", String(inboxListWidth)); } catch { /* ignore */ }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [resizingInbox, inboxListWidth]);
+
   const [inboxThread, setInboxThread] = useState<string|null>(null);
   const [caseNotes, setCaseNotes] = useState<Record<string, Array<{id:string;text:string;added_by:string;created_at:string}>>>({});
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [diagnosticsReport, setDiagnosticsReport] = useState<DiagnosticsReport | null>(null);
   const [caseSearch, setCaseSearch] = useState("");
+  // Top-header search autocomplete dropdown
+  const [headerSearchFocused, setHeaderSearchFocused] = useState(false);
+  const [headerSearchValue, setHeaderSearchValue] = useState("");
   const [caseStatusFilter, setCaseStatusFilter] = useState<"all" | "docs_pending" | "under_review" | "submitted" | "other">("all");
   const [caseAssignedFilter, setCaseAssignedFilter] = useState<string>("all");
   const [accountingSearch, setAccountingSearch] = useState("");
@@ -4338,14 +4372,62 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             <img src="data:image/png;base64,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uwzsqW04tVxbWlvJvzAI3s5R1Gvr7317LfIDnfh7UXHh9itDllsoam52u8GaGuoIRtzawSvbBK33B/Rjv90qQcO7DWWXjcya8StmvVyxmSsuUjfq+c6qb7Df6LQA0fAKycAx04xilJY5KltWadzz5oj5QeZ5d22e218Oxt7uJLMv+lt5G2g276P5fXZmEnPzb+Gta+1AYHG38UeU/wB2TfsqSWD/AKCt/wCax/shYec2R2SYfdrAypFM6vpXwCYs5gzmGt62N/etlb6c0tBT0pdzmGJsfNrW9ADaAgeEU0Fy4qZleq5olr7fPDb6Tn6+RT+U1+2j05nOds+vKsugy5kucW+23LDLja66ujmjpq2oEB5mR6c5u2vLgOx0vbJsOr5cidlGKXptmvEkTYaoSwedTVbG75RIzYPMNnTgdgEr4seJ36bJqTI8uyCC4VdCyRlFTUVJ5EEPmAB7jtznPJAHcgD3IDP4r/ivyn+56r/CcoJRcQqaHAbJZJcQvdTUV9BFQ0sdTTNjp6mQwgBpe465To/Z2BVm5dajfcVu1kbOIDX0ctMJS3mDOdhbza6b1vstbc8Po7pgFPilfM8iCliijqohyvjljaAyVnucCAQgPXhpZKvHMCstjr5mzVVFSMilc07bzD0B9w7D5KMcbb1Z2fgXErrc6ShgvFUHVj6iZsbfosWnPBJP5R5W/HZ9ynWP09ypbLSU13rY66uijDJqmOLyxK4flcuzon5rSRYbR1GZXPJL02luclTDFTUkM1OHNpYWbJA5t7LnEknp2CAjHCbIbFHmeRYhZ7rQ11GX/hW3upZ2yMbHKf4WP2TocsnXXuerQUVu2FUEl9sl6s0VHaau2VDnPdDTNAnhe3lfEeXXf2SD10WqVICv2/7RT/8Auk3/AO2VYCjwxt44kuy76W3kNnFt+j+X12JjJz82/jrWvtUhQEFwX8Zue/21F/glfPGoCpstns87nNoLpeaakrdHXNC4klhPucQG/at9YcedbMoyC9GqEou74HCIM15XlsLe++u+/osnLcft+T2Gos1ybJ5E2iHxu5XxvB217T6OBAIKAyKm02yps77NPQU77c+HyTTGMeXya1y8vbWlEuBr5BgpovOfPT2+vqqKkkcdl0EUrmx9fXQAH2LGdi3Eeam/BFRxApvwaRyOqorby17me7n5+QO1+WG/HSmeN2a349Y6SzWuHyaOkjEcbd7OveT6knqSgK24p45Fk/FewW81MlHVMs1ZPR1cf16edssJY8fI9x6gkLwuWSVN7tlgt95jjpshtWSUdPcoG9ubbuWVv9B4GwfmPRWDW466pz625QKtrW0VBPSGDk2XmRzHc3Nvprk7a9Vqs14fUOQ5XY8mhqHUVxtlSx8rmN2KqJp2I3jY7HqD6dUJJoiIhAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREAREQBERAEREB//9k=" alt="Newton Immigration" className="h-9 w-auto object-contain" />
           </div>
 
-          {/* Search */}
-          <div className="hidden md:flex flex-1 max-w-sm mx-8">
+          {/* Search with autocomplete dropdown */}
+          <div className="hidden md:flex flex-1 max-w-md mx-8 relative">
             <input
-              value={caseSearch}
-              onChange={(e) => setCaseSearch(e.target.value)}
+              value={headerSearchValue}
+              onChange={(e) => setHeaderSearchValue(e.target.value)}
+              onFocus={() => setHeaderSearchFocused(true)}
+              onBlur={() => setTimeout(() => setHeaderSearchFocused(false), 200)}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
-              placeholder="Search cases, clients, UCI..."
+              placeholder="🔍 Search cases, clients, phone..."
             />
+            {headerSearchFocused && headerSearchValue.trim().length >= 2 && (() => {
+              const q = headerSearchValue.trim().toLowerCase();
+              const matches = cases.filter((c) => {
+                const blob = `${c.client||""} ${c.id||""} ${c.formType||""} ${c.leadPhone||""} ${(c as any).leadEmail||""}`.toLowerCase();
+                return blob.includes(q);
+              }).slice(0, 8);
+              if (matches.length === 0) {
+                return (
+                  <div className="absolute top-full left-0 right-0 mt-1 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 px-4 py-3">
+                    <p className="text-xs text-slate-500">No matching cases found.</p>
+                  </div>
+                );
+              }
+              return (
+                <div className="absolute top-full left-0 right-0 mt-1 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 max-h-96 overflow-auto">
+                  {matches.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedCaseId(c.id);
+                        setScreen("cases");
+                        setCaseBoardView("all_cases" as any);
+                        setHeaderSearchValue("");
+                        setHeaderSearchFocused(false);
+                      }}
+                      className="block w-full text-left px-4 py-2.5 hover:bg-blue-50 border-b border-slate-100 last:border-0"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                          isUrgentCase(c) ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"
+                        }`}>
+                          {(c.client||"?").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-semibold text-sm text-slate-900 truncate">{c.client}</p>
+                            {isUrgentCase(c) && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black text-red-700 shrink-0">URGENT</span>}
+                          </div>
+                          <p className="text-[11px] text-slate-500 truncate">{c.id} · {c.formType} · {c.assignedTo || "Unassigned"}</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Right side */}
@@ -5660,187 +5742,143 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 className="overflow-y-auto px-4 pt-4 pr-3 space-y-4 lg:border-r lg:border-slate-100"
                 style={{width: `${casesListWidth}px`, flexShrink: 0}}
               >
-              {caseBoardView === "home" ? (
-                <>
-                  {/* Page header */}
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-lg font-semibold text-slate-900">Cases</h2>
-                      <p className="mt-0.5 text-sm text-slate-500">
-                        {sessionUser?.role === "Processing"
-                          ? `${visibleCases.length} cases assigned to you`
-                          : `${visibleCases.length} total cases`}
-                      </p>
-                    </div>
-                    {canCreateCase(sessionUser?.role || "Client") && (
-                      <button onClick={() => setScreen("communications")} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
-                        + New Case
-                      </button>
-                    )}
-                  </div>
-                  {sessionUser?.role === "Processing" && (
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800 font-medium">
-                      👤 Showing only cases assigned to <strong>{sessionUser.name.split(" ")[0]}</strong>
-                    </div>
-                  )}
+              {/* Page header with title + new case button */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Cases</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {sessionUser?.role === "Processing"
+                      ? `${visibleCases.length} cases assigned to you`
+                      : `${visibleCases.length} total cases`}
+                  </p>
+                </div>
+                {canCreateCase(sessionUser?.role || "Client") && (
+                  <button onClick={() => setScreen("communications")} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700">
+                    + New Case
+                  </button>
+                )}
+              </div>
 
-                  {/* Queue cards */}
-                  <div className="grid gap-3 grid-cols-2 md:grid-cols-5">
-                    <button onClick={() => setCaseBoardView("new_cases")} className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300 hover:shadow-sm transition-all">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">New</p>
-                      <p className="mt-1.5 text-3xl font-bold text-slate-900">{newCasesList.length}</p>
-                      <p className="mt-1 text-xs font-medium text-slate-500">New Cases</p>
-                    </button>
-                    <button onClick={() => setCaseBoardView("assigned_cases")} className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300 hover:shadow-sm transition-all">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Active</p>
-                      <p className="mt-1.5 text-3xl font-bold text-slate-900">{assignedCasesList.length}</p>
-                      <p className="mt-1 text-xs font-medium text-slate-500">Assigned</p>
-                    </button>
-                    <button onClick={() => setCaseBoardView("under_review_cases")} className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-left hover:border-amber-300 hover:shadow-sm transition-all">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-500">Review</p>
-                      <p className="mt-1.5 text-3xl font-bold text-amber-900">{underReviewCasesList.length}</p>
-                      <p className="mt-1 text-xs font-medium text-amber-600">Under Review</p>
-                    </button>
-                    <button onClick={() => setCaseBoardView("all_cases")} className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300 hover:shadow-sm transition-all">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">All</p>
-                      <p className="mt-1.5 text-3xl font-bold text-slate-900">{visibleCases.length}</p>
-                      <p className="mt-1 text-xs font-medium text-slate-500">All Cases</p>
-                    </button>
-                    <button onClick={() => setCaseBoardView("urgent_cases")} className="rounded-xl border border-red-200 bg-red-50 p-4 text-left hover:border-red-300 hover:shadow-sm transition-all">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-red-400">Urgent</p>
-                      <p className="mt-1.5 text-3xl font-bold text-red-800">{visibleCases.filter((c) => isUrgentCase(c)).length}</p>
-                      <p className="mt-1 text-xs font-medium text-red-600">Urgent</p>
-                    </button>
+              {/* Queue tabs — single row, always visible */}
+              {(() => {
+                const tabsList: Array<{ id: typeof caseBoardView; label: string; count: number; color: string }> = [
+                  { id: "all_cases" as any, label: "All", count: visibleCases.length, color: "slate" },
+                  { id: "new_cases" as any, label: "New", count: newCasesList.length, color: "blue" },
+                  { id: "assigned_cases" as any, label: "Assigned", count: assignedCasesList.length, color: "slate" },
+                  { id: "under_review_cases" as any, label: "Under Review", count: underReviewCasesList.length, color: "amber" },
+                  { id: "urgent_cases" as any, label: "Urgent", count: visibleCases.filter((c) => isUrgentCase(c)).length, color: "red" },
+                ];
+                return (
+                  <div className="flex items-center gap-1 border-b border-slate-200 -mx-1 px-1 overflow-x-auto">
+                    {tabsList.map((tab) => {
+                      const isActive = caseBoardView === tab.id || (caseBoardView === "home" && tab.id === ("all_cases" as any));
+                      return (
+                        <button
+                          key={String(tab.id)}
+                          onClick={() => setCaseBoardView(tab.id as any)}
+                          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
+                            isActive
+                              ? "border-slate-900 text-slate-900"
+                              : "border-transparent text-slate-500 hover:text-slate-900"
+                          }`}
+                        >
+                          {tab.label}
+                          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                            isActive
+                              ? "bg-slate-900 text-white"
+                              : tab.color === "amber" ? "bg-amber-100 text-amber-700"
+                              : tab.color === "red" ? "bg-red-100 text-red-700"
+                              : tab.color === "blue" ? "bg-blue-100 text-blue-700"
+                              : "bg-slate-100 text-slate-600"
+                          }`}>
+                            {tab.count}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
+                );
+              })()}
 
-                  {/* Today's focus — urgent cases preview */}
-                  {visibleCases.filter((c) => isUrgentCase(c)).length > 0 && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-red-600">Urgent — needs attention today</p>
-                      <div className="space-y-2">
-                        {visibleCases.filter((c) => isUrgentCase(c)).slice(0, 4).map((c) => (
-                          <button
-                            key={c.id}
-                            onClick={() => { setSelectedCaseId(c.id); setCaseBoardView("all_cases"); }}
-                            className="flex w-full items-center justify-between rounded-lg border border-red-200 bg-white px-4 py-3 hover:bg-red-50 transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100 text-xs font-bold text-red-700">
-                                {(c.client||"?").charAt(0).toUpperCase()}
-                              </div>
-                              <div className="text-left">
-                                <p className="text-sm font-semibold text-slate-900">{c.client}</p>
-                                <p className="text-xs text-slate-500">{c.id} · {c.formType}</p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xs font-medium text-slate-600">{c.assignedTo || "Unassigned"}</p>
-                              <p className="text-xs text-red-600 font-medium">{c.stage}</p>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <button onClick={() => setCaseBoardView("home")} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                        ← Back
-                      </button>
-                      <h2 className="text-lg font-semibold text-slate-900">
-                        {caseBoardView === "new_cases" ? "New Cases"
-                          : caseBoardView === "assigned_cases" ? "Assigned Cases"
-                          : caseBoardView === "under_review_cases" ? "Under Review"
-                          : caseBoardView === "urgent_cases" ? "Urgent Cases"
-                          : "All Cases"}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-wrap">
-                    <input
-                      value={caseSearch}
-                      onChange={(e) => setCaseSearch(e.target.value)}
-                      className="flex-1 min-w-[200px] rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-2.5 text-sm focus:border-slate-300 focus:bg-white focus:outline-none"
-                      placeholder="Search name, case ID, app type..."
-                    />
-                    <select
-                      value={caseAssignedFilter}
-                      onChange={(e) => setCaseAssignedFilter(e.target.value)}
-                      className="rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2.5 text-sm focus:border-slate-300 focus:outline-none"
-                    >
-                      <option value="all">All team</option>
-                      {processingAssigneeOptions.filter(m => m !== "Unassigned").map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={caseStatusFilter}
-                      onChange={(e) => setCaseStatusFilter(e.target.value as "all"|"docs_pending"|"under_review"|"submitted"|"other")}
-                      className="rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2.5 text-sm focus:border-slate-300 focus:outline-none"
-                    >
-                      <option value="all">All status</option>
-                      <option value="docs_pending">Docs Pending</option>
-                      <option value="under_review">Under Review</option>
-                      <option value="submitted">Submitted</option>
-                    </select>
-                  </div>
-                  <div className="mt-3 space-y-2 max-h-[58vh] overflow-auto pr-1">
-                    {activeCaseBoardListFiltered.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => setSelectedCaseId(c.id)}
-                        className={`w-full rounded-xl border p-4 text-left transition-all hover:shadow-sm ${
-                          selectedCase?.id === c.id
-                            ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-                            : isUrgentCase(c)
-                            ? "border-red-200 bg-red-50 hover:border-red-300"
-                            : "border-slate-200 bg-white hover:border-slate-300"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                              selectedCase?.id === c.id ? "bg-white text-slate-900" : isUrgentCase(c) ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"
-                            }`}>
-                              {(c.client||"?").charAt(0).toUpperCase()}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <p className={`font-semibold text-sm truncate ${selectedCase?.id === c.id ? "text-white" : "text-slate-900"}`}>{c.client}</p>
-                                {isUrgentCase(c) && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black text-red-700 shrink-0">URGENT</span>}
-                                {(c as any).reviewStatus === "changes_needed" && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-black text-white shrink-0">⚠️ CHANGES</span>}
-                                {(c as any).reviewStatus === "changes_done" && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-700 shrink-0">✅ REVIEW DONE</span>}
-                              </div>
-                              <p className={`text-xs mt-0.5 truncate ${selectedCase?.id === c.id ? "text-slate-300" : "text-slate-400"}`}>
-                                {c.formType}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              selectedCase?.id === c.id ? "bg-white/20 text-white" : processingStatusChipClass(c.processingStatus || "docs_pending")
-                            }`}>
-                              {c.processingStatus === "other" ? prettyStatus(c.processingStatusOther || "other") : prettyStatus(c.processingStatus || "docs_pending")}
-                            </span>
-                            <p className={`text-[10px] mt-1 ${selectedCase?.id === c.id ? "text-slate-400" : "text-slate-400"}`}>
-                              {c.assignedTo || "Unassigned"}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                    {activeCaseBoardListFiltered.length === 0 ? (
-                      <div className="rounded-xl border border-slate-200 bg-white py-12 text-center">
-                        <p className="text-sm text-slate-500">No cases in this view.</p>
-                      </div>
-                    ) : null}
-                  </div>
-                  {caseActionStatus ? <p className="mt-2 text-sm text-slate-600">{caseActionStatus}</p> : null}
-                </>
+              {sessionUser?.role === "Processing" && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 font-medium">
+                  👤 Showing only cases assigned to <strong>{sessionUser.name.split(" ")[0]}</strong>
+                </div>
               )}
+
+              {/* Search + filters */}
+              <div className="flex gap-2 flex-wrap">
+                <input
+                  value={caseSearch}
+                  onChange={(e) => setCaseSearch(e.target.value)}
+                  className="flex-1 min-w-[200px] rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-2.5 text-sm focus:border-slate-300 focus:bg-white focus:outline-none"
+                  placeholder="🔍 Search name, case ID, app type..."
+                />
+                <select
+                  value={caseAssignedFilter}
+                  onChange={(e) => setCaseAssignedFilter(e.target.value)}
+                  className="rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2.5 text-sm focus:border-slate-300 focus:outline-none"
+                >
+                  <option value="all">All team</option>
+                  {processingAssigneeOptions.filter(m => m !== "Unassigned").map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtered list */}
+              <div className="space-y-2">
+                {activeCaseBoardListFiltered.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedCaseId(c.id)}
+                    className={`w-full rounded-xl border p-4 text-left transition-all hover:shadow-sm ${
+                      selectedCase?.id === c.id
+                        ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                        : isUrgentCase(c)
+                        ? "border-red-200 bg-red-50 hover:border-red-300"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                          selectedCase?.id === c.id ? "bg-white text-slate-900" : isUrgentCase(c) ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"
+                        }`}>
+                          {(c.client||"?").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className={`font-semibold text-sm truncate ${selectedCase?.id === c.id ? "text-white" : "text-slate-900"}`}>{c.client}</p>
+                            {isUrgentCase(c) && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black text-red-700 shrink-0">URGENT</span>}
+                            {(c as any).reviewStatus === "changes_needed" && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-black text-white shrink-0">⚠️ CHANGES</span>}
+                            {(c as any).reviewStatus === "changes_done" && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-700 shrink-0">✅ REVIEW DONE</span>}
+                          </div>
+                          <p className={`text-xs mt-0.5 truncate ${selectedCase?.id === c.id ? "text-slate-300" : "text-slate-400"}`}>
+                            {c.formType}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          selectedCase?.id === c.id ? "bg-white/20 text-white" : processingStatusChipClass(c.processingStatus || "docs_pending")
+                        }`}>
+                          {c.processingStatus === "other" ? prettyStatus(c.processingStatusOther || "other") : prettyStatus(c.processingStatus || "docs_pending")}
+                        </span>
+                        <p className={`text-[10px] mt-1 ${selectedCase?.id === c.id ? "text-slate-400" : "text-slate-400"}`}>
+                          {c.assignedTo || "Unassigned"}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {activeCaseBoardListFiltered.length === 0 ? (
+                  <div className="rounded-xl border border-slate-200 bg-white py-12 text-center">
+                    <p className="text-sm text-slate-500">No cases in this view.</p>
+                  </div>
+                ) : null}
+              </div>
+              {caseActionStatus ? <p className="mt-2 text-sm text-slate-600">{caseActionStatus}</p> : null}
               </div>
               {/* ── /LEFT COLUMN ── */}
 
@@ -8156,7 +8194,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             <section className="h-[calc(100vh-8rem)] flex gap-0 rounded-2xl border border-slate-200 overflow-hidden bg-white">
 
               {/* LEFT: Thread list */}
-              <div className={`flex flex-col border-r border-slate-100 ${inboxThread ? "hidden md:flex md:w-72 shrink-0" : "w-full md:w-72 shrink-0"}`}>
+              <div
+                className={`flex flex-col border-r border-slate-100 ${inboxThread ? "hidden md:flex shrink-0" : "w-full md:flex shrink-0"}`}
+                style={inboxThread ? {width: `${inboxListWidth}px`} : undefined}
+              >
                   {/* Global inbox search */}
                   <div className="px-3 py-2 border-b border-slate-100 bg-white shrink-0">
                     <input
@@ -8335,6 +8376,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   })()}
                 </div>
               </div>
+
+              {/* Drag handle between thread list and chat */}
+              {inboxThread && (
+                <div
+                  onMouseDown={(e) => { e.preventDefault(); setResizingInbox(true); }}
+                  className="hidden md:flex w-1 cursor-col-resize bg-transparent hover:bg-blue-300 active:bg-blue-500 transition-colors group shrink-0"
+                  title="Drag to resize"
+                >
+                  <div className="w-px h-full bg-slate-100 group-hover:bg-transparent" />
+                </div>
+              )}
 
               {/* RIGHT: Chat window */}
               {inboxThread ? (() => {
