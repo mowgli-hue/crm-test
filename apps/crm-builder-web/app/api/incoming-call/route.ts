@@ -96,35 +96,95 @@ export async function POST(request: NextRequest) {
       [cleanPhone]
     ).catch(() => { /* table may not exist yet */ });
 
+    // ─── Determine: is this a NEW number we've never engaged with before? ───
+    // We only auto-send the welcome message to first-time callers.
+    // Existing leads/customers should reach a real human conversation
+    // instead of getting a templated "thanks for calling" message.
+    //
+    // A number is considered NEW if NONE of the following exist for that phone:
+    //   1. Prior WhatsApp messages in marketing_inbox (any direction)
+    //   2. An existing marketing_leads row
+    //   3. An existing case in app_store_snapshots (leadPhone match)
+    //   4. Any call_log entries OTHER than the one we just inserted ($1 = this call's id)
+    //
+    // If queries fail (tables missing, etc.), we fail-open and TREAT AS NEW
+    // (better to send an extra welcome than to miss an opportunity).
+    let isNewNumber = true;
+    try {
+      // Build phone-match patterns to catch variations: with/without "+", with/without "1"
+      // Last 10 digits is the most reliable comparison for North American numbers.
+      const last10 = cleanPhone.replace(/\D/g, "").slice(-10);
+      const phoneLike = `%${last10}`;
+
+      // Check 1 + 2: marketing_inbox / marketing_leads
+      const inboxCheck = await pool.query(
+        `SELECT 1 FROM marketing_inbox WHERE phone LIKE $1 LIMIT 1`,
+        [phoneLike]
+      ).catch(() => ({ rowCount: 0 }));
+      const leadsCheck = await pool.query(
+        `SELECT 1 FROM marketing_leads WHERE phone LIKE $1 LIMIT 1`,
+        [phoneLike]
+      ).catch(() => ({ rowCount: 0 }));
+
+      // Check 3: any prior call_log entries (other than the one we just added)
+      const callsCheck = await pool.query(
+        `SELECT 1 FROM call_log WHERE phone LIKE $1 AND id != $2 LIMIT 1`,
+        [phoneLike, callId]
+      ).catch(() => ({ rowCount: 0 }));
+
+      // Check 4: case match (leadPhone in cases JSONB blob)
+      const casesCheck = await pool.query(
+        `SELECT 1 FROM app_store_snapshots,
+                LATERAL jsonb_array_elements(payload->'cases') AS c
+         WHERE id = 'global'
+           AND regexp_replace(c->>'leadPhone', '[^0-9]', '', 'g') LIKE $1
+         LIMIT 1`,
+        [phoneLike]
+      ).catch(() => ({ rowCount: 0 }));
+
+      if ((inboxCheck.rowCount || 0) > 0
+          || (leadsCheck.rowCount || 0) > 0
+          || (callsCheck.rowCount || 0) > 0
+          || (casesCheck.rowCount || 0) > 0) {
+        isNewNumber = false;
+      }
+    } catch {
+      // Defensive — treat unknown as new
+      isNewNumber = true;
+    }
+
     // ─── Send WhatsApp welcome message ───
     let whatsappSent = false;
     let whatsappError: string | null = null;
+    let skippedReason: string | null = null;
 
-    if (sendWelcome) {
-      if (!isWhatsAppConfigured()) {
-        whatsappError = "WhatsApp not configured";
-      } else {
-        const message = process.env.TASKER_WELCOME_MESSAGE || DEFAULT_WELCOME;
-        const result = await sendWhatsAppText(cleanPhone, message);
-        whatsappSent = result.success;
-        whatsappError = result.error || null;
+    if (!sendWelcome) {
+      skippedReason = "send_welcome=false";
+    } else if (!isNewNumber) {
+      skippedReason = "existing contact — already has prior conversation/case";
+    } else if (!isWhatsAppConfigured()) {
+      whatsappError = "WhatsApp not configured";
+    } else {
+      const message = process.env.TASKER_WELCOME_MESSAGE || DEFAULT_WELCOME;
+      const result = await sendWhatsAppText(cleanPhone, message);
+      whatsappSent = result.success;
+      whatsappError = result.error || null;
 
-        // If sent successfully, log the outbound message in marketing_inbox so it
-        // shows up in staff's inbox view alongside future replies.
-        if (result.success) {
-          pool.query(
-            `INSERT INTO marketing_inbox
-              (id, phone, message, direction, contact_name, is_read, created_at)
-             VALUES ($1, $2, $3, 'outbound', $4, true, NOW())
-             ON CONFLICT (id) DO NOTHING`,
-            [
-              `wa-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              cleanPhone,
-              message,
-              contactName,
-            ]
-          ).catch(() => { /* table may not exist or schema mismatch — non-blocking */ });
-        }
+      // If sent successfully, log the outbound message in marketing_inbox so it
+      // shows up in staff's inbox view alongside future replies.
+      if (result.success) {
+        pool.query(
+          `INSERT INTO marketing_inbox
+            (id, phone, message, direction, contact_name, is_read, created_at)
+           VALUES ($1, $2, $3, 'outbound', $4, true, NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            `wa-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            cleanPhone,
+            message,
+            contactName,
+          ]
+        ).catch(() => { /* table may not exist or schema mismatch — non-blocking */ });
       }
     }
 
@@ -133,8 +193,10 @@ export async function POST(request: NextRequest) {
       callId,
       phone: cleanPhone,
       contact_name: contactName,
+      isNewNumber,
       whatsappSent,
       whatsappError,
+      skippedReason,
     });
   } catch (e) {
     console.error("incoming-call POST failed:", e);
