@@ -511,6 +511,13 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxReply, setInboxReply] = useState<Record<string,string>>({});
   const [inboxStatus, setInboxStatus] = useState("");
   const [showNotifications, setShowNotifications] = useState(false);
+  // Sidebar groups: which sections are open. Default: all open.
+  const [sidebarOpenGroups, setSidebarOpenGroups] = useState<Set<string>>(() => new Set(["processing", "review", "marketing", "system"]));
+  const toggleSidebarGroup = (id: string) => setSidebarOpenGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const [caseDetailTab, setCaseDetailTab] = useState<CaseDetailTab>("overview");
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
@@ -4375,33 +4382,74 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               </div>
             </div>
 
-            {/* Nav */}
-            <nav className="space-y-0.5">
-              {visibleTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setScreen(tab.id)}
-                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                    screen === tab.id
-                      ? "bg-white text-slate-900"
-                      : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  <span className="shrink-0 opacity-70">{tab.icon}</span>
-                  {tab.label}
-                  {/* Live counts on key tabs */}
-                  {tab.id === "tasks" && tasks.filter((t) => t.status === "pending" && t.assignedTo?.toLowerCase().includes(sessionUser.name.split(" ")[0].toLowerCase())).length > 0 && (
-                    <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-white text-slate-900" : "bg-red-100 text-red-700"}`}>
-                      {tasks.filter((t) => t.status === "pending" && t.assignedTo?.toLowerCase().includes(sessionUser.name.split(" ")[0].toLowerCase())).length}
-                    </span>
-                  )}
-                  {tab.id === "cases" && visibleCases.filter((c) => isUrgentCase(c)).length > 0 && (
-                    <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-white text-slate-900" : "bg-amber-100 text-amber-700"}`}>
-                      {visibleCases.filter((c) => isUrgentCase(c)).length}
-                    </span>
-                  )}
-                </button>
-              ))}
+            {/* Nav — grouped sections */}
+            <nav className="space-y-1">
+              {(() => {
+                // Group definitions — each section + which tab IDs belong to it
+                const groups: { id: string; label: string; tabIds: string[] }[] = [
+                  { id: "_dashboard", label: "", tabIds: ["dashboard", "newton-ai"] },
+                  { id: "processing", label: "Processing Team", tabIds: ["cases", "communications", "tasks", "inbox"] },
+                  { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
+                  { id: "marketing", label: "Marketing Team", tabIds: ["marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "accounting"] },
+                  { id: "system", label: "System", tabIds: ["team", "settings"] },
+                ];
+                const tabById = new Map(visibleTabs.map(t => [t.id, t]));
+
+                const renderTab = (tab: typeof visibleTabs[number]) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setScreen(tab.id)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                      screen === tab.id
+                        ? "bg-white text-slate-900"
+                        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    <span className="shrink-0 opacity-70">{tab.icon}</span>
+                    {tab.label}
+                    {tab.id === "tasks" && tasks.filter((t) => t.status === "pending" && t.assignedTo?.toLowerCase().includes(sessionUser.name.split(" ")[0].toLowerCase())).length > 0 && (
+                      <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-slate-900 text-white" : "bg-red-500 text-white"}`}>
+                        {tasks.filter((t) => t.status === "pending" && t.assignedTo?.toLowerCase().includes(sessionUser.name.split(" ")[0].toLowerCase())).length}
+                      </span>
+                    )}
+                    {tab.id === "cases" && visibleCases.filter((c) => isUrgentCase(c)).length > 0 && (
+                      <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-slate-900 text-white" : "bg-amber-500 text-white"}`}>
+                        {visibleCases.filter((c) => isUrgentCase(c)).length}
+                      </span>
+                    )}
+                  </button>
+                );
+
+                return groups.map(group => {
+                  const groupTabs = group.tabIds.map(id => tabById.get(id)).filter(Boolean) as typeof visibleTabs;
+                  if (groupTabs.length === 0) return null; // Hide empty groups (role-gated)
+                  // Top-level group (no header) — render tabs flat
+                  if (!group.label) {
+                    return (
+                      <div key={group.id} className="space-y-0.5 mb-3">
+                        {groupTabs.map(renderTab)}
+                      </div>
+                    );
+                  }
+                  const isOpen = sidebarOpenGroups.has(group.id);
+                  return (
+                    <div key={group.id} className="space-y-0.5">
+                      <button
+                        onClick={() => toggleSidebarGroup(group.id)}
+                        className="flex w-full items-center justify-between px-3 py-1.5 mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        <span>{group.label}</span>
+                        <span className="text-xs">{isOpen ? "▾" : "▸"}</span>
+                      </button>
+                      {isOpen && (
+                        <div className="space-y-0.5">
+                          {groupTabs.map(renderTab)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </nav>
 
             {/* Quick search on mobile fallback */}
@@ -5537,7 +5585,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           ) : null}
 
           {screen === "cases" ? (
-            <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-4 -mt-4 -mx-4 px-4 pt-4" style={{height: "calc(100vh - 3.5rem)"}}>
+            <div className="grid grid-cols-1 lg:grid-cols-[480px_1fr] gap-4 -mt-4 -mx-4 px-4 pt-4" style={{height: "calc(100vh - 3.5rem)"}}>
               {/* ── LEFT COLUMN: List ── */}
               <div className="overflow-y-auto pr-1 space-y-4 lg:border-r lg:border-slate-100 lg:pr-4">
               {caseBoardView === "home" ? (
@@ -5764,7 +5812,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   await updateCaseProcessing(selectedCase.id, { processingStatus: newStatus });
                                 }
                               }}
-                              className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold focus:outline-none ${processingStatusChipClass(selectedCase.processingStatus || "docs_pending")}`}>
+                              className={`rounded-xl border-2 px-4 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer shadow-sm ${processingStatusChipClass(selectedCase.processingStatus || "docs_pending")}`}>
                               <option value="docs_pending">Docs Pending</option>
                               <option value="under_review">Under Review</option>
                               <option value="submitted">Submitted</option>
@@ -5865,48 +5913,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           );
                         })()}
 
-                        {/* Quick action buttons */}
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          <button onClick={() => void runCaseNextAction(selectedCase)}
-                            className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">
-                            {getCaseNextAction(selectedCase).label}
-                          </button>
-                          <button onClick={() => {
-                            // Open WhatsApp directly with the client (Click-to-Chat link)
-                            const phone = String(selectedCase.leadPhone || "").replace(/\D/g, "");
-                            if (phone) window.open(`https://wa.me/${phone}`, "_blank");
-                          }}
-                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
-                            💬 Message
-                          </button>
-                          <button onClick={async () => {
-                            setAiLoading(true);
-                            const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"summary"})}).catch(()=>null);
-                            const d = await res?.json().catch(()=>({}));
-                            setAiResult({caseId:selectedCase.id, text:d?.text||"Failed to generate summary", action:"summary"});
-                            setAiLoading(false);
-                          }} disabled={aiLoading} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
-                            {aiLoading ? "..." : "📋 Summary"}
-                          </button>
-                          <button onClick={async () => {
-                            setAiLoading(true);
-                            const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"draft_notes"})}).catch(()=>null);
-                            const d = await res?.json().catch(()=>({}));
-                            setAiResult({caseId:selectedCase.id, text:d?.text||"Failed", action:"draft_notes"});
-                            setAiLoading(false);
-                          }} disabled={aiLoading} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-                            {aiLoading ? "..." : "✍️ Draft Notes"}
-                          </button>
-                          <button onClick={async () => {
-                            setAiLoading(true);
-                            const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"overdue_check"})}).catch(()=>null);
-                            const d = await res?.json().catch(()=>({}));
-                            setAiResult({caseId:selectedCase.id, text:d?.text||"Failed", action:"overdue_check"});
-                            setAiLoading(false);
-                          }} disabled={aiLoading} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">
-                            {aiLoading ? "..." : "⚡ Urgency"}
-                          </button>
-                        </div>
                       </div>
 
                       {/* Tab bar */}
@@ -6089,10 +6095,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         </div>
 
                         {/* ── Representative Letter ── */}
-                        <div className="rounded-xl border border-purple-200 bg-purple-50 p-3 flex items-center justify-between gap-3 flex-wrap">
+                        <div className="rounded-xl border-0 bg-gradient-to-br from-[#0B2F5C] via-[#1F4E79] to-[#2D5F9A] p-4 flex items-center justify-between gap-3 flex-wrap shadow-lg">
                           <div>
-                            <p className="text-xs font-bold text-purple-900">📜 Representative Letter</p>
-                            <p className="text-[10px] text-purple-700 mt-0.5">Newton letterhead — AI weaves your client's story into the letter</p>
+                            <p className="text-sm font-bold text-white">📜 Representative Letter</p>
+                            <p className="text-[11px] text-blue-100 mt-0.5">Newton letterhead — AI weaves your client's story into the letter</p>
                           </div>
                           <button onClick={(e) => {
                             e.stopPropagation();
@@ -6218,7 +6224,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               }
                               setTimeout(() => setCaseActionStatus(""), 4000);
                             });
-                          }} className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-700 shrink-0">
+                          }} className="rounded-xl bg-white px-5 py-2.5 text-xs font-bold text-[#0B2F5C] hover:bg-blue-50 shrink-0 shadow-md">
                             ✍️ Write Story & Generate
                           </button>
                         </div>
