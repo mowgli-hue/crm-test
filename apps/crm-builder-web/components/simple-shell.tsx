@@ -451,6 +451,8 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [cases, setCases] = useState<CaseItem[]>([]);
+  // PR Consultations — loaded so they can roll up into Accounting + reuse elsewhere
+  const [prConsultations, setPrConsultations] = useState<any[]>([]);
   const [viewRole, setViewRole] = useState<Role>("Admin");
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -851,6 +853,13 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       const casePayload = await caseRes.json();
       const loadedCases = casePayload.cases as CaseItem[];
       setCases(loadedCases);
+
+      // Load PR Consultations in parallel (non-blocking — Accounting falls back if missing)
+      apiFetch("/pr-consultations", { cache: "no-store" })
+        .then(r => r.ok ? r.json() : { rows: [] })
+        .then(d => setPrConsultations(Array.isArray(d.rows) ? d.rows : []))
+        .catch(() => { /* silent */ });
+
       if (loadedCases.length > 0) {
         setSelectedCaseId((prev) =>
           prev && loadedCases.some((c) => c.id === prev) ? prev : ""
@@ -8050,7 +8059,29 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                 // Accounting uses ALL cases including submitted
                 const allCasesByRole = filterCasesByRole(cases, viewRole, sessionUser?.name);
-                const allWithFees = allCasesByRole.filter((c) => Number(c.servicePackage?.retainerAmount || (c as any).totalCharges || 0) > 0);
+
+                // Convert PR Consultations into case-like rows so they appear alongside
+                // case payments without changing the UI. Type-erased to `any` to fit existing
+                // rendering code that expects CaseItem-shaped objects.
+                const prConsultationRows: any[] = (prConsultations || []).map((pr: any) => ({
+                  id: pr.id,
+                  client: pr.clientName || "—",
+                  formType: "PR Consultation",
+                  leadPhone: pr.clientPhone || "",
+                  assignedTo: pr.consultant || "",
+                  servicePackage: { retainerAmount: Number(pr.paymentAmount || 0), name: "PR Consultation" },
+                  amountPaid: pr.paymentReceived ? Number(pr.paymentAmount || 0) : 0,
+                  createdAt: pr.consultationDate || pr.createdAt,
+                  updatedAt: pr.updatedAt,
+                  // Marker — used by click handler + status checks below
+                  _isPrConsultation: true,
+                  _consultationStatus: pr.status,
+                }));
+
+                const allWithFees = [
+                  ...allCasesByRole.filter((c) => Number(c.servicePackage?.retainerAmount || (c as any).totalCharges || 0) > 0),
+                  ...prConsultationRows.filter((r) => Number(r.servicePackage.retainerAmount) > 0),
+                ];
                 // Today's cases = created today AND have a phone number (not bulk-imported)
                 const todayCases = allWithFees.filter((c) => {
                   const isToday = (c.createdAt || "").slice(0, 10) === todayStr;
@@ -8245,7 +8276,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                         <div key={c.id} className={`grid grid-cols-6 gap-2 items-center px-4 py-3 text-sm ${isPaid ? "bg-emerald-50/20" : ""}`}>
                                           <div className="col-span-2 min-w-0">
                                             <div className="flex items-center gap-1.5 flex-wrap">
-                                              <button onClick={() => { setSelectedCaseId(c.id); setScreen("cases"); }}
+                                              <button onClick={() => {
+                                                if ((c as any)._isPrConsultation) {
+                                                  setScreen("pr-consultations");
+                                                } else {
+                                                  setSelectedCaseId(c.id);
+                                                  setScreen("cases");
+                                                }
+                                              }}
                                                 className="font-semibold text-slate-900 truncate hover:text-emerald-700 text-left">
                                                 {c.client}
                                               </button>
@@ -8258,7 +8296,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                           <div className={`font-semibold ${paid > 0 ? "text-emerald-700" : "text-slate-300"}`}>${paid.toLocaleString()}</div>
                                           <div className={`font-semibold ${remaining > 0 ? "text-amber-700" : "text-slate-300"}`}>${remaining.toLocaleString()}</div>
                                           <div>
-                                            {!isPaid ? (
+                                            {(c as any)._isPrConsultation ? (
+                                              isPaid ? <span className="text-xs text-emerald-600 font-semibold">✓</span> : <span className="text-xs text-slate-300">—</span>
+                                            ) : !isPaid ? (
                                               <div className="flex items-center gap-1">
                                                 <input value={accountingAmount[c.id] || ""} onChange={(e) => setAccountingAmount(p => ({...p, [c.id]: e.target.value}))}
                                                   placeholder="$" onKeyDown={(e) => e.key === "Enter" && void recordAccountingPayment(c.id)}
