@@ -445,6 +445,22 @@ export interface PrConsultationEntry {
   updatedAt: string;
 }
 
+export interface SubmissionEntry {
+  id: string;
+  companyId: string;
+  caseId?: string | null;          // optional — if auto-created from a case Submit action
+  clientName: string;
+  clientPhone?: string;
+  appType: string;                 // form/application type
+  submittedDate: string;           // ISO date
+  irccReference?: string;          // confirmation number / file number from IRCC
+  status: "submitted" | "aor_received" | "decision_pending" | "approved" | "refused";
+  notes?: string;
+  submittedBy?: string;            // staff member who submitted
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AppStore = {
   companies: Company[];
   users: AppUser[];
@@ -462,4 +478,5 @@ export type AppStore = {
   invites: ClientInvite[];
   webForms?: WebFormEntry[];
   prConsultations?: PrConsultationEntry[];
+  submissions?: SubmissionEntry[];
 };

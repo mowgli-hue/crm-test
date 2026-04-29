@@ -24,7 +24,8 @@ import {
   TaskItem,
   UserType,
   WebFormEntry,
-  PrConsultationEntry
+  PrConsultationEntry,
+  SubmissionEntry
 } from "@/lib/models";
 import { sampleCases, seedCompany, seedUsers } from "@/lib/data";
 import { getMissingChecklistDocs } from "@/lib/application-checklists";
@@ -2747,4 +2748,110 @@ export async function deletePrConsultation(companyId: string, id: string): Promi
   if (store.prConsultations.length === before) return false;
   await writeStore(store);
   return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Submission Log
+// Tracks every IRCC submission. Rows can be created automatically when
+// a case is marked "submitted" via the case workflow, or manually added
+// by staff for legacy cases / cases handled outside the CRM.
+// ─────────────────────────────────────────────────────────────────────────
+
+export async function listSubmissions(companyId: string): Promise<SubmissionEntry[]> {
+  const store = await readStore();
+  const rows = (store.submissions ?? []).filter((s) => s.companyId === companyId);
+  return rows.sort((a, b) => (b.submittedDate || b.createdAt).localeCompare(a.submittedDate || a.createdAt));
+}
+
+export async function createSubmission(input: {
+  companyId: string;
+  caseId?: string | null;
+  clientName?: string;
+  clientPhone?: string;
+  appType?: string;
+  submittedDate?: string;
+  irccReference?: string;
+  status?: SubmissionEntry["status"];
+  notes?: string;
+  submittedBy?: string;
+}): Promise<SubmissionEntry> {
+  const store = await readStore();
+  const now = new Date().toISOString();
+  const validStatuses: SubmissionEntry["status"][] = ["submitted", "aor_received", "decision_pending", "approved", "refused"];
+  const status = validStatuses.includes(input.status as any) ? (input.status as SubmissionEntry["status"]) : "submitted";
+  const entry: SubmissionEntry = {
+    id: `SUB-${randomUUID().slice(0, 8)}`,
+    companyId: input.companyId,
+    caseId: input.caseId || null,
+    clientName: String(input.clientName || "").trim(),
+    clientPhone: String(input.clientPhone || "").trim(),
+    appType: String(input.appType || "").trim(),
+    submittedDate: input.submittedDate || now.slice(0, 10),
+    irccReference: String(input.irccReference || "").trim(),
+    status,
+    notes: String(input.notes || "").trim(),
+    submittedBy: String(input.submittedBy || "").trim(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(store.submissions)) store.submissions = [];
+  store.submissions.push(entry);
+  await writeStore(store);
+  return entry;
+}
+
+export async function updateSubmission(
+  companyId: string,
+  id: string,
+  patch: Partial<Omit<SubmissionEntry, "id" | "companyId" | "createdAt">>
+): Promise<SubmissionEntry | null> {
+  const store = await readStore();
+  if (!Array.isArray(store.submissions)) store.submissions = [];
+  const idx = store.submissions.findIndex((s) => s.companyId === companyId && s.id === id);
+  if (idx === -1) return null;
+  store.submissions[idx] = {
+    ...store.submissions[idx],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeStore(store);
+  return store.submissions[idx];
+}
+
+export async function deleteSubmission(companyId: string, id: string): Promise<boolean> {
+  const store = await readStore();
+  if (!Array.isArray(store.submissions)) return false;
+  const before = store.submissions.length;
+  store.submissions = store.submissions.filter((s) => !(s.companyId === companyId && s.id === id));
+  if (store.submissions.length === before) return false;
+  await writeStore(store);
+  return true;
+}
+
+// Auto-create submission row when a case status moves to "submitted".
+// Idempotent: if a submission already exists for this caseId, returns the existing one
+// (so we don't duplicate when staff toggles the status back and forth).
+export async function autoCreateSubmissionFromCase(
+  companyId: string,
+  caseItem: { id: string; client?: string; leadPhone?: string; formType?: string; assignedTo?: string },
+  options?: { irccReference?: string; submittedBy?: string }
+): Promise<SubmissionEntry | null> {
+  if (!caseItem?.id) return null;
+  const store = await readStore();
+  if (!Array.isArray(store.submissions)) store.submissions = [];
+  // Check if already exists for this case
+  const existing = store.submissions.find((s) => s.companyId === companyId && s.caseId === caseItem.id);
+  if (existing) return existing;
+  // Create new
+  return await createSubmission({
+    companyId,
+    caseId: caseItem.id,
+    clientName: caseItem.client || "",
+    clientPhone: caseItem.leadPhone || "",
+    appType: caseItem.formType || "",
+    submittedDate: new Date().toISOString().slice(0, 10),
+    irccReference: options?.irccReference || "",
+    status: "submitted",
+    submittedBy: options?.submittedBy || caseItem.assignedTo || "",
+  });
 }

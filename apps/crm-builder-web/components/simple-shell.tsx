@@ -3,6 +3,7 @@ import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
 import PrConsultationsPage from "@/components/pr-consultations-page";
+import SubmissionLogPage from "@/components/submission-log";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -2370,6 +2371,24 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       }
       const updated = payload.case as CaseItem;
       setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+
+      // Auto-create row in Submission Log sheet (idempotent — won't duplicate if already exists)
+      try {
+        await apiFetch("/submissions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            caseId: updated.id,
+            clientName: updated.client || "",
+            clientPhone: updated.leadPhone || "",
+            appType: updated.formType || "",
+            submittedDate: nowIso.slice(0, 10),
+            irccReference: appNo || "",
+            status: "submitted",
+            submittedBy: sessionUser?.name || updated.assignedTo || "",
+          }),
+        });
+      } catch { /* non-blocking */ }
     }
 
     const submissionForm = new FormData();
@@ -7715,6 +7734,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   </div>
                 )}
               </div>
+
+              {/* ── Submission Log Sheet (auto + manual entries) ── */}
+              <SubmissionLogPage
+                apiFetch={apiFetch}
+                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
+                team={processingAssigneeOptions}
+                currentUser={sessionUser?.name || ""}
+              />
             </section>
           ) : null}
 
