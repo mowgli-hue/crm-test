@@ -1,6 +1,7 @@
 "use client" // v2.0.1;
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
+import WebFormsPage from "@/components/web-forms-page";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -379,6 +380,7 @@ const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "settings", label: "Settings", icon: <Settings2 size={16} /> },
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} /> },
   { id: "inbox", label: "Inbox", icon: <MessageCircle size={16} /> },
+  { id: "web-forms", label: "Web Forms", icon: <span>🌐</span> },
   { id: "team", label: "Team", icon: <Users size={16} /> },
   { id: "newton-ai", label: "Newton AI", icon: <span>🤖</span> },
   { id: "marketing-inbox", label: "Marketing Inbox", icon: <span>📣</span> },
@@ -4388,7 +4390,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 // Group definitions — each section + which tab IDs belong to it
                 const groups: { id: string; label: string; tabIds: string[] }[] = [
                   { id: "_dashboard", label: "", tabIds: ["dashboard", "newton-ai"] },
-                  { id: "processing", label: "Processing Team", tabIds: ["cases", "communications", "tasks", "inbox"] },
+                  { id: "processing", label: "Processing Team", tabIds: ["cases", "communications", "tasks", "inbox", "web-forms"] },
                   { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
                   { id: "marketing", label: "Marketing Team", tabIds: ["marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "accounting"] },
                   { id: "system", label: "System", tabIds: ["team", "settings"] },
@@ -4475,6 +4477,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "marketing-dashboard" ? (
               <MarketingDashboard apiFetch={apiFetch} onNavigate={(s: any) => setScreen(s)} />
+            ) : screen === "web-forms" ? (
+              <WebFormsPage
+                apiFetch={apiFetch}
+                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType }))}
+                team={processingAssigneeOptions}
+              />
             ) : screen === "call-log" ? (
               <CallLog sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "newton-ai" ? (

@@ -22,7 +22,8 @@ import {
   Session,
   Stage,
   TaskItem,
-  UserType
+  UserType,
+  WebFormEntry
 } from "@/lib/models";
 import { sampleCases, seedCompany, seedUsers } from "@/lib/data";
 import { getMissingChecklistDocs } from "@/lib/application-checklists";
@@ -2594,4 +2595,78 @@ export async function updateCaseImm5710Automation(
   };
   await writeStore(store);
   return store.cases[idx];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Web Forms & Reconsiderations
+// Lightweight tracker for web forms (GCMS, status updates) and
+// reconsideration requests. Each row is a free-form entry, optionally
+// linked to a case but not required.
+// ─────────────────────────────────────────────────────────────────────────
+
+export async function listWebForms(companyId: string): Promise<WebFormEntry[]> {
+  const store = await readStore();
+  const rows = (store.webForms ?? []).filter((f) => f.companyId === companyId);
+  return rows.sort((a, b) => (b.dateSubmitted || b.createdAt).localeCompare(a.dateSubmitted || a.createdAt));
+}
+
+export async function createWebForm(input: {
+  companyId: string;
+  clientName?: string;
+  caseId?: string | null;
+  formType?: string;
+  dateSubmitted?: string;
+  status?: "pending" | "done";
+  link?: string;
+  assignedTo?: string;
+  notes?: string;
+}): Promise<WebFormEntry> {
+  const store = await readStore();
+  const now = new Date().toISOString();
+  const entry: WebFormEntry = {
+    id: `WF-${randomUUID().slice(0, 8)}`,
+    companyId: input.companyId,
+    clientName: String(input.clientName || "").trim(),
+    caseId: input.caseId || null,
+    formType: String(input.formType || "").trim(),
+    dateSubmitted: input.dateSubmitted || now.slice(0, 10),
+    status: input.status === "done" ? "done" : "pending",
+    link: input.link || "",
+    assignedTo: input.assignedTo || "",
+    notes: input.notes || "",
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(store.webForms)) store.webForms = [];
+  store.webForms.push(entry);
+  await writeStore(store);
+  return entry;
+}
+
+export async function updateWebForm(
+  companyId: string,
+  id: string,
+  patch: Partial<Omit<WebFormEntry, "id" | "companyId" | "createdAt">>
+): Promise<WebFormEntry | null> {
+  const store = await readStore();
+  if (!Array.isArray(store.webForms)) store.webForms = [];
+  const idx = store.webForms.findIndex((f) => f.companyId === companyId && f.id === id);
+  if (idx === -1) return null;
+  store.webForms[idx] = {
+    ...store.webForms[idx],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeStore(store);
+  return store.webForms[idx];
+}
+
+export async function deleteWebForm(companyId: string, id: string): Promise<boolean> {
+  const store = await readStore();
+  if (!Array.isArray(store.webForms)) return false;
+  const before = store.webForms.length;
+  store.webForms = store.webForms.filter((f) => !(f.companyId === companyId && f.id === id));
+  if (store.webForms.length === before) return false;
+  await writeStore(store);
+  return true;
 }

@@ -413,6 +413,21 @@ export type LegacyResultItem = {
   createdAt: string;
 };
 
+export interface WebFormEntry {
+  id: string;
+  companyId: string;
+  clientName: string;
+  caseId?: string | null;        // Optional link to a case in the CRM
+  formType: string;               // e.g. "GCMS Notes", "Reconsideration", "Web Form"
+  dateSubmitted: string;          // ISO date string
+  status: "pending" | "done";
+  link?: string;                  // Reference URL or document link
+  assignedTo?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AppStore = {
   companies: Company[];
   users: AppUser[];
@@ -428,4 +443,5 @@ export type AppStore = {
   legacyResults: LegacyResultItem[];
   sessions: Session[];
   invites: ClientInvite[];
+  webForms?: WebFormEntry[];
 };
