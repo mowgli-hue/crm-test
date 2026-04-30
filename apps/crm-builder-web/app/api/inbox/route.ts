@@ -27,21 +27,49 @@ export async function GET(request: NextRequest) {
   await ensureTable();
   const url = new URL(request.url);
   const showArchived = url.searchParams.get("archived") === "1";
-  
-  // Get latest message per phone (thread view)
+
+  // ── Limits ──
+  // Newton's inbox grew past the original 2000-message cap, causing older
+  // threads to disappear from the unified inbox view. Bump well above the
+  // current data size with headroom. Once data approaches these limits, we'll
+  // need real pagination — for now this is a safe, simple fix.
+  //
+  // Optional override via ?limit= param for ad-hoc large fetches by support.
+  const customLimit = parseInt(url.searchParams.get("limit") || "", 10);
+  const messageLimit = Number.isFinite(customLimit) && customLimit > 0
+    ? Math.min(customLimit, 50000)
+    : 20000;       // up from 2000 — handles ~10x current size with headroom
+  const threadLimit = 5000;  // up from 500 — every unique phone shows up
+
+  // Get latest message per phone (thread view) — used for the left-side
+  // conversation list in the Inbox UI.
   const res = await pool.query(
     showArchived
-      ? `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY phone, created_at DESC LIMIT 500`
-      : `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY phone, created_at DESC LIMIT 500`
+      ? `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY phone, created_at DESC LIMIT $1`
+      : `SELECT DISTINCT ON (phone) * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY phone, created_at DESC LIMIT $1`,
+    [threadLimit]
   );
-  
-  // Get all messages for thread detail
+
+  // Get all messages for thread detail — these populate the right-side
+  // conversation panel when a thread is opened.
   const allRes = await pool.query(
     showArchived
-      ? `SELECT * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY created_at DESC LIMIT 2000`
-      : `SELECT * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY created_at DESC LIMIT 2000`
+      ? `SELECT * FROM whatsapp_inbox WHERE is_archived = TRUE ORDER BY created_at DESC LIMIT $1`
+      : `SELECT * FROM whatsapp_inbox WHERE is_archived = FALSE ORDER BY created_at DESC LIMIT $1`,
+    [messageLimit]
   );
-  return NextResponse.json({ messages: allRes.rows, threads: res.rows });
+
+  return NextResponse.json({
+    messages: allRes.rows,
+    threads: res.rows,
+    // Diagnostic info — useful to detect when limits are getting tight.
+    _meta: {
+      messageCount: allRes.rows.length,
+      threadCount: res.rows.length,
+      messageLimit,
+      threadLimit,
+    },
+  });
 }
 
 export async function PATCH(request: NextRequest) {
