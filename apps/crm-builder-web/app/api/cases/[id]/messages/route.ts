@@ -128,8 +128,93 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const messages = await listMessages(user.companyId, params.id);
-  return NextResponse.json({ messages });
+  // Messages stored in the case's messages blob (staff replies, AI replies, intake bot writes, etc.)
+  const storeMessages = await listMessages(user.companyId, params.id);
+
+  // ── Merge in WhatsApp messages for this case ──
+  //
+  // Background: incoming WhatsApp messages are written to the `whatsapp_inbox`
+  // table by the /api/whatsapp webhook. Some of those messages also get echoed
+  // into store.messages by the intake bot during active intake, but messages
+  // that arrive AFTER the intake bot says "intake complete" only land in
+  // whatsapp_inbox — so they were invisible to staff in the Comm tab.
+  //
+  // This merge surfaces ALL WhatsApp activity for the case so staff sees a
+  // normal WhatsApp-style conversation regardless of what state the bot is in.
+  //
+  // Dedupe strategy: an inbox row is considered "already shown" if a store
+  // message with the same text exists within ±60 seconds of the inbox
+  // timestamp. This handles the common case where intake bot wrote both rows.
+  let waInboxMessages: any[] = [];
+  try {
+    const { Pool } = await import("pg");
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    // Match by case id (preferred — set by the WA webhook on receipt) OR by
+    // last 10 digits of the case's leadPhone (fallback for older rows where
+    // matched_case_id wasn't populated).
+    const last10 = String(caseItem.leadPhone || "").replace(/\D/g, "").slice(-10);
+    const phonePattern = last10 ? `%${last10}` : null;
+
+    const inboxQuery = phonePattern
+      ? `SELECT id, phone, message, direction, created_at
+         FROM whatsapp_inbox
+         WHERE matched_case_id = $1 OR phone LIKE $2
+         ORDER BY created_at ASC`
+      : `SELECT id, phone, message, direction, created_at
+         FROM whatsapp_inbox
+         WHERE matched_case_id = $1
+         ORDER BY created_at ASC`;
+    const inboxParams = phonePattern ? [caseItem.id, phonePattern] : [caseItem.id];
+
+    const inboxResult = await pool.query(inboxQuery, inboxParams);
+    waInboxMessages = inboxResult.rows || [];
+    await pool.end();
+  } catch (err) {
+    // Non-fatal — if we can't read inbox we still return store messages.
+    console.warn(`[messages GET] Could not fetch whatsapp_inbox for ${caseItem.id}:`, err);
+  }
+
+  // Convert inbox rows → MessageItem shape, deduping against storeMessages.
+  // A storeMessages row "covers" an inbox row if their text matches AND their
+  // createdAt is within 60 seconds.
+  const toEpoch = (s: string) => new Date(s).getTime();
+  const ABS_DEDUPE_WINDOW_MS = 60 * 1000;
+
+  const inboxAsMessages = waInboxMessages
+    .filter((row) => {
+      const rowText = String(row.message || "").trim();
+      if (!rowText) return false;
+      const rowEpoch = toEpoch(row.created_at);
+      // If a store message has the exact same text within the window, skip this inbox row.
+      const dup = storeMessages.find((m) =>
+        String(m.text || "").trim() === rowText &&
+        Math.abs(toEpoch(m.createdAt) - rowEpoch) < ABS_DEDUPE_WINDOW_MS
+      );
+      return !dup;
+    })
+    .map((row) => ({
+      id: `WA-${row.id}`,                 // distinct prefix avoids id collisions
+      companyId: user.companyId,
+      caseId: caseItem.id,
+      senderType: row.direction === "inbound" ? "client" : "staff",
+      senderName: row.direction === "inbound"
+        ? (caseItem.client || "Client")
+        : "Staff (WhatsApp)",
+      text: String(row.message || ""),
+      createdAt: new Date(row.created_at).toISOString(),
+      _source: "whatsapp_inbox",          // for client-side optional badging
+    }));
+
+  // Merge + chronological sort
+  const merged = [...storeMessages, ...inboxAsMessages].sort((a, b) =>
+    String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+  );
+
+  return NextResponse.json({ messages: merged });
 }
 
 export async function POST(
