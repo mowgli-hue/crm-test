@@ -628,10 +628,110 @@ How can we help you today? Please share your name and query and our team will as
           const isStaffNumber = STAFF_PHONES.some(p => from.includes(p.slice(-9)));
           if (isStaffNumber) {
             console.log(`👥 Staff message from ${from} — skipping AI auto-reply`);
-          }
+          } else {
+            // ─── Post-intake AI auto-reply (careful) ───
+            //
+            // For matched cases where intake bot didn't handle this message
+            // (intake done, or off-topic question, or update command), we
+            // run a careful two-step AI flow:
+            //
+            //   1. classifyMessage()  → ai | staff | ignore
+            //   2. if "ai", generateReply() → short, safe text
+            //   3. if reply produced, send it via WhatsApp + log to inbox
+            //
+            // If the classifier or generator says "no" at any step, we just
+            // do the team notification (already done above) and stay quiet.
+            try {
+              const { classifyMessage, generateReply } = await import("@/lib/post-intake-ai-reply");
+              const classification = await classifyMessage({
+                clientName: matched.client || "",
+                formType: matched.formType || "",
+                caseStage: String((matched as any).stage || ""),
+                message: text,
+              });
+              console.log(`🤖 Classifier for ${from}: ${classification.route} (${classification.reason})`);
 
-          // AI auto-reply DISABLED — staff replies manually via inbox
-          // Do not send any automatic replies to avoid confusing clients
+              if (classification.route === "ai") {
+                // Pull recent conversation context (last 8 messages from inbox)
+                const { Pool } = await import("pg");
+                const pool2 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                const last10 = String(matched.leadPhone || "").replace(/\D/g, "").slice(-10);
+                const recentRows = last10
+                  ? await pool2.query(
+                      `SELECT message, direction, created_at FROM whatsapp_inbox
+                       WHERE matched_case_id = $1 OR RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $2
+                       ORDER BY created_at DESC LIMIT 8`,
+                      [matched.id, last10]
+                    )
+                  : await pool2.query(
+                      `SELECT message, direction, created_at FROM whatsapp_inbox
+                       WHERE matched_case_id = $1
+                       ORDER BY created_at DESC LIMIT 8`,
+                      [matched.id]
+                    );
+                await pool2.end();
+                const recentConversation = (recentRows.rows || [])
+                  .reverse() // oldest-first for the LLM
+                  .map((r: any) => ({
+                    role: r.direction === "inbound" ? ("client" as const) : ("staff" as const),
+                    text: String(r.message || ""),
+                  }));
+
+                // Compute missing docs (best-effort, optional context)
+                let missingDocs: string[] = [];
+                try {
+                  const { listDocuments } = await import("@/lib/store");
+                  const docs = await listDocuments(COMPANY_ID, matched.id);
+                  missingDocs = docs.filter((d: any) => d.status !== "received").map((d: any) => d.label || d.name || "");
+                } catch { /* non-fatal */ }
+
+                const reply = await generateReply({
+                  clientName: matched.client || "",
+                  formType: matched.formType || "",
+                  caseStage: String((matched as any).stage || ""),
+                  missingDocs,
+                  recentConversation,
+                  message: text,
+                });
+
+                if (reply) {
+                  const { sendWhatsAppText } = await import("@/lib/whatsapp");
+                  const sendResult = await sendWhatsAppText(from, reply);
+                  if (sendResult.success) {
+                    // Log outbound to inbox so staff sees it in conversation view
+                    try {
+                      const pool3 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                      const digits = String(from || "").replace(/\D/g, "");
+                      const normalizedPhone = (digits.length === 10)
+                        ? `1${digits}`
+                        : digits.length === 11 && digits.startsWith("1")
+                          ? digits
+                          : digits;
+                      await pool3.query(
+                        `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
+                        [`WA-AI-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, normalizedPhone, reply, matched.id, matched.client || null]
+                      );
+                      await pool3.end();
+                    } catch (e) {
+                      console.error("AI reply inbox log error:", (e as Error).message);
+                    }
+                    console.log(`🤖✅ AI auto-replied to ${matched.client}: ${reply.slice(0, 60)}...`);
+                  } else {
+                    console.error(`🤖❌ AI reply send failed: ${sendResult.error}`);
+                  }
+                } else {
+                  console.log(`🤖 generateReply returned null — staying silent (staff already notified)`);
+                }
+              } else if (classification.route === "ignore") {
+                console.log(`🤖 Skipped reply (ignore — ${classification.reason})`);
+              } else {
+                console.log(`🤖 Deferring to staff (${classification.reason})`);
+              }
+            } catch (e) {
+              console.error("Post-intake AI reply error:", (e as Error).message);
+              // Fall through silently — staff was already notified above
+            }
+          }
         }
       }
     }
