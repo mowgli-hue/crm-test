@@ -25,12 +25,56 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
-import { sendWhatsAppText, isWhatsAppConfigured } from "@/lib/whatsapp";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
+
+// ─── Marketing number config ───
+// This webhook is for the MARKETING number (separate from Processing's case-intake number).
+// We deliberately read WHATSAPP_MARKETING_PHONE_ID, not WHATSAPP_PHONE_NUMBER_ID.
+const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "";
+const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || "";
+
+function isMarketingWhatsAppConfigured() {
+  return Boolean(MARKETING_PHONE_ID && WA_TOKEN);
+}
+
+// Send WhatsApp text from the MARKETING number (NOT the case-intake/Processing number).
+async function sendMarketingWhatsApp(to: string, message: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isMarketingWhatsAppConfigured()) {
+    return { success: false, error: "Marketing WhatsApp not configured (missing WHATSAPP_MARKETING_PHONE_ID or WHATSAPP_ACCESS_TOKEN)" };
+  }
+  // Normalize phone — Meta wants digits only, leading "+" stripped
+  const cleanPhone = String(to || "").replace(/[^\d]/g, "");
+  if (!cleanPhone || cleanPhone.length < 7) {
+    return { success: false, error: "Invalid phone number" };
+  }
+  try {
+    const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${WA_TOKEN}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanPhone,
+        type: "text",
+        text: { body: message },
+      }),
+    });
+    const data = await res.json().catch(() => ({})) as { messages?: { id: string }[]; error?: { message: string } };
+    if (!res.ok) {
+      return { success: false, error: data?.error?.message || `Meta API error (HTTP ${res.status})` };
+    }
+    return { success: true, messageId: data?.messages?.[0]?.id };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
 
 // Default welcome message — overridable via TASKER_WELCOME_MESSAGE env var.
 // Customize per business — keep it short, polite, and actionable.
@@ -162,11 +206,11 @@ export async function POST(request: NextRequest) {
       skippedReason = "send_welcome=false";
     } else if (!isNewNumber) {
       skippedReason = "existing contact — already has prior conversation/case";
-    } else if (!isWhatsAppConfigured()) {
-      whatsappError = "WhatsApp not configured";
+    } else if (!isMarketingWhatsAppConfigured()) {
+      whatsappError = "Marketing WhatsApp not configured";
     } else {
       const message = process.env.TASKER_WELCOME_MESSAGE || DEFAULT_WELCOME;
-      const result = await sendWhatsAppText(cleanPhone, message);
+      const result = await sendMarketingWhatsApp(cleanPhone, message);
       whatsappSent = result.success;
       whatsappError = result.error || null;
 
@@ -214,6 +258,7 @@ export async function GET() {
     endpoint: "/api/incoming-call",
     expects: "POST with X-Webhook-Secret header",
     secretConfigured: Boolean(process.env.TASKER_WEBHOOK_SECRET),
-    whatsappConfigured: isWhatsAppConfigured(),
+    marketingWhatsappConfigured: isMarketingWhatsAppConfigured(),
+    welcomeMessageCustomized: Boolean(process.env.TASKER_WELCOME_MESSAGE),
   });
 }
