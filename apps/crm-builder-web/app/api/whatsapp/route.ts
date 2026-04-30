@@ -105,11 +105,30 @@ export async function POST(req: NextRequest) {
         )`);
         const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
         const displayMsg = msgType === "text" ? text : `[doc:${msgId}]`;
-        // Auto-unarchive if client messages again after case was archived
-        await pool.query(`UPDATE whatsapp_inbox SET is_archived = FALSE WHERE phone = $1 AND is_archived = TRUE`, [from]).catch(() => {});
+        // ─── Normalize phone before insert ───
+        // Meta sometimes sends the same contact under two formats:
+        //   "12364120016" (with country code) and "2364120016" (without).
+        // We canonicalize to "1" + last 10 digits for North American numbers
+        // so all messages from the same contact land in ONE thread.
+        // Non-NA numbers: keep digits-only as-is.
+        const digits = String(from || "").replace(/\D/g, "");
+        const normalizedFrom = (digits.length === 10)
+          ? `1${digits}`                 // bare 10-digit NA number → prepend "1"
+          : digits.length === 11 && digits.startsWith("1")
+            ? digits                     // already in 1XXXXXXXXXX form
+            : digits;                    // other lengths/countries: keep as-is
+        // Auto-unarchive if client messages again after case was archived.
+        // Match across phone-format variants by last 10 digits to be robust
+        // against the same client messaging from a differently-formatted number.
+        await pool.query(
+          `UPDATE whatsapp_inbox SET is_archived = FALSE
+           WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1
+             AND is_archived = TRUE`,
+          [digits.slice(-10)]
+        ).catch(() => {});
         await pool.query(
           `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'inbound',$4,$5,FALSE)`,
-          [msgId, from, displayMsg, matched?.id || null, matched?.client || null]
+          [msgId, normalizedFrom, displayMsg, matched?.id || null, matched?.client || null]
         );
         await pool.end();
       } catch { /* non-fatal */ }

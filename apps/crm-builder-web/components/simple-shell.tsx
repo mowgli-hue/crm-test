@@ -8627,8 +8627,35 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                 <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
                   {inboxLoaded && (() => {
+                    // ─── Thread grouping by last-10-digit phone key ───
+                    //
+                    // Why this matters: Meta sometimes delivers messages from
+                    // the SAME contact under two phone formats (e.g. with
+                    // country code "12364120016" vs without "2364120016").
+                    // Grouping by the raw phone string would create duplicate
+                    // threads for one person.
+                    //
+                    // Fix: bucket all messages by the last 10 digits (the part
+                    // that's stable across formats). For display we still need
+                    // a phone string per thread — pick the LONGEST variant
+                    // (typically the country-coded one) so outgoing replies go
+                    // to the canonical format.
+                    const phoneKey = (raw: string) => String(raw || "").replace(/\D/g, "").slice(-10);
+                    const buckets: Record<string, { phones: Set<string>; msgs: typeof inboxMessages }> = {};
+                    inboxMessages.forEach(m => {
+                      const k = phoneKey(m.phone);
+                      if (!k) return;
+                      if (!buckets[k]) buckets[k] = { phones: new Set<string>(), msgs: [] };
+                      buckets[k].phones.add(m.phone);
+                      buckets[k].msgs.push(m);
+                    });
+                    // Pick a canonical phone string per bucket: prefer the
+                    // longest one we've seen (usually includes "1" prefix).
                     const threads: Record<string, typeof inboxMessages> = {};
-                    inboxMessages.forEach(m => { if (!threads[m.phone]) threads[m.phone] = []; threads[m.phone].push(m); });
+                    Object.values(buckets).forEach(b => {
+                      const canonical = [...b.phones].sort((a, c) => c.length - a.length)[0];
+                      threads[canonical] = b.msgs;
+                    });
                     // Filter by global search
                     if (inboxGlobalSearch) {
                       const q = inboxGlobalSearch.toLowerCase();
@@ -8753,7 +8780,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* RIGHT: Chat window */}
               {inboxThread ? (() => {
                 const phone = inboxThread;
-                const msgs = inboxMessages.filter(m=>m.phone===phone);
+                // Match by last-10-digits so messages saved under variant
+                // phone formats (e.g. "12364120016" vs "2364120016") all
+                // appear in the same conversation panel.
+                const threadKey = phone.replace(/\D/g, "").slice(-10);
+                const msgs = inboxMessages.filter(m => {
+                  const mk = String(m.phone || "").replace(/\D/g, "").slice(-10);
+                  return mk === threadKey;
+                });
                 const mp = phone.replace(/\D/g,"");
                 const matchedCase = cases.find(c=>{ const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
                 const clientName = matchedCase?.client || msgs[0]?.matched_case_name || "Unknown";
@@ -8793,7 +8827,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 try {
                                   await apiFetch(`/marketing-leads`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, contact_name: name, source: "whatsapp", stage: "new"})});
                                 } catch {}
-                                setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
+                                setInboxMessages(prev => {
+                                  const k = String(phone || '').replace(/\D/g, '').slice(-10);
+                                  return prev.map(m => String(m.phone||'').replace(/\D/g,'').slice(-10) === k ? {...m, matched_case_name: name} : m);
+                                });
                                 (e.target as HTMLInputElement).value = "";
                                 setCaseActionStatus?.(`✅ Saved "${name}" — added to Lead Pipeline`);
                                 setTimeout(() => setCaseActionStatus?.(""), 4000);
@@ -8810,7 +8847,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 try {
                                   await apiFetch(`/marketing-leads`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, contact_name: name, source: "whatsapp", stage: "new"})});
                                 } catch {}
-                                setInboxMessages(prev => prev.map(m => m.phone === phone ? {...m, matched_case_name: name} : m));
+                                setInboxMessages(prev => {
+                                  const k = String(phone || '').replace(/\D/g, '').slice(-10);
+                                  return prev.map(m => String(m.phone||'').replace(/\D/g,'').slice(-10) === k ? {...m, matched_case_name: name} : m);
+                                });
                                 input.value = "";
                                 setCaseActionStatus?.(`✅ Saved "${name}" — added to Lead Pipeline`);
                                 setTimeout(() => setCaseActionStatus?.(""), 4000);
