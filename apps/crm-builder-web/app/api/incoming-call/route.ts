@@ -42,6 +42,9 @@ function isMarketingWhatsAppConfigured() {
 }
 
 // Send WhatsApp text from the MARKETING number (NOT the case-intake/Processing number).
+// NOTE: Plain text only works within an OPEN 24-hour window — i.e. after the customer
+// has messaged us first. For unsolicited business-initiated messages (like a missed-call
+// welcome), use sendMarketingTemplate() with a Meta-approved template instead.
 async function sendMarketingWhatsApp(to: string, message: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (!isMarketingWhatsAppConfigured()) {
     return { success: false, error: "Marketing WhatsApp not configured (missing WHATSAPP_MARKETING_PHONE_ID or WHATSAPP_ACCESS_TOKEN)" };
@@ -64,6 +67,65 @@ async function sendMarketingWhatsApp(to: string, message: string): Promise<{ suc
         to: cleanPhone,
         type: "text",
         text: { body: message },
+      }),
+    });
+    const data = await res.json().catch(() => ({})) as { messages?: { id: string }[]; error?: { message: string } };
+    if (!res.ok) {
+      return { success: false, error: data?.error?.message || `Meta API error (HTTP ${res.status})` };
+    }
+    return { success: true, messageId: data?.messages?.[0]?.id };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+// Send a pre-approved Marketing TEMPLATE from the MARKETING number.
+// Used for first-time outreach (e.g. missed-call welcome) since Meta requires
+// approved templates for any business-initiated message outside a 24-hour window.
+//
+// The template name + language must match what was approved in Meta Business Manager.
+// If the template body has no variables, pass `variables: []`.
+// If the template body has {{1}} {{2}} etc, pass the values in order: ["John", "PGWP"].
+async function sendMarketingTemplate(
+  to: string,
+  templateName: string,
+  languageCode: string = "en",
+  variables: string[] = []
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isMarketingWhatsAppConfigured()) {
+    return { success: false, error: "Marketing WhatsApp not configured (missing WHATSAPP_MARKETING_PHONE_ID or WHATSAPP_ACCESS_TOKEN)" };
+  }
+  const cleanPhone = String(to || "").replace(/[^\d]/g, "");
+  if (!cleanPhone || cleanPhone.length < 7) {
+    return { success: false, error: "Invalid phone number" };
+  }
+
+  // Build template payload. Components only included if there are variables.
+  const components: any[] = [];
+  if (variables.length > 0) {
+    components.push({
+      type: "body",
+      parameters: variables.map((v) => ({ type: "text", text: String(v) })),
+    });
+  }
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${WA_TOKEN}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanPhone,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          ...(components.length > 0 ? { components } : {}),
+        },
       }),
     });
     const data = await res.json().catch(() => ({})) as { messages?: { id: string }[]; error?: { message: string } };
@@ -209,10 +271,18 @@ export async function POST(request: NextRequest) {
     } else if (!isMarketingWhatsAppConfigured()) {
       whatsappError = "Marketing WhatsApp not configured";
     } else {
-      const message = process.env.TASKER_WELCOME_MESSAGE || DEFAULT_WELCOME;
-      const result = await sendMarketingWhatsApp(cleanPhone, message);
+      // Meta REQUIRES an approved Template for first-time outreach (24-hour rule).
+      // Plain text only works AFTER the customer has messaged us first.
+      // Template name + language must match what's approved in Meta Business Manager.
+      const templateName = process.env.TASKER_WELCOME_TEMPLATE || "missed_call_welcome";
+      const templateLang = process.env.TASKER_WELCOME_TEMPLATE_LANG || "en";
+      const result = await sendMarketingTemplate(cleanPhone, templateName, templateLang, []);
       whatsappSent = result.success;
       whatsappError = result.error || null;
+
+      // For logging in marketing_inbox, use the human-readable text version of the
+      // template body. This is what staff will see in the Inbox UI.
+      const inboxLogMessage = process.env.TASKER_WELCOME_MESSAGE || DEFAULT_WELCOME;
 
       // If sent successfully, log the outbound message in marketing_inbox so it
       // shows up in staff's inbox view alongside future replies.
@@ -225,7 +295,7 @@ export async function POST(request: NextRequest) {
           [
             `wa-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             cleanPhone,
-            message,
+            inboxLogMessage,
             contactName,
           ]
         ).catch(() => { /* table may not exist or schema mismatch — non-blocking */ });
