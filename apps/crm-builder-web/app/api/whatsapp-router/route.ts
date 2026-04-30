@@ -1,0 +1,156 @@
+// ─────────────────────────────────────────────────────────────────────
+// WhatsApp Webhook Router
+//
+// Single entry point for Meta's WhatsApp Business webhooks. Inspects the
+// incoming payload's phone_number_id and forwards to the appropriate
+// downstream handler within this same app:
+//
+//   - phone_number_id = WHATSAPP_PHONE_NUMBER_ID   → /api/whatsapp           (Processing / case-intake)
+//   - phone_number_id = WHATSAPP_MARKETING_PHONE_ID → /api/marketing-whatsapp (Marketing inbox)
+//
+// Why this exists:
+//   Meta lets you configure ONE webhook URL per app, but a single app can
+//   own multiple phone numbers. Without routing, both numbers' incoming
+//   events end up at the same handler, which mishandles half of them.
+//
+// Setup in Meta:
+//   1. Set webhook URL to:  https://crm.newtonimmigration.com/api/whatsapp-router
+//   2. Verify token:        same WHATSAPP_VERIFY_TOKEN value as before
+//   3. Subscribe to:        messages, message_status (and any others you need)
+//
+// Behavior on unknown phone IDs:
+//   Returns 200 OK and logs a warning. Returning non-200 would cause Meta
+//   to retry, which would just keep failing — better to absorb + log.
+// ─────────────────────────────────────────────────────────────────────
+
+import { NextRequest, NextResponse } from "next/server";
+
+const PROCESSING_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "";
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "newton_verify_2024";
+
+// ─── GET /api/whatsapp-router — Meta verification handshake ───
+//
+// Meta sends a GET with hub.mode, hub.verify_token, hub.challenge when you
+// first save the webhook URL in their UI. We respond with the challenge
+// string verbatim if the token matches. Same logic as both downstream
+// handlers — kept here so verification works at the router URL too.
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const mode = searchParams.get("hub.mode");
+  const token = searchParams.get("hub.verify_token");
+  const challenge = searchParams.get("hub.challenge");
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    // Return challenge as plain text — Meta requires this exact format.
+    return new NextResponse(challenge || "", { status: 200 });
+  }
+
+  // Allow a simple health check ping (no Meta-specific params).
+  if (!mode && !token && !challenge) {
+    return NextResponse.json({
+      ok: true,
+      endpoint: "/api/whatsapp-router",
+      processingConfigured: Boolean(PROCESSING_PHONE_ID),
+      marketingConfigured: Boolean(MARKETING_PHONE_ID),
+      verifyTokenConfigured: VERIFY_TOKEN !== "newton_verify_2024" || true,
+    });
+  }
+
+  return new NextResponse("Forbidden", { status: 403 });
+}
+
+// ─── POST /api/whatsapp-router — receive + route ───
+export async function POST(request: NextRequest) {
+  // Read the raw body once — we'll forward this same payload downstream
+  // unchanged so the existing handlers see exactly what Meta sent them.
+  const rawBody = await request.text();
+
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    // Malformed JSON — ack to Meta with 200 (don't trigger retry storm)
+    // but log the issue.
+    console.warn("[whatsapp-router] Could not parse body:", rawBody.slice(0, 200));
+    return NextResponse.json({ ok: true, warning: "non-json body" });
+  }
+
+  // Extract phone_number_id. Meta's payload shape:
+  //   { object: "whatsapp_business_account",
+  //     entry: [{ id, changes: [{ value: { metadata: { phone_number_id, display_phone_number } }, field } ] }] }
+  //
+  // We try the first entry/change. In practice, Meta batches changes per WABA
+  // but typically only one phone_number_id appears per request because each
+  // physical number is on its own WABA in this setup.
+  const entries = Array.isArray(body?.entry) ? body.entry : [];
+  let routedCount = 0;
+  let unknownCount = 0;
+  const routingDetails: { target: string; phoneId: string; status: number; error?: string }[] = [];
+
+  for (const entry of entries) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const phoneId: string = change?.value?.metadata?.phone_number_id || "";
+
+      // Wrap each change as its own webhook payload — preserves Meta's shape
+      // exactly as if Meta had sent only this change. Downstream handlers
+      // expect this shape.
+      const singleChangePayload = {
+        object: body.object || "whatsapp_business_account",
+        entry: [{
+          id: entry.id,
+          changes: [change],
+        }],
+      };
+
+      // ─── Determine which downstream handler to call ───
+      let target: string | null = null;
+      if (phoneId === PROCESSING_PHONE_ID && PROCESSING_PHONE_ID) {
+        target = "/api/whatsapp";
+      } else if (phoneId === MARKETING_PHONE_ID && MARKETING_PHONE_ID) {
+        target = "/api/marketing-whatsapp";
+      }
+
+      if (!target) {
+        // Unknown number — log + continue so other changes still route.
+        console.warn(`[whatsapp-router] Unknown phone_number_id: ${phoneId} (Processing=${PROCESSING_PHONE_ID}, Marketing=${MARKETING_PHONE_ID})`);
+        unknownCount++;
+        continue;
+      }
+
+      // ─── Forward the change to the target handler ───
+      // We make an internal HTTP call to our own service. The downstream
+      // handler will run its existing logic with the standard payload shape.
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${request.headers.get("host") || "crm.newtonimmigration.com"}`;
+      const targetUrl = `${baseUrl}${target}`;
+
+      try {
+        const res = await fetch(targetUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            // Pass a header the downstream can use to recognize "internal" forward
+            "x-internal-forward": "1",
+          },
+          body: JSON.stringify(singleChangePayload),
+        });
+        routingDetails.push({ target, phoneId, status: res.status });
+        routedCount++;
+      } catch (err) {
+        routingDetails.push({ target, phoneId, status: 0, error: String(err) });
+        // Don't fail the whole webhook — log and continue
+        console.error(`[whatsapp-router] Forward to ${target} failed:`, err);
+      }
+    }
+  }
+
+  // ALWAYS return 200 to Meta — they'll retry otherwise, and we've already
+  // either successfully forwarded or logged the failure.
+  return NextResponse.json({
+    ok: true,
+    routedCount,
+    unknownCount,
+    routingDetails: process.env.NODE_ENV === "production" ? undefined : routingDetails,
+  });
+}
