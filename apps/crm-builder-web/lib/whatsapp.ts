@@ -141,6 +141,112 @@ export async function sendWhatsAppText(to: string, message: string): Promise<{ s
   }
 }
 
+// ─── Media: upload file to Meta + send to client ───
+//
+// WhatsApp media flow is two API calls:
+//   1) POST /<phoneId>/media — upload binary, get back a media_id
+//   2) POST /<phoneId>/messages — send a message of type "document" / "image" /
+//      "video" / "audio" referencing that media_id
+//
+// Caller passes the file as a Buffer + the file's MIME type + a name. We pick
+// the right WhatsApp `type` based on the MIME (image/* → image, audio/* → audio,
+// video/* → video, everything else → document).
+//
+// Optional `caption` shows under image/video/document in the client's chat.
+export async function sendWhatsAppMedia(params: {
+  to: string;
+  fileBuffer: Buffer;
+  mimeType: string;
+  filename: string;
+  caption?: string;
+}): Promise<{ success: boolean; messageId?: string; mediaId?: string; whatsappType?: string; error?: string }> {
+  const phoneId = getPhoneNumberId();
+  const token = getAccessToken();
+  if (!phoneId || !token) {
+    return { success: false, error: "WhatsApp not configured" };
+  }
+  const phone = normalizeWhatsAppPhone(params.to);
+  if (!phone || phone.length < 10) {
+    return { success: false, error: "Invalid phone number" };
+  }
+
+  // Pick the WhatsApp message type based on MIME.
+  const mime = String(params.mimeType || "application/octet-stream").toLowerCase();
+  const whatsappType =
+    mime.startsWith("image/") ? "image" :
+    mime.startsWith("audio/") ? "audio" :
+    mime.startsWith("video/") ? "video" :
+    "document";
+
+  // Step 1 — Upload the file to Meta's media endpoint. Multipart form data.
+  let mediaId = "";
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", mime);
+    // Convert Buffer → Blob for FormData (Node 18+ supports this natively).
+    form.append("file", new Blob([new Uint8Array(params.fileBuffer)], { type: mime }), params.filename);
+
+    const uploadRes = await fetch(`${WHATSAPP_API_URL}/${phoneId}/media`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },  // do NOT set Content-Type — Blob auto-sets boundary
+      body: form,
+    });
+    const uploadData: any = await uploadRes.json().catch(() => ({}));
+    console.log(`📤 WA media upload: status=${uploadRes.status} | data=${JSON.stringify(uploadData).slice(0, 200)}`);
+    if (!uploadRes.ok) {
+      return { success: false, error: uploadData?.error?.message || `Media upload HTTP ${uploadRes.status}` };
+    }
+    mediaId = String(uploadData?.id || "");
+    if (!mediaId) {
+      return { success: false, error: "Media upload returned no id" };
+    }
+  } catch (err) {
+    return { success: false, error: `Media upload failed: ${String(err)}` };
+  }
+
+  // Step 2 — Send the message that references the uploaded media.
+  // image/video/document support `caption`; audio does not.
+  const mediaPayload: any = { id: mediaId };
+  if (whatsappType !== "audio" && params.caption) {
+    mediaPayload.caption = params.caption;
+  }
+  // Documents also support a filename hint so the client sees a nice name.
+  if (whatsappType === "document") {
+    mediaPayload.filename = params.filename;
+  }
+
+  try {
+    const sendRes = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: phone,
+        type: whatsappType,
+        [whatsappType]: mediaPayload,
+      }),
+    });
+    const sendData: any = await sendRes.json().catch(() => ({}));
+    console.log(`📬 WA media send: status=${sendRes.status} | type=${whatsappType} | data=${JSON.stringify(sendData).slice(0, 200)}`);
+    if (!sendRes.ok) {
+      return { success: false, error: sendData?.error?.message || `Send HTTP ${sendRes.status}`, mediaId, whatsappType };
+    }
+    return {
+      success: true,
+      messageId: sendData?.messages?.[0]?.id,
+      mediaId,
+      whatsappType,
+    };
+  } catch (err) {
+    return { success: false, error: `Send failed: ${String(err)}`, mediaId, whatsappType };
+  }
+}
+
 // Send welcome + first question when case is created
 export async function sendCaseWelcomeMessage(params: {
   clientName: string;

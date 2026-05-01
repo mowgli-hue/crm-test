@@ -9133,19 +9133,46 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         }} />
                       </label>
                       <input value={inboxReply[phone]||""} onChange={e=>setInboxReply(prev=>({...prev,[phone]:e.target.value}))}
-                        placeholder={`Message ${clientName}...`}
+                        placeholder={inboxAttachment[phone] ? `Add a caption (optional)...` : `Message ${clientName}...`}
                         className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none focus:bg-white"
                         onKeyDown={async e => {
                           if (e.key!=="Enter") return;
-                          const text=(inboxReply[phone]||"").trim(); if (!text) return;
-                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                          if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                          const text=(inboxReply[phone]||"").trim();
+                          const att = inboxAttachment[phone];
+                          // Allow sending file alone (no text required) — only block if BOTH are empty
+                          if (!text && !att) return;
+                          const payload: any = { phone: phone.replace(/\D/g,""), caseId: matchedCase?.id || null };
+                          if (text) payload.message = text;
+                          if (att) payload.attachment = { name: att.name, type: att.type, data: att.data };
+                          const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).catch(()=>null);
+                          if (res?.ok) {
+                            setInboxReply(prev=>({...prev,[phone]:""}));
+                            setInboxAttachment(prev=>({...prev,[phone]:null}));
+                            // Optimistic UI: show outbound bubble immediately. For attachments, render
+                            // as a placeholder doc card; for text, show the text.
+                            const optimisticMessage = att
+                              ? `[doc:tmp-${Date.now()}|kind=${att.type.startsWith("image/") ? "image" : "document"}|name=${encodeURIComponent(att.name)}|mime=${encodeURIComponent(att.type)}|pending=1${text ? `|caption=${encodeURIComponent(text)}` : ""}]`
+                              : text;
+                            setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:optimisticMessage,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]);
+                          }
                           else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
                         }} />
                       <button onClick={async () => {
-                        const text=(inboxReply[phone]||"").trim(); if (!text) return;
-                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:text,caseId:matchedCase?.id||null})}).catch(()=>null);
-                        if (res?.ok) { setInboxReply(prev=>({...prev,[phone]:""})); setInboxAttachment(prev=>({...prev,[phone]:null})); setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:text,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); }
+                        const text=(inboxReply[phone]||"").trim();
+                        const att = inboxAttachment[phone];
+                        if (!text && !att) return;
+                        const payload: any = { phone: phone.replace(/\D/g,""), caseId: matchedCase?.id || null };
+                        if (text) payload.message = text;
+                        if (att) payload.attachment = { name: att.name, type: att.type, data: att.data };
+                        const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).catch(()=>null);
+                        if (res?.ok) {
+                          setInboxReply(prev=>({...prev,[phone]:""}));
+                          setInboxAttachment(prev=>({...prev,[phone]:null}));
+                          const optimisticMessage = att
+                            ? `[doc:tmp-${Date.now()}|kind=${att.type.startsWith("image/") ? "image" : "document"}|name=${encodeURIComponent(att.name)}|mime=${encodeURIComponent(att.type)}|pending=1${text ? `|caption=${encodeURIComponent(text)}` : ""}]`
+                            : text;
+                          setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:optimisticMessage,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]);
+                        }
                         else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
                       }} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 shrink-0">Send</button>
                       </div>
