@@ -6531,6 +6531,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             // Submit handler
                             const submitBtn = document.getElementById("__rep_letter_submit__") as HTMLButtonElement;
                             const statusSpan = document.getElementById("__rep_letter_status__")!;
+                            // ── Two-phase flow ──
+                            // Phase 1: click Generate → POST with mode=preview → backend returns
+                            //          JSON of body lines instead of PDF
+                            // Phase 2: modal swaps to edit view → user edits → click Download → POST
+                            //          with editedBodyLines → backend builds PDF
+                            //
+                            // We render Phase 2 by replacing the modal's inner panel HTML so the
+                            // existing close handlers on the outer overlay still work.
                             submitBtn?.addEventListener("click", async () => {
                               const story = textarea.value.trim();
                               submitBtn.disabled = true;
@@ -6542,34 +6550,170 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({
                                     systemToken: "newton-recovery-2024",
+                                    mode: "preview",
                                     clientStory: story,
                                     pronouns: selectedPronoun,
                                   }),
                                 });
-                                if (res?.ok) {
-                                  const blob = await res.blob();
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement("a");
-                                  a.href = url;
-                                  a.download = `${caseClient} - Representative Letter.pdf`;
-                                  a.click();
-                                  URL.revokeObjectURL(url);
-                                  setCaseActionStatus("✅ Rep letter downloaded!");
-                                  close();
-                                } else {
+                                if (!res?.ok) {
                                   const err = await res?.json().catch(() => ({}));
                                   alert(`Failed: ${err.error || "Unknown error"}`);
                                   submitBtn.disabled = false;
                                   submitBtn.textContent = "🪄 Generate";
                                   statusSpan.style.display = "none";
+                                  return;
                                 }
+                                const data = await res.json();
+                                const bodyLines: string[] = Array.isArray(data?.bodyLines) ? data.bodyLines : [];
+                                const subject: string = String(data?.subject || "");
+                                const todayDate: string = String(data?.date || new Date().toLocaleDateString());
+                                const generatedKind: string = data?.generated === "ai" ? "✨ AI-drafted" : "📋 Template";
+
+                                // ── Render the edit panel ──
+                                const panel = document.getElementById("__rep_letter_panel__");
+                                if (!panel) return;
+                                const initialBody = bodyLines.join("\n\n");
+                                const safeSubject = subject.replace(/</g, "&lt;");
+                                const safeDate = todayDate.replace(/</g, "&lt;");
+                                const safeClient = caseClient.replace(/</g, "&lt;");
+                                panel.innerHTML = `
+                                  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+                                    <div>
+                                      <h2 style="margin:0;font-size:16px;font-weight:bold;color:#0f172a;">📜 Edit & Download</h2>
+                                      <p style="margin:4px 0 0;font-size:11px;color:#64748b;">${safeClient} · ${caseType}</p>
+                                      <p style="margin:4px 0 0;font-size:10px;color:#7e22ce;font-weight:600;">${generatedKind} · Edit anything below before downloading</p>
+                                    </div>
+                                    <button id="__rep_edit_close__" style="background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;line-height:1;">✕</button>
+                                  </div>
+
+                                  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:10px;font-size:11px;color:#1e3a8a;line-height:1.5;">
+                                    📝 <strong>Edit the letter body below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited.
+                                    <br /><span style="color:#1d4ed8;">Tip: blank lines separate paragraphs.</span>
+                                  </div>
+
+                                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;font-size:11px;color:#334155;line-height:1.6;">
+                                    <div><strong>Date:</strong> ${safeDate}</div>
+                                    <div><strong>To:</strong> Immigration, Refugees and Citizenship Canada</div>
+                                    <div><strong>Subject:</strong> ${safeSubject}</div>
+                                    <div style="margin-top:4px;font-style:italic;color:#64748b;">Dear Sir/Madam,</div>
+                                  </div>
+
+                                  <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Letter body (edit anything)</label>
+                                  <textarea id="__rep_edit_body__" rows="18"
+                                    style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;line-height:1.6;box-sizing:border-box;resize:vertical;"></textarea>
+                                  <p id="__rep_edit_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
+
+                                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px;font-size:11px;color:#334155;line-height:1.6;">
+                                    <div style="font-style:italic;color:#64748b;">Sincerely,</div>
+                                    <div style="margin-top:8px;"><strong>Navdeep Singh Sandhu</strong></div>
+                                    <div>RCIC #R705964 · Newton Immigration Inc.</div>
+                                    <div>8327 120 Street, Delta, BC V4C 6R1</div>
+                                  </div>
+
+                                  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;">
+                                    <button id="__rep_edit_back__" style="border:1px solid #e2e8f0;background:white;padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">← Back</button>
+                                    <div style="display:flex;gap:8px;align-items:center;">
+                                      <span id="__rep_edit_status__" style="font-size:12px;color:#7e22ce;font-weight:600;display:none;">⏳ Building PDF…</span>
+                                      <button id="__rep_edit_download__" style="background:#059669;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📥 Download PDF</button>
+                                    </div>
+                                  </div>
+                                `;
+
+                                const bodyArea = document.getElementById("__rep_edit_body__") as HTMLTextAreaElement;
+                                const metaP = document.getElementById("__rep_edit_meta__")!;
+                                bodyArea.value = initialBody;
+                                const updateMeta = () => {
+                                  const v = bodyArea.value;
+                                  const paras = v.split(/\n\n+/).filter(p => p.trim()).length;
+                                  metaP.textContent = `${v.length} characters · ${paras} paragraphs`;
+                                };
+                                updateMeta();
+                                bodyArea.addEventListener("input", updateMeta);
+
+                                const closeBtn = document.getElementById("__rep_edit_close__") as HTMLButtonElement;
+                                closeBtn?.addEventListener("click", close);
+
+                                // ── Back: re-render the original compose panel ──
+                                // Easiest path: close and let user click again. Alternatively we
+                                // could restore the original innerHTML, but a clean re-open keeps
+                                // state simple and avoids re-attaching all the original handlers.
+                                const backBtn = document.getElementById("__rep_edit_back__") as HTMLButtonElement;
+                                backBtn?.addEventListener("click", () => {
+                                  close();
+                                  // Re-trigger the original button to reopen with same data — fire
+                                  // a synthetic click on the trigger so the modal re-renders
+                                  // exactly as before. The user's story is preserved in additional
+                                  // notes already, so the textarea will repopulate from there.
+                                  setTimeout(() => {
+                                    const triggerBtn = document.querySelector('button.rounded-xl.bg-white.text-\\[\\#0B2F5C\\]') as HTMLButtonElement | null;
+                                    triggerBtn?.click();
+                                  }, 50);
+                                });
+
+                                // ── Download: rebuild bodyLines from textarea + POST ──
+                                const downloadBtn = document.getElementById("__rep_edit_download__") as HTMLButtonElement;
+                                const editStatus = document.getElementById("__rep_edit_status__")!;
+                                downloadBtn?.addEventListener("click", async () => {
+                                  // Reconstruct bodyLines: split on blank lines = paragraph breaks.
+                                  // Empty entries between paragraphs are preserved as blank strings
+                                  // so the PDF route's spacing logic produces the same look as the
+                                  // original AI-generated letter.
+                                  const editedBodyLines: string[] = [];
+                                  const paragraphs = bodyArea.value.split(/\n\n+/);
+                                  paragraphs.forEach((p, i) => {
+                                    const trimmed = p.trim();
+                                    if (trimmed) editedBodyLines.push(trimmed);
+                                    if (i < paragraphs.length - 1) editedBodyLines.push("");
+                                  });
+                                  if (editedBodyLines.filter(l => l.trim()).join(" ").length < 50) {
+                                    alert("Body is too short — please add more content before downloading.");
+                                    return;
+                                  }
+
+                                  downloadBtn.disabled = true;
+                                  downloadBtn.textContent = "Building…";
+                                  editStatus.style.display = "inline";
+                                  try {
+                                    const dlRes = await apiFetch(`/cases/${caseId}/rep-letter`, {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        systemToken: "newton-recovery-2024",
+                                        editedBodyLines,
+                                        pronouns: selectedPronoun,
+                                      }),
+                                    });
+                                    if (!dlRes?.ok) {
+                                      const err = await dlRes?.json().catch(() => ({}));
+                                      alert(`Failed: ${err.error || "Unknown error"}`);
+                                      downloadBtn.disabled = false;
+                                      downloadBtn.textContent = "📥 Download PDF";
+                                      editStatus.style.display = "none";
+                                      return;
+                                    }
+                                    const blob = await dlRes.blob();
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = `${caseClient} - Representative Letter.pdf`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                    setCaseActionStatus("✅ Rep letter downloaded!");
+                                    close();
+                                  } catch (e: any) {
+                                    alert(`Error: ${e?.message || "Unknown"}`);
+                                    downloadBtn.disabled = false;
+                                    downloadBtn.textContent = "📥 Download PDF";
+                                    editStatus.style.display = "none";
+                                  }
+                                  setTimeout(() => setCaseActionStatus(""), 4000);
+                                });
                               } catch (e: any) {
                                 alert(`Error: ${e?.message || "Unknown"}`);
                                 submitBtn.disabled = false;
                                 submitBtn.textContent = "🪄 Generate";
                                 statusSpan.style.display = "none";
                               }
-                              setTimeout(() => setCaseActionStatus(""), 4000);
                             });
                           }} className="rounded-xl bg-white px-5 py-2.5 text-xs font-bold text-[#0B2F5C] hover:bg-blue-50 shrink-0 shadow-md">
                             ✍️ Write Story & Generate
