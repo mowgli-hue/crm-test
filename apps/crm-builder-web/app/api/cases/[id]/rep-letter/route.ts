@@ -325,21 +325,46 @@ function getBodyParagraphs(p: BodyParams): string[] {
 // Layout helpers
 // ──────────────────────────────────────────────────────────────
 
+// Strip characters that pdf-lib's WinAnsi encoder cannot handle.
+// In particular newlines (\n, \r) crash drawText with "WinAnsi cannot encode 0x000a".
+// Use this for any string that goes directly into page.drawText() without
+// first being split into individual lines by wrapText.
+function sanitizeForPdf(text: string): string {
+  if (!text) return "";
+  return String(text)
+    .replace(/\r/g, "")           // strip carriage returns
+    .replace(/\n+/g, " ")          // newlines → spaces (caller is single-line)
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, ""); // other control chars
+}
+
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const words = text.split(" ");
+  // Honor hard newlines first — split on \n so each user-typed line is its own
+  // paragraph. Within each segment, do word-wrapping by max width. Strip \r so
+  // Windows line-endings don't leave stray carriage returns inside a line
+  // (which would crash WinAnsi encoder downstream).
+  const segments = String(text).replace(/\r/g, "").split("\n");
   const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    const w = font.widthOfTextAtSize(candidate, size);
-    if (w > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = candidate;
+
+  for (const segment of segments) {
+    if (!segment) {
+      // Preserve blank lines from the original text (give the PDF visible spacing)
+      lines.push("");
+      continue;
     }
+    const words = segment.split(" ");
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      const w = font.widthOfTextAtSize(candidate, size);
+      if (w > maxWidth && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) lines.push(current);
   }
-  if (current) lines.push(current);
   return lines;
 }
 
@@ -756,7 +781,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const color = opts.color ?? TEXT_BLACK;
       const x = opts.x ?? MARGIN_X;
       ensureSpace(size + lineGap);
-      page.drawText(text, { x, y, size, font, color });
+      // Sanitize: drawText cannot encode \n or other control chars. Caller
+      // expects single-line output here (multi-line goes through drawParagraph).
+      page.drawText(sanitizeForPdf(text), { x, y, size, font, color });
       y -= size + lineGap;
     };
 
@@ -769,13 +796,20 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const lh = size * 1.45;
       for (const line of lines) {
         ensureSpace(lh);
-        page.drawText(line, { x: MARGIN_X + indent, y, size, font, color });
+        // Empty lines (from hard line-breaks within the source) just advance
+        // the cursor — drawText cannot accept "" + we'd leave WinAnsi alone.
+        if (line) {
+          page.drawText(line, { x: MARGIN_X + indent, y, size, font, color });
+        }
         y -= lh;
       }
       y -= opts.gapAfter ?? 6;
     };
 
-    const drawBullet = (boldPart: string, restPart: string) => {
+    const drawBullet = (boldPartRaw: string, restPartRaw: string) => {
+      // Sanitize newlines/control chars — these would crash drawText.
+      const boldPart = sanitizeForPdf(boldPartRaw);
+      const restPart = sanitizeForPdf(restPartRaw);
       const size = 11;
       const lh = size * 1.45;
       const indent = 22;
@@ -817,7 +851,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         const lines = wrapText(remaining, fontReg, size, contentWidth - indent);
         for (const ln of lines) {
           ensureSpace(lh);
-          page.drawText(ln, { x: MARGIN_X + indent, y, size, font: fontReg, color: TEXT_BLACK });
+          if (ln) {
+            page.drawText(ln, { x: MARGIN_X + indent, y, size, font: fontReg, color: TEXT_BLACK });
+          }
           y -= lh;
         }
       }
@@ -1026,13 +1062,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const lh = 10.5 * 1.45;
       docLines.forEach((line, idx) => {
         ensureSpace(lh);
-        page.drawText(line, {
-          x: MARGIN_X + 6 + numberW + 4,
-          y,
-          size: 10.5,
-          font: fontReg,
-          color: TEXT_BLACK,
-        });
+        if (line) {
+          page.drawText(line, {
+            x: MARGIN_X + 6 + numberW + 4,
+            y,
+            size: 10.5,
+            font: fontReg,
+            color: TEXT_BLACK,
+          });
+        }
         y -= lh;
       });
       y -= 2;
