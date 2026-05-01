@@ -14,8 +14,8 @@ import path from "path";
 const RCIC_NAME = "Navdeep Singh Sandhu";
 const RCIC_NUMBER = "R-705964";
 const RCIC_COMPANY = "NEWTON IMMIGRATION INC.";
-const RCIC_ADDRESS_LINE_1 = "17282 59A Avenue";
-const RCIC_ADDRESS_LINE_2 = "Surrey, BC V3S 5S5";
+const RCIC_ADDRESS_LINE_1 = "8327 120 Street";
+const RCIC_ADDRESS_LINE_2 = "Delta, BC V4C 6R1";
 const RCIC_EMAIL = "newtonimmigration@gmail.com";
 const RCIC_PHONE = "+1 778.723.6662";
 const RCIC_WEBSITE = "www.newtonimmigration.com";
@@ -642,9 +642,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     // ── Body generation: use AI if clientStory provided, otherwise fall back to template ──
     const clientStory = String(body.clientStory || "").trim();
+    const editedBodyLines: string[] | null = Array.isArray(body.editedBodyLines)
+      ? body.editedBodyLines.map((l: unknown) => String(l || ""))
+      : null;
+    const mode = String(body.mode || "").toLowerCase();
     let bodyLines: string[];
 
-    if (clientStory && clientStory.length >= 20 && process.env.ANTHROPIC_API_KEY) {
+    if (editedBodyLines && editedBodyLines.length > 0) {
+      // ── Path: client passed back edited body. Use it verbatim, no AI re-run.
+      // Filter out any completely empty trailing lines but preserve in-body blanks
+      // (those become paragraph breaks).
+      bodyLines = editedBodyLines;
+      while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === "") {
+        bodyLines = bodyLines.slice(0, -1);
+      }
+    } else if (clientStory && clientStory.length >= 20 && process.env.ANTHROPIC_API_KEY) {
       // Use Claude to weave the client's specific story into a properly-structured letter
       try {
         bodyLines = await generateLetterBodyWithAI({
@@ -672,6 +684,32 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       bodyLines = getBodyParagraphs({
         clientName, pronoun, formType, passportNo, uci, institution, program,
         arrivalDate, permitExpiry, programEndDate,
+      });
+    }
+
+    // ── Preview mode: return body content as JSON for in-browser editing ──
+    //
+    // Frontend uses this two-step flow:
+    //   1. Open modal → POST with `mode=preview` → receive JSON of body lines
+    //      Staff edits the lines in a textarea
+    //   2. Click Download → POST with `editedBodyLines` → receive PDF
+    //
+    // The "header" (date, "Dear Sir/Madam,", subject) and "footer" (sign-off,
+    // RCIC info, address, contact) are NOT returned because they are template-
+    // generated server-side from case + Newton config and never user-edited.
+    // This keeps the source of truth on the server for all the boilerplate
+    // and makes editing safer (staff can't accidentally remove the RCIC
+    // identifier number from a letter destined for IRCC).
+    if (mode === "preview") {
+      return NextResponse.json({
+        ok: true,
+        clientName,
+        formType,
+        subject: subjectLine,
+        date: today,
+        bodyLines,
+        // Echo back generation context the editor might want to display.
+        generated: clientStory && clientStory.length >= 20 ? "ai" : "template",
       });
     }
 

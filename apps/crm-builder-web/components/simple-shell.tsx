@@ -612,6 +612,18 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [repLetterStory, setRepLetterStory] = useState("");
   const [repLetterPronouns, setRepLetterPronouns] = useState<"they" | "he" | "she">("they");
   const [repLetterGenerating, setRepLetterGenerating] = useState(false);
+  // Preview-and-edit state: when staff clicks Generate we first fetch the body
+  // (preview mode), display it editable, then they click Download to produce
+  // the final PDF using their edited body lines.
+  const [repLetterPreview, setRepLetterPreview] = useState<null | {
+    clientName: string;
+    formType: string;
+    subject: string;
+    date: string;
+    bodyLines: string[];
+    generated: "ai" | "template";
+  }>(null);
+  const [repLetterEditedBody, setRepLetterEditedBody] = useState("");
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   // Resizable inbox thread list — drag the divider to adjust width.
   const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
@@ -10018,7 +10030,7 @@ function ClientPortal({
             justifyContent: "center",
             padding: "16px",
           }}
-          onClick={() => !repLetterGenerating && setShowRepLetterModal(false)}
+          onClick={() => { if (!repLetterGenerating) { setShowRepLetterModal(false); setRepLetterPreview(null); setRepLetterEditedBody(""); } }}
         >
           <div
             style={{
@@ -10039,106 +10051,241 @@ function ClientPortal({
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {selectedCase ? `${selectedCase.client} · ${selectedCase.formType}` : "(select a case first)"}
                 </p>
+                {repLetterPreview && (
+                  <p className="text-[10px] text-purple-600 mt-1 font-semibold">
+                    {repLetterPreview.generated === "ai" ? "✨ AI-drafted" : "📋 Template"} · Edit anything below before downloading
+                  </p>
+                )}
               </div>
               {!repLetterGenerating && (
-                <button onClick={() => setShowRepLetterModal(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+                <button onClick={() => { setShowRepLetterModal(false); setRepLetterPreview(null); setRepLetterEditedBody(""); }} className="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
               )}
             </div>
 
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 mb-3">
-              <p className="text-[11px] text-amber-900 leading-snug">
-                ✍️ <strong>Write the client's story below.</strong> Include their journey, why they're applying, any unique circumstances (transfers, refusals, gaps, hardships, achievements). Claude AI will weave it into a professional IRCC submission letter with proper structure and headings.
-              </p>
-            </div>
+            {!repLetterPreview ? (
+              // ── PHASE 1: Compose. Staff writes story → click Generate ──
+              <>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 mb-3">
+                  <p className="text-[11px] text-amber-900 leading-snug">
+                    ✍️ <strong>Write the client's story below.</strong> Include their journey, why they're applying, any unique circumstances (transfers, refusals, gaps, hardships, achievements). Claude AI will weave it into a professional IRCC submission letter — and you'll be able to edit every word before downloading.
+                  </p>
+                </div>
 
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Client's story / consultant notes <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={repLetterStory}
-              onChange={e => setRepLetterStory(e.target.value)}
-              disabled={repLetterGenerating}
-              rows={10}
-              placeholder={`Example:\n\nAarti began her studies at Capilano University and was progressing well. Due to outside influence she transferred to Granville College for one semester, but realized this was not the right fit. She returned to Capilano University to continue her Associate of Arts degree and is now back on track. Attached are unofficial transcripts from both institutions reflecting her academic progress.`}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-purple-400 font-mono leading-relaxed disabled:bg-slate-50"
-            />
-            <p className="text-[10px] text-slate-400 mt-1">
-              {repLetterStory.length} characters · Minimum 20 characters required
-              {repLetterStory.length < 20 && <span className="text-amber-600"> (or skip story for the default template)</span>}
-            </p>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Client's story / consultant notes <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={repLetterStory}
+                  onChange={e => setRepLetterStory(e.target.value)}
+                  disabled={repLetterGenerating}
+                  rows={10}
+                  placeholder={`Example:\n\nAarti began her studies at Capilano University and was progressing well. Due to outside influence she transferred to Granville College for one semester, but realized this was not the right fit. She returned to Capilano University to continue her Associate of Arts degree and is now back on track. Attached are unofficial transcripts from both institutions reflecting her academic progress.`}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-purple-400 font-mono leading-relaxed disabled:bg-slate-50"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {repLetterStory.length} characters · Minimum 20 characters required
+                  {repLetterStory.length < 20 && <span className="text-amber-600"> (or skip story for the default template)</span>}
+                </p>
 
-            <div className="mt-3">
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">Client pronouns</label>
-              <div className="flex gap-2">
-                {(["they", "she", "he"] as const).map(p => (
+                <div className="mt-3">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Client pronouns</label>
+                  <div className="flex gap-2">
+                    {(["they", "she", "he"] as const).map(p => (
+                      <button
+                        key={p}
+                        disabled={repLetterGenerating}
+                        onClick={() => setRepLetterPronouns(p)}
+                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${repLetterPronouns === p ? "border-purple-500 bg-purple-50 text-purple-700" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+                        {p === "they" ? "they/them/their" : p === "she" ? "she/her" : "he/him"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-5 flex gap-2 justify-end items-center">
+                  {repLetterGenerating && (
+                    <span className="text-xs text-purple-600 font-semibold mr-auto">
+                      ⏳ AI is drafting your letter…
+                    </span>
+                  )}
                   <button
-                    key={p}
+                    onClick={() => { setShowRepLetterModal(false); setRepLetterPreview(null); setRepLetterEditedBody(""); }}
                     disabled={repLetterGenerating}
-                    onClick={() => setRepLetterPronouns(p)}
-                    className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${repLetterPronouns === p ? "border-purple-500 bg-purple-50 text-purple-700" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
-                    {p === "they" ? "they/them/their" : p === "she" ? "she/her" : "he/him"}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                    Cancel
                   </button>
-                ))}
-              </div>
-            </div>
+                  <button
+                    onClick={async () => {
+                      if (!selectedCase) {
+                        setCaseActionStatus("❌ Please select a case first.");
+                        setShowRepLetterModal(false);
+                        return;
+                      }
+                      setRepLetterGenerating(true);
+                      setCaseActionStatus("AI is drafting the letter…");
+                      try {
+                        // ── Phase 1: Generate preview (returns JSON, not PDF) ──
+                        const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            systemToken: "newton-recovery-2024",
+                            mode: "preview",
+                            clientStory: repLetterStory.trim(),
+                            pronouns: repLetterPronouns,
+                          }),
+                        });
+                        if (res?.ok) {
+                          const data = await res.json();
+                          setRepLetterPreview({
+                            clientName: data.clientName,
+                            formType: data.formType,
+                            subject: data.subject,
+                            date: data.date,
+                            bodyLines: data.bodyLines || [],
+                            generated: data.generated,
+                          });
+                          // Editable body = body lines joined with blank-line separators
+                          // so that paragraph breaks survive the round-trip.
+                          setRepLetterEditedBody((data.bodyLines || []).join("\n\n"));
+                          setCaseActionStatus("✅ Preview ready — edit & download.");
+                        } else {
+                          const err = await res?.json().catch(() => ({}));
+                          setCaseActionStatus(`❌ Failed: ${err.error || "Unknown error"}`);
+                        }
+                      } catch {
+                        setCaseActionStatus("❌ Error generating letter");
+                      }
+                      setRepLetterGenerating(false);
+                      setTimeout(() => setCaseActionStatus(""), 5000);
+                    }}
+                    disabled={repLetterGenerating || !selectedCase}
+                    className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
+                    {repLetterGenerating ? "Generating…" : (repLetterStory.trim().length >= 20 ? "🪄 Generate with AI" : "📥 Generate (default template)")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              // ── PHASE 2: Preview & edit ──
+              //
+              // Show the staff a textarea with all body lines, plus read-only
+              // header/footer info so they can see the FULL letter context but
+              // only edit the body. Paragraph breaks are blank lines.
+              <>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 mb-3 text-[11px] text-blue-900 leading-snug">
+                  📝 <strong>Edit the letter body below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited (those are template).
+                  <br />
+                  <span className="text-blue-700">Tip: blank lines separate paragraphs.</span>
+                </div>
 
-            <div className="mt-5 flex gap-2 justify-end items-center">
-              {repLetterGenerating && (
-                <span className="text-xs text-purple-600 font-semibold mr-auto">
-                  ⏳ AI is drafting your letter…
-                </span>
-              )}
-              <button
-                onClick={() => setShowRepLetterModal(false)}
-                disabled={repLetterGenerating}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  if (!selectedCase) {
-                    setCaseActionStatus("❌ Please select a case first.");
-                    setShowRepLetterModal(false);
-                    return;
-                  }
-                  setRepLetterGenerating(true);
-                  setCaseActionStatus("AI is drafting the letter…");
-                  try {
-                    const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        systemToken: "newton-recovery-2024",
-                        clientStory: repLetterStory.trim(),
-                        pronouns: repLetterPronouns,
-                      }),
-                    });
-                    if (res?.ok) {
-                      const blob = await res.blob();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `${selectedCase.client} - Representative Letter.pdf`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                      setCaseActionStatus("✅ Rep letter downloaded!");
-                      setShowRepLetterModal(false);
-                      setRepLetterStory("");
-                    } else {
-                      const err = await res?.json().catch(() => ({}));
-                      setCaseActionStatus(`❌ Failed: ${err.error || "Unknown error"}`);
-                    }
-                  } catch {
-                    setCaseActionStatus("❌ Error generating letter");
-                  }
-                  setRepLetterGenerating(false);
-                  setTimeout(() => setCaseActionStatus(""), 5000);
-                }}
-                disabled={repLetterGenerating || !selectedCase}
-                className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
-                {repLetterGenerating ? "Generating…" : (repLetterStory.trim().length >= 20 ? "🪄 Generate with AI" : "📥 Generate (default template)")}
-              </button>
-            </div>
+                {/* Read-only context (non-editable) */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 mb-2 text-[11px] text-slate-700 leading-relaxed">
+                  <div><strong>Date:</strong> {repLetterPreview.date}</div>
+                  <div><strong>To:</strong> Immigration, Refugees and Citizenship Canada</div>
+                  <div><strong>Subject:</strong> {repLetterPreview.subject}</div>
+                  <div className="mt-1 italic text-slate-500">Dear Sir/Madam,</div>
+                </div>
+
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Letter body (edit anything)
+                </label>
+                <textarea
+                  value={repLetterEditedBody}
+                  onChange={e => setRepLetterEditedBody(e.target.value)}
+                  disabled={repLetterGenerating}
+                  rows={18}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-purple-400 leading-relaxed disabled:bg-slate-50"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {repLetterEditedBody.length} characters · {repLetterEditedBody.split("\n\n").filter(p => p.trim()).length} paragraphs
+                </p>
+
+                {/* Read-only footer (non-editable) */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 mt-2 text-[11px] text-slate-700 leading-relaxed">
+                  <div className="italic text-slate-500">Sincerely,</div>
+                  <div className="mt-2"><strong>Navdeep Singh Sandhu</strong></div>
+                  <div>RCIC #R705964 · Newton Immigration Inc.</div>
+                  <div>8327 120 Street, Delta, BC V4C 6R1</div>
+                </div>
+
+                <div className="mt-5 flex gap-2 justify-between items-center">
+                  <button
+                    onClick={() => { setRepLetterPreview(null); setRepLetterEditedBody(""); }}
+                    disabled={repLetterGenerating}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                    ← Back
+                  </button>
+                  <div className="flex gap-2 items-center">
+                    {repLetterGenerating && (
+                      <span className="text-xs text-purple-600 font-semibold">⏳ Building PDF…</span>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (!selectedCase) return;
+                        // Reconstruct bodyLines from edited textarea: split on
+                        // double-newline = paragraph breaks; lines within a
+                        // paragraph are kept as separate strings (the PDF
+                        // generator will wrap them).
+                        // Empty lines between paragraphs are preserved as
+                        // empty strings so the PDF spacing matches.
+                        const editedLines: string[] = [];
+                        const paragraphs = repLetterEditedBody.split(/\n\n+/);
+                        paragraphs.forEach((p, i) => {
+                          const trimmed = p.trim();
+                          if (trimmed) {
+                            // Keep it as one element per paragraph — the PDF
+                            // route handles wrapping. Inline newlines inside
+                            // a paragraph become forced breaks.
+                            editedLines.push(trimmed);
+                          }
+                          if (i < paragraphs.length - 1) {
+                            editedLines.push(""); // blank line = paragraph break
+                          }
+                        });
+
+                        setRepLetterGenerating(true);
+                        setCaseActionStatus("Building PDF…");
+                        try {
+                          const res = await apiFetch(`/cases/${selectedCase.id}/rep-letter`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              systemToken: "newton-recovery-2024",
+                              editedBodyLines: editedLines,
+                              pronouns: repLetterPronouns,
+                            }),
+                          });
+                          if (res?.ok) {
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${selectedCase.client} - Representative Letter.pdf`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            setCaseActionStatus("✅ Rep letter downloaded!");
+                            setShowRepLetterModal(false);
+                            setRepLetterStory("");
+                            setRepLetterPreview(null);
+                            setRepLetterEditedBody("");
+                          } else {
+                            const err = await res?.json().catch(() => ({}));
+                            setCaseActionStatus(`❌ Failed: ${err.error || "Unknown error"}`);
+                          }
+                        } catch {
+                          setCaseActionStatus("❌ Error generating letter");
+                        }
+                        setRepLetterGenerating(false);
+                        setTimeout(() => setCaseActionStatus(""), 5000);
+                      }}
+                      disabled={repLetterGenerating || !selectedCase || repLetterEditedBody.trim().length < 50}
+                      className="rounded-lg bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
+                      {repLetterGenerating ? "Building…" : "📥 Download PDF"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       ), document.body)}
