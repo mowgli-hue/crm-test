@@ -82,6 +82,9 @@ export async function POST(req: NextRequest) {
       const from = message.from;
       const msgType = message.type; // text, image, document, audio
       const text = message?.text?.body || "";
+      // Hoisted so the post-S3 inbox UPDATE block (line ~430) can reference
+      // the same id we used for the INSERT below. Generated once per message.
+      const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
 
       const { listCases, addMessage, updateCase, getCase } = await import("@/lib/store");
       const cases = await listCases(COMPANY_ID);
@@ -103,7 +106,6 @@ export async function POST(req: NextRequest) {
           matched_case_name TEXT, is_read BOOLEAN NOT NULL DEFAULT FALSE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
-        const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
         // For docs/images/audio, save a placeholder that will be UPDATED later
         // (after the file uploads to S3). Format: `[doc:msgId|kind=image|pending=1]`
         // The frontend renders this as "📎 (uploading...)" until the row updates.
