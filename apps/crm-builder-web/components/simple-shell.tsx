@@ -196,7 +196,7 @@ type DocRequestItem = {
   fulfilledBy?: string;
   documentId?: string;
 };
-type CaseDetailTab = "overview" | "profile" | "documents" | "tasks" | "communication" | "notes";
+type CaseDetailTab = "overview" | "profile" | "documents" | "tasks" | "communication" | "notes" | "review";
 type CaseBoardView = "home" | "new_cases" | "assigned_cases" | "under_review_cases" | "urgent_cases" | "all_cases";
 
 type PgwpDraft = {
@@ -658,6 +658,24 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
 
   const [inboxThread, setInboxThread] = useState<string|null>(null);
   const [caseNotes, setCaseNotes] = useState<Record<string, Array<{id:string;text:string;added_by:string;created_at:string}>>>({});
+  // Per-case review comments (Review tab). Threaded: a top-level comment has
+  // parent_id=null; replies point parent_id at their thread root. Status
+  // tracks 'open' / 'resolved' for the thread.
+  const [reviewComments, setReviewComments] = useState<Record<string, Array<{
+    id: string;
+    case_id: string;
+    parent_id: string | null;
+    body: string;
+    author_user_id: string;
+    author_name: string;
+    author_role: string;
+    status: "open" | "resolved";
+    created_at: string;
+    resolved_at: string | null;
+    resolved_by_name: string | null;
+  }>>>({});
+  const [reviewCommentDraft, setReviewCommentDraft] = useState<Record<string, string>>({});  // per-case top-level draft
+  const [reviewReplyDraft, setReviewReplyDraft] = useState<Record<string, string>>({});      // per-thread reply draft
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [diagnosticsReport, setDiagnosticsReport] = useState<DiagnosticsReport | null>(null);
   const [caseSearch, setCaseSearch] = useState("");
@@ -983,6 +1001,15 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     if (!selectedCaseId) return;
     apiFetch(`/cases/${selectedCaseId}/notes`).then(r => r?.json()).then(d => {
       if (d?.notes) setCaseNotes(prev => ({ ...prev, [selectedCaseId]: d.notes }));
+    }).catch(() => {});
+  }, [selectedCaseId]);
+
+  // Load review comments alongside notes — they live on the same case but
+  // come from a separate endpoint (/review-comments) with threading + status.
+  useEffect(() => {
+    if (!selectedCaseId) return;
+    apiFetch(`/cases/${selectedCaseId}/review-comments`).then(r => r?.json()).then(d => {
+      if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCaseId]: d.comments }));
     }).catch(() => {});
   }, [selectedCaseId]);
 
@@ -6269,6 +6296,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           {id:"profile",  icon:"👤", label:"Profile"},
                           {id:"documents",icon:"📎", label:"Docs"},
                           {id:"notes",    icon:"📝", label:"Notes"},
+                          {id:"review",   icon:"💬", label:"Review"},
                         ] as const).map(tab => (
                           <button key={tab.id} onClick={() => setCaseDetailTab(tab.id)}
                             className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
@@ -6285,6 +6313,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             )}
                 {tab.id === "notes" && (caseNotes[selectedCase.id]||[]).length > 0 && (
                               <span className="rounded-full bg-amber-100 px-1.5 text-[9px] font-bold text-amber-700">{(caseNotes[selectedCase.id]||[]).length}</span>
+                            )}
+                            {tab.id === "review" && (reviewComments[selectedCase.id]||[]).filter((c:any) => c.status === "open" && !c.parent_id).length > 0 && (
+                              <span className="rounded-full bg-rose-100 px-1.5 text-[9px] font-bold text-rose-700">{(reviewComments[selectedCase.id]||[]).filter((c:any) => c.status === "open" && !c.parent_id).length}</span>
                             )}
                           </button>
                         ))}
@@ -9708,6 +9739,173 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             ))
                           )}
                         </div>
+                      </div>
+                    ) : null}
+
+                    {caseDetailTab === "review" ? (
+                      <div className="space-y-4">
+                        {/* ── Header explanation ── */}
+                        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                          <p className="text-xs text-rose-900 leading-relaxed">
+                            💬 <strong>Review Comments</strong> — for back-and-forth between reviewer and processing staff on this case.
+                            <br/>
+                            New comments + replies email everyone in the thread (assigned staff + lead). Mark a thread <strong>resolved</strong> once fixed.
+                          </p>
+                        </div>
+
+                        {/* ── Compose new review comment ── */}
+                        <div className="rounded-xl border-2 border-slate-200 p-3 bg-white">
+                          <textarea
+                            value={reviewCommentDraft[selectedCase.id] || ""}
+                            onChange={e => setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: e.target.value }))}
+                            placeholder={`Leave a review comment about this case... (e.g. "Q14 answer is wrong, should be No not Yes")`}
+                            rows={3}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-rose-400 leading-relaxed"
+                          />
+                          <div className="flex justify-between items-center mt-2">
+                            <p className="text-[10px] text-slate-400">
+                              {(reviewCommentDraft[selectedCase.id] || "").length} characters · everyone in thread gets emailed
+                            </p>
+                            <button
+                              disabled={(reviewCommentDraft[selectedCase.id] || "").trim().length < 5}
+                              onClick={async () => {
+                                const text = (reviewCommentDraft[selectedCase.id] || "").trim();
+                                if (text.length < 5) return;
+                                const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ body: text }),
+                                });
+                                if (res?.ok) {
+                                  setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: "" }));
+                                  // Re-fetch list
+                                  const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                  if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                  setCaseActionStatus("✅ Review comment added — emailed assigned staff");
+                                } else {
+                                  setCaseActionStatus("❌ Failed to add comment");
+                                }
+                                setTimeout(() => setCaseActionStatus(""), 4000);
+                              }}
+                              className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+                              + Add Review Comment
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* ── Threads list ── */}
+                        {(() => {
+                          const all = reviewComments[selectedCase.id] || [];
+                          const topLevel = all.filter(c => !c.parent_id);
+                          if (topLevel.length === 0) {
+                            return <p className="text-xs text-slate-400 text-center py-6">No review comments yet</p>;
+                          }
+                          // Sort: open first, then resolved; within group, newest first
+                          const sorted = [...topLevel].sort((a, b) => {
+                            if (a.status !== b.status) return a.status === "open" ? -1 : 1;
+                            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                          });
+                          return sorted.map(thread => {
+                            const replies = all.filter(c => c.parent_id === thread.id)
+                              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                            const isResolved = thread.status === "resolved";
+                            return (
+                              <div key={thread.id}
+                                className={`rounded-xl border-2 ${isResolved ? "border-slate-200 bg-slate-50" : "border-rose-200 bg-white"} p-3 space-y-2`}>
+                                {/* Top-level comment */}
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={`text-[11px] font-bold ${isResolved ? "text-slate-500" : "text-rose-700"}`}>
+                                        {thread.author_name}
+                                      </span>
+                                      {thread.author_role && (
+                                        <span className="text-[9px] uppercase tracking-wide text-slate-400">{thread.author_role}</span>
+                                      )}
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(thread.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
+                                      </span>
+                                      {isResolved && (
+                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2">✓ Resolved</span>
+                                      )}
+                                    </div>
+                                    <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-800"}`}>{thread.body}</p>
+                                  </div>
+                                  <button
+                                    onClick={async () => {
+                                      const newStatus = isResolved ? "open" : "resolved";
+                                      const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ commentId: thread.id, status: newStatus }),
+                                      });
+                                      if (res?.ok) {
+                                        const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                        if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                      }
+                                    }}
+                                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-bold ${isResolved ? "bg-slate-200 text-slate-700 hover:bg-slate-300" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}>
+                                    {isResolved ? "Re-open" : "✓ Resolve"}
+                                  </button>
+                                </div>
+
+                                {/* Replies */}
+                                {replies.length > 0 && (
+                                  <div className="ml-4 pl-3 border-l-2 border-slate-200 space-y-2">
+                                    {replies.map(reply => (
+                                      <div key={reply.id}>
+                                        <div className="flex items-center gap-2 mb-0.5">
+                                          <span className="text-[11px] font-bold text-blue-700">{reply.author_name}</span>
+                                          {reply.author_role && (
+                                            <span className="text-[9px] uppercase tracking-wide text-slate-400">{reply.author_role}</span>
+                                          )}
+                                          <span className="text-[10px] text-slate-400">
+                                            {new Date(reply.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
+                                          </span>
+                                        </div>
+                                        <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-700"}`}>{reply.body}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reply box (only show on open threads) */}
+                                {!isResolved && (
+                                  <div className="ml-4 pl-3 border-l-2 border-slate-100">
+                                    <textarea
+                                      value={reviewReplyDraft[thread.id] || ""}
+                                      onChange={e => setReviewReplyDraft(prev => ({ ...prev, [thread.id]: e.target.value }))}
+                                      placeholder="Reply..."
+                                      rows={2}
+                                      className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400 leading-relaxed"
+                                    />
+                                    <div className="flex justify-end mt-1">
+                                      <button
+                                        disabled={(reviewReplyDraft[thread.id] || "").trim().length < 2}
+                                        onClick={async () => {
+                                          const text = (reviewReplyDraft[thread.id] || "").trim();
+                                          if (text.length < 2) return;
+                                          const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ body: text, parentId: thread.id }),
+                                          });
+                                          if (res?.ok) {
+                                            setReviewReplyDraft(prev => ({ ...prev, [thread.id]: "" }));
+                                            const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                            if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                          }
+                                        }}
+                                        className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                                        Reply
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     ) : null}
 

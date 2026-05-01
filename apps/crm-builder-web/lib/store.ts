@@ -2459,19 +2459,21 @@ export async function markNotificationRead(companyId: string, userId: string, id
 export async function addNotification(input: {
   companyId: string;
   userId: string;
-  type: "deadline" | "missing_doc" | "ai_alert";
+  type: "deadline" | "missing_doc" | "ai_alert" | "review_comment";
   message: string;
+  link?: string;
 }): Promise<NotificationItem> {
   const store = await readStore();
   const notice: NotificationItem = {
     id: `NTF-${store.notifications.length + 1}`,
     companyId: input.companyId,
     userId: input.userId,
-    type: input.type,
+    type: input.type as any,
     message: input.message,
+    link: input.link,
     read: false,
     createdAt: new Date().toISOString()
-  };
+  } as any;
   store.notifications.unshift(notice);
   await writeStore(store);
   return notice;
