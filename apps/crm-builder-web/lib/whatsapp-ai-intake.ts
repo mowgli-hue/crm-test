@@ -464,59 +464,98 @@ If the answer is unclear or evasive return: {"raw_answer": "${answer.slice(0,100
   }
 }
 
-// Helper — sends the next batch of questions after the start when ALL of the first batch
-// was pre-answered. Called recursively from the awaiting_template_reply handler.
-async function sendNextBatchAfterPreAnswers(session: IntakeSession): Promise<void> {
+// Helper — send the next batch of questions starting from session.currentBatch.
+//
+// Used in two places:
+//   1. After initial template-reply: when intake first starts and batch 0 was
+//      handled, send batch 1, etc.
+//   2. After per-batch answers received: if the client answered ALL questions
+//      in the current batch (or skipped some via "no" / "n/a"), advance to
+//      the next batch and send it as a section instead of dropping back to
+//      one-by-one. This preserves the section-batched flow throughout intake.
+//
+// Returns:
+//   true  — a new batch was sent; caller should NOT also send a single-question
+//   false — there were no more batches to send (intake is done or stuck in
+//           same-batch-leftover mode); caller falls back to single-question.
+async function sendNextBatchIfReady(session: IntakeSession): Promise<boolean> {
   const batches = session.batches || [session.questions];
   const batchTitles = session.batchTitles || [];
   const totalBatches = batches.length;
   const allQuestions = session.questions;
   const preAnswered = session.preAnswered || {};
+  const answers = session.answers || {};
 
-  let batchIdx = session.currentBatch || 1;
+  // ── Decide which batch to send next ──
+  // We want to advance past any batch where every question is already
+  // covered (either pre-answered from passport data, or already answered by
+  // the client in a previous reply).
+  const isQuestionAnswered = (qIdx: number): boolean => {
+    if (preAnswered[qIdx] !== undefined) return true;
+    // session.answers stores answers under keys like `q${idx+1}` — check both forms
+    if (answers[`q${qIdx + 1}`] !== undefined && String(answers[`q${qIdx + 1}`]).trim() !== "") return true;
+    const q = allQuestions[qIdx];
+    if (q && answers[q.slice(0, 50)] !== undefined && String(answers[q.slice(0, 50)]).trim() !== "") return true;
+    return false;
+  };
+
+  let batchIdx = session.currentBatch || 0;
+  // Advance batchIdx if current batch is fully answered
   while (batchIdx < totalBatches) {
     const batchPrompts = batches[batchIdx];
     const batchIndices = batchPrompts
       .map(prompt => allQuestions.findIndex(q => q === prompt))
       .filter(i => i >= 0);
-    const askIndices = batchIndices.filter(i => preAnswered[i] === undefined);
-    const askPrompts = askIndices.map(i => allQuestions[i]);
+    const unanswered = batchIndices.filter(i => !isQuestionAnswered(i));
 
-    if (askPrompts.length > 0) {
-      const sectionTitle = batchTitles[batchIdx] || `Part ${batchIdx + 1}`;
-      const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
-      const msg = [
-        `${sectionTitle} *(Section ${batchIdx + 1} of ${totalBatches})*`,
-        `━━━━━━━━━━━━━━━`,
-        questionsText,
-        `━━━━━━━━━━━━━━━`,
-        ``,
-        `Please reply with all answers numbered 🙏`,
-      ].join("\n");
-      session.chatTurns = askIndices[0];
-      session.currentBatch = batchIdx;
-      await setSession(session.phone, session);
-      await sendAndSave(session.phone, msg, session.caseId, session.clientName);
-      return;
+    if (unanswered.length === 0) {
+      // Whole batch covered — advance to next
+      batchIdx++;
+      continue;
     }
-    // Entire batch was pre-answered, advance
-    batchIdx++;
+
+    // ── Found a batch with unanswered questions → send it as a section ──
+    const askPrompts = unanswered.map(i => allQuestions[i]);
+    const sectionTitle = batchTitles[batchIdx] || `Part ${batchIdx + 1}`;
+    const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+    const msg = [
+      `${sectionTitle} *(Section ${batchIdx + 1} of ${totalBatches})*`,
+      `━━━━━━━━━━━━━━━`,
+      questionsText,
+      `━━━━━━━━━━━━━━━`,
+      ``,
+      `Please reply with all answers numbered 🙏`,
+    ].join("\n");
+
+    session.chatTurns = unanswered[0];
+    session.currentBatch = batchIdx;
+    await setSession(session.phone, session);
+    await sendAndSave(session.phone, msg, session.caseId, session.clientName);
+    return true;
   }
 
-  // All batches pre-answered — mark session complete
-  session.phase = "complete";
-  await setSession(session.phone, session);
-  const firstName = session.clientName.split(" ")[0];
-  const doneMsg = [
-    `✅ *Thank you ${firstName}!*`,
-    ``,
-    `Based on your passport and case details, we already have everything we need.`,
-    ``,
-    `Our team will prepare your forms and be in touch shortly! 🙏`,
-    ``,
-    `— Newton Immigration Team 🍁`,
-  ].join("\n");
-  await sendAndSave(session.phone, doneMsg, session.caseId, session.clientName);
+  return false;  // no more batches — caller decides what to do (intake complete)
+}
+
+// Backwards-compat alias (older callers used the old name).
+async function sendNextBatchAfterPreAnswers(session: IntakeSession): Promise<void> {
+  const sent = await sendNextBatchIfReady(session);
+  if (!sent) {
+    // All batches pre-answered — mark session complete (preserve old behavior)
+    session.phase = "complete";
+    await setSession(session.phone, session);
+    const firstName = session.clientName.split(" ")[0];
+    const doneMsg = [
+      `✅ *Thank you ${firstName}!*`,
+      ``,
+      `Based on your passport and case details, we already have everything we need.`,
+      ``,
+      `Our team will prepare your forms and be in touch shortly! 🙏`,
+      ``,
+      `— Newton Immigration Team 🍁`,
+    ].join("\n");
+    await sendAndSave(session.phone, doneMsg, session.caseId, session.clientName);
+  }
 }
 
 // Handle incoming reply from client
@@ -708,20 +747,100 @@ export async function handleIncomingReply(params: {
       });
       await completeIntake(session);
     } else {
-      await setSession(phone, session);
-      const nextQuestion = session.questions[nextIndex];
-      // Choose ack phrase based on how many answers we captured at once
-      let ack: string;
+      // ── Section-batched flow ──
+      //
+      // After capturing the client's answers, try to send the NEXT BATCH as a
+      // section (5-6 questions at once with a section title), instead of
+      // dropping back to one-question-at-a-time.
+      //
+      // Three cases:
+      //   1. All questions in the current batch are now answered → send next batch
+      //   2. Current batch still has unanswered questions → send a short
+      //      "I still need answer to Q4 + Q5" prompt for the missing ones
+      //   3. No more batches → intake is done (handled by isDone above)
+      //
+      // The `sendNextBatchIfReady` helper handles the bookkeeping of figuring
+      // out which batch we're in and which questions are still unanswered.
+      const ackPhrases = ["Got it! ✓", "Perfect! ✓", "Thank you! ✓", "Noted! ✓", "Great! ✓"];
+      let ackPrefix: string;
       if (answersCaptured >= 3) {
-        ack = `🎉 Got all ${answersCaptured} answers! ✓`;
+        ackPrefix = `🎉 Got all ${answersCaptured} answers! ✓\n\n`;
       } else if (answersCaptured === 2) {
-        ack = "Got both answers! ✓";
+        ackPrefix = "Got both answers! ✓\n\n";
       } else {
-        const ackPhrases = ["Got it! ✓", "Perfect! ✓", "Thank you! ✓", "Noted! ✓", "Great! ✓"];
-        ack = ackPhrases[qIndex % ackPhrases.length];
+        ackPrefix = `${ackPhrases[qIndex % ackPhrases.length]}\n\n`;
       }
-      const msg = `${ack}\n\n*(${nextIndex + 1}/${session.questions.length})* ${nextQuestion}`;
-      await sendAndSave(phone, msg, session.caseId, session.clientName);
+
+      // Determine if all questions in the current batch are now answered.
+      const batches = session.batches || [session.questions];
+      const batchIdx = session.currentBatch || 0;
+      const currentBatchPrompts = batches[batchIdx] || [];
+      const currentBatchIndices = currentBatchPrompts
+        .map(prompt => session.questions.findIndex(q => q === prompt))
+        .filter(i => i >= 0);
+      const stillMissingInBatch = currentBatchIndices.filter(i => {
+        if (session.preAnswered && session.preAnswered[i] !== undefined) return false;
+        if (session.answers[`q${i + 1}`] !== undefined && String(session.answers[`q${i + 1}`]).trim() !== "") return false;
+        const q = session.questions[i];
+        if (q && session.answers[q.slice(0, 50)] !== undefined && String(session.answers[q.slice(0, 50)]).trim() !== "") return false;
+        return true;
+      });
+
+      if (stillMissingInBatch.length === 0) {
+        // ── Case 1: current batch fully answered → advance to next batch ──
+        session.currentBatch = batchIdx + 1;
+        await setSession(phone, session);
+
+        // Send the ack as a separate message so the next-batch message stays
+        // clean (the next batch already has its own section title + framing).
+        await sendAndSave(phone, ackPrefix.trim(), session.caseId, session.clientName);
+
+        const sent = await sendNextBatchIfReady(session);
+        if (!sent) {
+          // No more batches with unanswered Qs — intake is effectively complete.
+          // Mark complete + save.
+          session.phase = "complete";
+          await setSession(phone, session);
+          const doneMsg = [
+            `✅ *Thank you ${firstName}!*`,
+            ``,
+            `I have all the information needed for your *${session.formType}* application.`,
+            ``,
+            `If you need to correct any answer, simply reply with the question number and your new answer (e.g. "Q3: Updated answer").`,
+            ``,
+            `Our team will prepare your forms and be in touch shortly! 🙏`,
+            ``,
+            `— Newton Immigration Team 🍁`,
+          ].join("\n");
+          await sendAndSave(phone, doneMsg, session.caseId, session.clientName);
+          const { updateCasePgwpIntake: savePgwp } = await import("@/lib/store");
+          await savePgwp(session.companyId, session.caseId, {
+            ...session.answers as any,
+            whatsappIntakePhase: "complete",
+            whatsappIntakeCompletedAt: new Date().toISOString(),
+          });
+          await completeIntake(session);
+        }
+      } else {
+        // ── Case 2: current batch still has unanswered → re-prompt for those ──
+        // Renumber starting from 1 so the client's reply maps cleanly.
+        // (We point session.chatTurns at the first missing question so the
+        // batch-reply parser at the top of this function picks the right
+        // mapping for client's "1. xxx 2. yyy" replies.)
+        session.chatTurns = stillMissingInBatch[0];
+        await setSession(phone, session);
+        const missingPrompts = stillMissingInBatch.map(i => session.questions[i]);
+        const questionsText = missingPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+        const msg = [
+          `${ackPrefix}I still need answers for these:`,
+          `━━━━━━━━━━━━━━━`,
+          questionsText,
+          `━━━━━━━━━━━━━━━`,
+          ``,
+          `Please reply with all answers numbered 🙏`,
+        ].join("\n");
+        await sendAndSave(phone, msg, session.caseId, session.clientName);
+      }
     }
 
     return;
