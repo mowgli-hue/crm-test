@@ -133,6 +133,147 @@ export async function POST(req: NextRequest) {
         await pool.end();
       } catch { /* non-fatal */ }
 
+      // ── Greeting short-circuit ──
+      //
+      // Pure greetings ("Hi", "Hello", "Sat sri akal", emoji wave, etc.) should
+      // get a friendly conversational reply — NOT trigger the intake bot's full
+      // document checklist. Bombarding people with 12-doc lists when they just
+      // said "hi" is overwhelming and feels robotic.
+      //
+      // We catch this BEFORE matched-case logic so it short-circuits both:
+      //   - matched cases (don't auto-blast intake checklist on a "hi")
+      //   - unknown numbers (don't fall to default welcome flow)
+      //
+      // After greeting reply, we STOP processing this message. When the client
+      // replies with an actual question or request ("I need PR sponsorship"),
+      // that goes through the normal flow — intake bot triggers, AI auto-reply
+      // works, etc.
+      //
+      // Skip greeting handling for:
+      //   - Non-text messages (docs, images — never just "hello" anyway)
+      //   - Staff numbers (their "hi" is internal, no auto-reply needed)
+      //   - When a greeting has already been auto-replied to in last 60 minutes
+      //     (don't loop on someone repeatedly saying "hi")
+      if (msgType === "text" && text) {
+        const STAFF_PHONES = ["16046535031","17789828954","17787236662"];
+        const isStaffNumber = STAFF_PHONES.some(p => from.includes(p.slice(-9)));
+
+        // Greeting detection — fast regex, no LLM cost. Catches English,
+        // Punjabi (romanized + Gurmukhi), common emoji greetings.
+        const trimmed = text.trim().toLowerCase();
+        const greetingPatterns = [
+          /^(hi|hii+|hey+|hello+|helo+|yo)\b[!\s.,]*$/i,
+          /^(hi|hello|hey)\s+(there|team|sir|madam|ji)?\s*[!\s.,]*$/i,
+          /^(good\s+)?(morning|afternoon|evening|night)\s*[!\s.,]*$/i,
+          /^(sat\s*sri\s*akal|sasriakal|namaste|namaskar|salaam|salam|assalam|adaab)\s*[!\s.,]*(ji)?\s*$/i,
+          /^(ਸਤ\s*ਸ੍ਰੀ\s*ਅਕਾਲ|ਨਮਸਕਾਰ|ਸਲਾਮ).*$/,
+          /^(👋|🙏|🙋‍?♂?♀?|✋)\s*$/,
+          /^(how\s+(are\s+)?you|how\s*r\s*u|hru|kiddan|ki\s+haal)\s*[?!\s.,]*$/i,
+        ];
+        const isGreeting = greetingPatterns.some((re) => re.test(trimmed)) && trimmed.length <= 40;
+
+        if (isGreeting && !isStaffNumber) {
+          // Check we haven't auto-greeted this number in the last 60 min
+          // (avoid greeting loops if they keep typing "hi", "hi", "hi")
+          let recentlyGreeted = false;
+          try {
+            const { Pool } = await import("pg");
+            const checkPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+            const last10check = String(from).replace(/\D/g, "").slice(-10);
+            const recent = await checkPool.query(
+              `SELECT 1 FROM whatsapp_inbox
+               WHERE direction = 'outbound'
+                 AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1
+                 AND created_at > NOW() - INTERVAL '60 minutes'
+                 AND id LIKE 'WA-GREET-%'
+               LIMIT 1`,
+              [last10check]
+            );
+            recentlyGreeted = recent.rows.length > 0;
+            await checkPool.end();
+          } catch { /* non-fatal — proceed assuming not greeted */ }
+
+          if (!recentlyGreeted) {
+            // Generate a friendly, natural reply via Claude. Falls back to a
+            // safe template if the API call fails.
+            let greetingReply = "Hi! 👋 How can we help you today? Are you looking for help with a study permit, work permit, PR, or something else?";
+
+            try {
+              const apiKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
+              if (apiKey) {
+                const knownClient = matched?.client ? `The client's name is ${matched.client}.` : "";
+                const sys = [
+                  "You write a single short WhatsApp reply for Newton Immigration's auto-greeting. Rules:",
+                  "1. ONE friendly sentence + ONE question asking what they need help with.",
+                  "2. Match the client's language (English / Hindi / Punjabi). If they used 'Sat sri akal' reply with 'Sat sri akal!' once. If English, reply in English.",
+                  "3. NEVER quote fees, dates, or processing times.",
+                  "4. NEVER promise outcomes.",
+                  "5. Mention service categories briefly: study permit, work permit, PR, LMIA, visit visa.",
+                  "6. Maximum 2 short lines. No emoji unless client used one.",
+                  "7. Return ONLY the reply text — no labels, no quotes.",
+                ].join("\n");
+                const usr = `Client said: "${text}"\n${knownClient}\nWrite a short friendly greeting reply.`;
+                const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey,
+                    "anthropic-version": "2023-06-01",
+                  },
+                  body: JSON.stringify({
+                    model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+                    max_tokens: 120,
+                    system: sys,
+                    messages: [{ role: "user", content: usr }],
+                  }),
+                });
+                if (aiRes.ok) {
+                  const data: any = await aiRes.json();
+                  const out = String(data?.content?.[0]?.text || "").trim();
+                  if (out && out.length < 400) {
+                    // Final safety filter — drop if AI snuck in fees/timing
+                    const banned = [/\$\s*\d/, /\bcad\b\s*\d/i, /\b\d{1,3}\s*(days?|weeks?|months?)\b/i, /\b(approved|guaranteed|will be)\b/i];
+                    if (!banned.some((re) => re.test(out))) {
+                      greetingReply = out;
+                    }
+                  }
+                }
+              }
+            } catch { /* fall back to default greetingReply */ }
+
+            // Send the greeting
+            try {
+              const { sendWhatsAppText } = await import("@/lib/whatsapp");
+              const sendResult = await sendWhatsAppText(from, greetingReply);
+              if (sendResult.success) {
+                // Log to inbox so staff sees the auto-greeting in the conversation
+                try {
+                  const { Pool } = await import("pg");
+                  const logPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const digits = String(from || "").replace(/\D/g, "");
+                  const normPhone = (digits.length === 10) ? `1${digits}` : digits;
+                  await logPool.query(
+                    `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
+                    [`WA-GREET-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, normPhone, greetingReply, matched?.id || null, matched?.client || null]
+                  );
+                  await logPool.end();
+                } catch { /* non-fatal */ }
+                console.log(`👋 Auto-greeting sent to ${from}: ${greetingReply.slice(0, 60)}`);
+              }
+            } catch (e) {
+              console.error(`Greeting send failed: ${(e as Error).message}`);
+            }
+
+            // STOP processing this message — don't trigger intake or AI reply
+            continue;
+          } else {
+            console.log(`👋 Skipped greeting reply for ${from} (greeted within last 60 min)`);
+            // Still stop processing the greeting — let it sit until they say something real
+            continue;
+          }
+        }
+      }
+
       // ── Handle docs from UNKNOWN numbers (orphan docs) ──
       // When a brand new number sends a doc, save it to S3 + classify it so it's not lost.
       // It'll be re-filed properly once the contact gets linked to a case.
