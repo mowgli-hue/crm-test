@@ -7001,12 +7001,60 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                         </div>
                         <div className="max-h-56 space-y-2 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 text-xs">
-                          {messages.map((m) => (
-                            <div key={m.id} className={`rounded p-2 ${m.senderType === "client" ? "bg-blue-50 border border-blue-100 ml-4" : m.senderType === "ai" ? "bg-emerald-50 border border-emerald-100" : "bg-white border border-slate-200"}`}>
-                              <p className={`font-semibold text-[11px] mb-0.5 ${m.senderType === "client" ? "text-blue-700" : m.senderType === "ai" ? "text-emerald-700" : "text-slate-600"}`}>{m.senderName}{m.senderType === "ai" ? " (AI)" : ""}</p>
-                              <p>{m.text}</p>
-                            </div>
-                          ))}
+                          {messages.map((m) => {
+                            // Detect new-format doc placeholder: [doc:msgId|name=...|s3=...|...]
+                            const text = String(m.text || "");
+                            let docInfo: any = null;
+                            if (text.startsWith("[doc:") && text.endsWith("]")) {
+                              const inner = text.slice(1, -1);
+                              const parts = inner.split("|");
+                              if (parts.length >= 2) {
+                                const obj: any = { msgId: parts[0].replace(/^doc:/, ""), pending: false };
+                                for (let i = 1; i < parts.length; i++) {
+                                  const eq = parts[i].indexOf("=");
+                                  if (eq < 0) continue;
+                                  const k = parts[i].slice(0, eq);
+                                  const v = parts[i].slice(eq + 1);
+                                  if (k === "pending") obj.pending = v === "1" || v === "true";
+                                  else { try { obj[k] = decodeURIComponent(v); } catch { obj[k] = v; } }
+                                }
+                                docInfo = obj;
+                              }
+                            }
+
+                            return (
+                              <div key={m.id} className={`rounded p-2 ${m.senderType === "client" ? "bg-blue-50 border border-blue-100 ml-4" : m.senderType === "ai" ? "bg-emerald-50 border border-emerald-100" : "bg-white border border-slate-200"}`}>
+                                <p className={`font-semibold text-[11px] mb-0.5 ${m.senderType === "client" ? "text-blue-700" : m.senderType === "ai" ? "text-emerald-700" : "text-slate-600"}`}>{m.senderName}{m.senderType === "ai" ? " (AI)" : ""}</p>
+                                {docInfo && docInfo.s3 ? (
+                                  <div className="flex items-center gap-2 bg-slate-50 rounded p-2 border border-emerald-200">
+                                    <span className="text-xl">{docInfo.kind === "image" ? "🖼️" : docInfo.kind === "audio" ? "🎵" : "📄"}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-semibold text-slate-800 truncate">
+                                        {docInfo.name || (docInfo.kind === "image" ? "Image" : docInfo.kind === "audio" ? "Voice message" : "Document")}
+                                      </p>
+                                      {docInfo.caption && docInfo.caption !== docInfo.name && (
+                                        <p className="text-[10px] text-slate-600 truncate">{docInfo.caption}</p>
+                                      )}
+                                      <a
+                                        href={`/api/inbox-attachment?id=${encodeURIComponent(docInfo.msgId)}`}
+                                        download={docInfo.name || ""}
+                                        className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-bold text-emerald-700 hover:underline"
+                                      >
+                                        ⬇️ Download
+                                      </a>
+                                    </div>
+                                  </div>
+                                ) : docInfo && docInfo.pending ? (
+                                  <div className="flex items-center gap-2 bg-slate-50 rounded p-2 border border-amber-200">
+                                    <span className="text-xl animate-pulse">{docInfo.kind === "image" ? "🖼️" : docInfo.kind === "audio" ? "🎵" : "📄"}</span>
+                                    <p className="text-xs text-amber-700">Uploading… download will appear shortly.</p>
+                                  </div>
+                                ) : (
+                                  <p>{text}</p>
+                                )}
+                              </div>
+                            );
+                          })}
                           {messages.length === 0 ? <p className="text-slate-400 text-center py-2">No messages yet.</p> : null}
                         </div>
                         <div className="mt-2 flex gap-2">
@@ -8940,6 +8988,26 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           // Detect document - old format or new Drive link format
                           const driveMatch = m.message.match(/^📎 \[(.+?)\]\((.+?)\)$/);
                           const isDoc = m.message.includes("[document received]") || m.message.startsWith("[doc:") || m.message.startsWith("📎");
+                          // Parse new placeholder format: [doc:msgId|kind=...|name=...|mime=...|s3=...|pending=...]
+                          // Returns { msgId, name, kind, mime, s3, pending } or null.
+                          const parseNewDocFormat = (txt: string) => {
+                            if (!txt.startsWith("[doc:") || !txt.endsWith("]")) return null;
+                            const inner = txt.slice(1, -1);
+                            const parts = inner.split("|");
+                            if (parts.length < 2) return null;
+                            const msgId = parts[0].replace(/^doc:/, "");
+                            const obj: any = { msgId, pending: false };
+                            for (let i = 1; i < parts.length; i++) {
+                              const eq = parts[i].indexOf("=");
+                              if (eq < 0) continue;
+                              const k = parts[i].slice(0, eq);
+                              const v = parts[i].slice(eq + 1);
+                              if (k === "pending") obj.pending = v === "1" || v === "true";
+                              else { try { obj[k] = decodeURIComponent(v); } catch { obj[k] = v; } }
+                            }
+                            return obj;
+                          };
+                          const newDoc = isDoc && !driveMatch ? parseNewDocFormat(m.message) : null;
                           const isMedia = isImage || isAudio;
                           const time = new Date(m.created_at).toLocaleTimeString("en-CA",{hour:"2-digit",minute:"2-digit"});
                           
@@ -8968,6 +9036,37 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                           ⬇️ Download
                                         </a>
                                       </div>
+                                    </div>
+                                  </div>
+                                ) : isDoc && newDoc && newDoc.s3 ? (
+                                  // ── New format: instant browser download from S3 ──
+                                  <div className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-emerald-200">
+                                    <span className="text-2xl">{newDoc.kind === "image" ? "🖼️" : newDoc.kind === "audio" ? "🎵" : "📄"}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-semibold text-slate-800 truncate">
+                                        {newDoc.name || (newDoc.kind === "image" ? "Image" : newDoc.kind === "audio" ? "Voice message" : "Document")}
+                                      </p>
+                                      {newDoc.caption && newDoc.caption !== newDoc.name && (
+                                        <p className="text-[11px] text-slate-600 truncate">{newDoc.caption}</p>
+                                      )}
+                                      <a
+                                        href={`/api/inbox-attachment?id=${encodeURIComponent(newDoc.msgId)}`}
+                                        download={newDoc.name || ""}
+                                        className="inline-flex items-center gap-1 mt-1 text-[11px] font-bold text-emerald-700 hover:underline"
+                                      >
+                                        ⬇️ Download
+                                      </a>
+                                    </div>
+                                  </div>
+                                ) : isDoc && newDoc && newDoc.pending ? (
+                                  // ── New format placeholder: file still uploading to S3 ──
+                                  <div className="flex items-center gap-2 mb-1 bg-slate-50 rounded-xl p-2 border border-amber-200">
+                                    <span className="text-2xl animate-pulse">{newDoc.kind === "image" ? "🖼️" : newDoc.kind === "audio" ? "🎵" : "📄"}</span>
+                                    <div>
+                                      <p className="text-sm font-semibold text-slate-800">
+                                        {newDoc.kind === "image" ? "Image" : newDoc.kind === "audio" ? "Voice message" : "Document"} received
+                                      </p>
+                                      <p className="text-[10px] text-amber-700">Uploading… download will appear shortly.</p>
                                     </div>
                                   </div>
                                 ) : isDoc ? (

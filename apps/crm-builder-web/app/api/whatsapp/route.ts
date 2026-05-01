@@ -104,7 +104,15 @@ export async function POST(req: NextRequest) {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
         const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-        const displayMsg = msgType === "text" ? text : `[doc:${msgId}]`;
+        // For docs/images/audio, save a placeholder that will be UPDATED later
+        // (after the file uploads to S3). Format: `[doc:msgId|kind=image|pending=1]`
+        // The frontend renders this as "📎 (uploading...)" until the row updates.
+        const docKind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
+        const docCaption = String(message[msgType]?.caption || message[msgType]?.filename || message[msgType]?.name || "").trim();
+        const captionPart = docCaption ? `|caption=${encodeURIComponent(docCaption)}` : "";
+        const displayMsg = msgType === "text"
+          ? text
+          : `[doc:${msgId}|kind=${docKind}|pending=1${captionPart}]`;
         // ─── Normalize phone before insert ───
         // Meta sometimes sends the same contact under two formats:
         //   "12364120016" (with country code) and "2364120016" (without).
@@ -303,6 +311,18 @@ export async function POST(req: NextRequest) {
                 await putObjectToS3({ key: s3Key, content: media.buffer, contentType: media.mimeType });
                 s3Link = toS3StoredLink(s3Key);
                 console.log(`✅ Orphan saved to S3: ${s3Key}`);
+
+                // Update inbox row with download info (same as matched-case path)
+                try {
+                  const { Pool } = await import("pg");
+                  const upPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const finalName = (originalFilename || media.filename || `orphan-${from.replace(/\D/g, "")}.${ext}`).replace(/\|/g, "");
+                  const updatedDisplay = `[doc:${msgId}|kind=${msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document"}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}]`;
+                  await upPool.query(`UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`, [updatedDisplay, msgId]);
+                  await upPool.end();
+                } catch (e) {
+                  console.error("Orphan inbox row update failed:", (e as Error).message);
+                }
               } catch (e) {
                 console.error("Orphan S3 save failed:", e);
               }
@@ -412,6 +432,22 @@ export async function POST(req: NextRequest) {
                 await putObjectToS3({ key: s3Key, content: media.buffer, contentType: media.mimeType });
                 s3Link = toS3StoredLink(s3Key);
                 console.log(`✅ S3 saved: ${s3Key}`);
+
+                // ── Update inbox row with download info ──
+                // The initial INSERT (line ~129) stored a placeholder with
+                // `pending=1`. Now that S3 has the file, replace the placeholder
+                // text with one that includes filename + mime + S3 key so the
+                // frontend can render a download button.
+                try {
+                  const { Pool } = await import("pg");
+                  const upPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const finalName = (originalFilename || media.filename || `${matched.client || "doc"}.${ext}`).replace(/\|/g, "");
+                  const updatedDisplay = `[doc:${msgId}|kind=${msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document"}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}${mediaCaption && mediaCaption !== originalFilename ? `|caption=${encodeURIComponent(mediaCaption)}` : ""}]`;
+                  await upPool.query(`UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`, [updatedDisplay, msgId]);
+                  await upPool.end();
+                } catch (e) {
+                  console.error("Inbox row update failed:", (e as Error).message);
+                }
               } catch(e) { console.error("S3 save failed:", e); }
 
               // ── STEP 2: AI CLASSIFY & EXTRACT DATA ──────────────────────
