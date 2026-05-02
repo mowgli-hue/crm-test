@@ -477,6 +477,51 @@ export async function POST(request: NextRequest) {
             `UPDATE marketing_inbox SET message = $1 WHERE id = $2`,
             [updatedPlaceholder, msgId]
           );
+
+          // ── Drive backup (Stage 2) ──
+          //
+          // Upload the same file to a Google Drive folder so staff can browse
+          // marketing docs in their familiar Drive interface, organized per
+          // client. This is in addition to S3 — Drive is the user-facing
+          // browseable copy, S3 is the system-of-record backup.
+          //
+          // Folder structure inside MARKETING_DOCS_DRIVE_FOLDER_ID:
+          //   /MarketingDocs/
+          //     {client name or phone}/
+          //       {original filename}
+          //
+          // Failures here are non-fatal — the doc is already safe in S3 and
+          // visible in the CRM. Drive is best-effort.
+          const marketingDriveRoot = process.env.MARKETING_DOCS_DRIVE_FOLDER_ID || "";
+          if (marketingDriveRoot) {
+            try {
+              const { getOrCreateDriveSubfolder, uploadFileToDriveFolder } = await import("@/lib/google-drive");
+
+              // Resolve client folder name: prefer contact_name from this lead,
+              // fall back to phone if no name yet. Sanitize for Drive (no slashes).
+              const lead = await getLead(from).catch(() => null);
+              const clientLabel = (lead?.contact_name || contactName || "")
+                .replace(/[\/\\<>:"|?*]/g, " ")
+                .trim();
+              const clientFolderName = clientLabel
+                ? `${clientLabel} (${from})`
+                : from;
+
+              // Get or create per-client subfolder
+              const clientFolder = await getOrCreateDriveSubfolder(marketingDriveRoot, clientFolderName);
+
+              // Upload the file to that subfolder
+              await uploadFileToDriveFolder({
+                folderId: clientFolder.id,
+                fileName: finalName,
+                fileBuffer: buffer,
+                mimeType,
+              });
+              console.log(`☁️  Marketing doc uploaded to Drive: ${clientFolderName}/${finalName}`);
+            } catch (e) {
+              console.error("Marketing Drive upload failed (non-fatal):", (e as Error).message);
+            }
+          }
         } catch (e) {
           console.error("Marketing inbound media S3 save failed:", (e as Error).message);
         }

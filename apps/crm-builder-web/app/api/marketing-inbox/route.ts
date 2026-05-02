@@ -229,6 +229,42 @@ export async function POST(request: NextRequest) {
          VALUES ($1,$2,$3,'outbound',TRUE,NOW())`,
         [inboxMsgId, phone, docPlaceholder]
       );
+
+      // ── Drive backup (Stage 2) — same as inbound flow ──
+      // Staff-sent docs also go into the per-client Drive folder so the
+      // Marketing Drive folder shows the full conversation history.
+      const marketingDriveRoot = process.env.MARKETING_DOCS_DRIVE_FOLDER_ID || "";
+      if (marketingDriveRoot) {
+        try {
+          const { getOrCreateDriveSubfolder, uploadFileToDriveFolder } = await import("@/lib/google-drive");
+
+          // Look up contact name from any prior message on this phone.
+          const nameRes = await pool.query(
+            `SELECT contact_name FROM marketing_inbox
+             WHERE phone = $1 AND contact_name IS NOT NULL AND contact_name != ''
+             ORDER BY created_at DESC LIMIT 1`,
+            [phone]
+          ).catch(() => ({ rows: [] }));
+          const clientLabel = (nameRes.rows?.[0]?.contact_name || "")
+            .replace(/[\/\\<>:"|?*]/g, " ")
+            .trim();
+          const clientFolderName = clientLabel
+            ? `${clientLabel} (${cleanedPhone})`
+            : cleanedPhone;
+
+          const clientFolder = await getOrCreateDriveSubfolder(marketingDriveRoot, clientFolderName);
+          await uploadFileToDriveFolder({
+            folderId: clientFolder.id,
+            fileName: `[OUTBOUND] ${safeName}`,  // tag outbound so staff can tell
+            fileBuffer: buf,
+            mimeType: attachment.type || "application/octet-stream",
+          });
+          console.log(`☁️  Marketing OUTBOUND doc uploaded to Drive: ${clientFolderName}/[OUTBOUND] ${safeName}`);
+        } catch (e) {
+          console.error("Marketing outbound Drive upload failed (non-fatal):", (e as Error).message);
+        }
+      }
+
       return NextResponse.json({ ok: true, messageId: sendRes.messageId, mediaId: sendRes.mediaId });
     }
 
