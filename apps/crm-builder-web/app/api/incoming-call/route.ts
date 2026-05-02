@@ -171,7 +171,32 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const phone = String(body?.phone || "").trim();
   const contactName = body?.contact_name ? String(body.contact_name).trim() : null;
-  const calledAt = body?.called_at ? String(body.called_at) : null;
+  // Parse called_at robustly. Accepts:
+  //   - ISO strings ("2026-05-02T01:23:45Z")
+  //   - Unix epoch seconds ("1777696708") — common from Tasker's %TIMES
+  //   - Unix epoch milliseconds ("1777696708000")
+  //   - null / missing / unparseable → falls back to NOW() at insert time
+  // We coerce to ISO-8601 here so Postgres always gets a clean cast input.
+  let calledAtISO: string | null = null;
+  const rawCalledAt = body?.called_at ? String(body.called_at).trim() : null;
+  if (rawCalledAt) {
+    if (/^\d+$/.test(rawCalledAt)) {
+      // All digits → Unix timestamp. <= 13 digits = ms range, ~10 digits = seconds.
+      const num = Number(rawCalledAt);
+      const ms = rawCalledAt.length <= 11 ? num * 1000 : num;
+      const d = new Date(ms);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2000 && d.getFullYear() < 2100) {
+        calledAtISO = d.toISOString();
+      }
+    } else {
+      // Try as ISO / native Date parse
+      const d = new Date(rawCalledAt);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2000 && d.getFullYear() < 2100) {
+        calledAtISO = d.toISOString();
+      }
+    }
+    // If still null, we just ignore and let NOW() fill in (don't fail the request)
+  }
   const sendWelcome = body?.send_welcome !== false; // default true
 
   if (!phone) {
@@ -193,7 +218,7 @@ export async function POST(request: NextRequest) {
       `INSERT INTO call_log
         (id, direction, phone, contact_name, source, called_at, logged_by_name)
        VALUES ($1, 'inbound', $2, $3, 'tasker', COALESCE($4::timestamptz, NOW()), $5)`,
-      [callId, cleanPhone, contactName, calledAt, "Tasker (auto)"]
+      [callId, cleanPhone, contactName, calledAtISO, "Tasker (auto)"]
     );
 
     // Bump the lead row if this phone is already in marketing_leads
