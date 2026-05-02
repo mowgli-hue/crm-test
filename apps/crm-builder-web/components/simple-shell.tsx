@@ -688,6 +688,27 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [accountingPaymentFilter, setAccountingPaymentFilter] = useState<"all" | "pending" | "paid">("all");
   const [accountingAmount, setAccountingAmount] = useState<Record<string, string>>({});
   const [accountingStatus, setAccountingStatus] = useState("");
+  // Manual income entries — staff can add payments not tied to a case
+  const [manualEntries, setManualEntries] = useState<Array<{
+    id: string;
+    payment_date: string;
+    amount: number | string;
+    client_name: string;
+    description: string;
+    method: string;
+    added_by: string;
+    case_id: string | null;
+    created_at: string;
+  }>>([]);
+  const [showManualEntryModal, setShowManualEntryModal] = useState(false);
+  const [manualEntryDraft, setManualEntryDraft] = useState({
+    payment_date: new Date().toISOString().slice(0, 10),
+    amount: "",
+    client_name: "",
+    description: "",
+    method: "Interac",
+  });
+  const [manualEntrySaving, setManualEntrySaving] = useState(false);
   const [importStatus, setImportStatus] = useState("");
   const [importRunning, setImportRunning] = useState(false);
   const [accountingPage, setAccountingPage] = useState(0);
@@ -1012,6 +1033,16 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCaseId]: d.comments }));
     }).catch(() => {});
   }, [selectedCaseId]);
+
+  // Load manual accounting entries when Accounting screen opens. Refresh
+  // whenever screen changes back to "accounting" so newly-added entries by
+  // other staff show up without a hard reload.
+  useEffect(() => {
+    if (screen !== "accounting") return;
+    apiFetch(`/accounting/manual-entry`).then(r => r?.json()).then(d => {
+      if (Array.isArray(d?.entries)) setManualEntries(d.entries);
+    }).catch(() => {});
+  }, [screen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -8331,6 +8362,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 const allCollected = allWithFees.reduce((s, c) => s + Number((c as any).amountPaid || 0), 0);
                 const allTotal = allWithFees.reduce((s, c) => s + Number(c.servicePackage?.retainerAmount || (c as any).totalCharges || 0), 0);
 
+                // Manual income entries — fold into totals so the dashboard
+                // numbers reflect ALL income sources, not just case-derived ones.
+                const todayStrISO = todayStr; // YYYY-MM-DD
+                const manualToday = manualEntries.filter(e => String(e.payment_date).slice(0,10) === todayStrISO);
+                const manualTodayTotal = manualToday.reduce((s, e) => s + Number(e.amount || 0), 0);
+                const manualAllTotal = manualEntries.reduce((s, e) => s + Number(e.amount || 0), 0);
+                const totalCollectedToday = todayCollected + manualTodayTotal;
+                const totalCollectedAll = allCollected + manualAllTotal;
+
                 const q = accountingSearch.trim().toLowerCase();
                 const filtered = allWithFees.filter((c) => {
                   const matchText = !q || `${c.id} ${c.client} ${c.formType}`.toLowerCase().includes(q);
@@ -8347,7 +8387,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   <>
                     {/* Today summary */}
                     <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{todayLabel}</p>
+                      <div className="flex justify-between items-start">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{todayLabel}</p>
+                        <button
+                          onClick={() => {
+                            setManualEntryDraft({
+                              payment_date: new Date().toISOString().slice(0, 10),
+                              amount: "",
+                              client_name: "",
+                              description: "",
+                              method: "Interac",
+                            });
+                            setShowManualEntryModal(true);
+                          }}
+                          className="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-bold hover:bg-slate-700">
+                          + Add Entry
+                        </button>
+                      </div>
                       <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="rounded-lg bg-slate-50 p-3">
                           <p className="text-[10px] text-slate-400 font-semibold uppercase">New Today</p>
@@ -8355,11 +8411,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         </div>
                         <div className="rounded-lg bg-slate-50 p-3">
                           <p className="text-[10px] text-slate-400 font-semibold uppercase">Collected Today</p>
-                          <p className="text-xl font-bold text-emerald-700 mt-0.5">${todayCollected.toLocaleString()}</p>
+                          <p className="text-xl font-bold text-emerald-700 mt-0.5">${totalCollectedToday.toLocaleString()}</p>
+                          {manualTodayTotal > 0 && (
+                            <p className="text-[9px] text-slate-400 mt-0.5">incl. ${manualTodayTotal.toLocaleString()} manual</p>
+                          )}
                         </div>
                         <div className="rounded-lg bg-slate-50 p-3">
                           <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Collected</p>
-                          <p className="text-xl font-bold text-slate-900 mt-0.5">${allCollected.toLocaleString()}</p>
+                          <p className="text-xl font-bold text-slate-900 mt-0.5">${totalCollectedAll.toLocaleString()}</p>
+                          {manualAllTotal > 0 && (
+                            <p className="text-[9px] text-slate-400 mt-0.5">incl. ${manualAllTotal.toLocaleString()} manual</p>
+                          )}
                         </div>
                         <div className="rounded-lg bg-slate-50 p-3">
                           <p className="text-[10px] text-slate-400 font-semibold uppercase">Outstanding</p>
@@ -8367,6 +8429,45 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         </div>
                       </div>
                     </div>
+
+                    {/* Manual income entries */}
+                    {manualEntries.length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">💰 Manual Entries</p>
+                        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
+                          {manualEntries.slice(0, 50).map((e) => (
+                            <div key={e.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap group">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-slate-900">{e.client_name || "—"}</p>
+                                <p className="text-xs text-slate-400">
+                                  {String(e.payment_date).slice(0,10)}
+                                  {e.method && <> · {e.method}</>}
+                                  {e.description && <> · <span className="text-slate-500">{e.description}</span></>}
+                                  {e.added_by && <> · added by {e.added_by}</>}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-sm font-bold text-emerald-700">${Number(e.amount || 0).toLocaleString()}</span>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm(`Delete entry for ${e.client_name} ($${Number(e.amount).toLocaleString()})?`)) return;
+                                    const res = await apiFetch(`/accounting/manual-entry?id=${encodeURIComponent(e.id)}`, { method: "DELETE" });
+                                    if (res?.ok) {
+                                      setManualEntries(prev => prev.filter(x => x.id !== e.id));
+                                    }
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 text-xs text-rose-500 hover:text-rose-700 transition-opacity">
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {manualEntries.length > 50 && (
+                          <p className="text-[10px] text-slate-400 mt-1 text-center">Showing 50 most recent · {manualEntries.length} total</p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Today's new cases - quick entry */}
                     {todayCases.length > 0 && (
@@ -9912,6 +10013,124 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           </div>
         </main>
       </div>
+
+      {/* Manual accounting entry modal */}
+      {showManualEntryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => !manualEntrySaving && setShowManualEntryModal(false)}>
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-slate-900 px-4 py-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-white">💰 Add Manual Entry</p>
+              {!manualEntrySaving && (
+                <button onClick={() => setShowManualEntryModal(false)} className="text-slate-400 hover:text-white text-xl">✕</button>
+              )}
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Date <span className="text-red-500">*</span></label>
+                <input
+                  type="date"
+                  value={manualEntryDraft.payment_date}
+                  onChange={e => setManualEntryDraft(prev => ({ ...prev, payment_date: e.target.value }))}
+                  disabled={manualEntrySaving}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Amount <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={manualEntryDraft.amount}
+                    onChange={e => setManualEntryDraft(prev => ({ ...prev, amount: e.target.value }))}
+                    disabled={manualEntrySaving}
+                    placeholder="0.00"
+                    className="w-full rounded-lg border border-slate-200 pl-7 pr-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Client Name <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={manualEntryDraft.client_name}
+                  onChange={e => setManualEntryDraft(prev => ({ ...prev, client_name: e.target.value }))}
+                  disabled={manualEntrySaving}
+                  placeholder="e.g. Aman Kumar"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Method</label>
+                <select
+                  value={manualEntryDraft.method}
+                  onChange={e => setManualEntryDraft(prev => ({ ...prev, method: e.target.value }))}
+                  disabled={manualEntrySaving}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50">
+                  <option>Interac</option>
+                  <option>Cash</option>
+                  <option>Cheque</option>
+                  <option>Card</option>
+                  <option>Wire</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Description (optional)</label>
+                <textarea
+                  value={manualEntryDraft.description}
+                  onChange={e => setManualEntryDraft(prev => ({ ...prev, description: e.target.value }))}
+                  disabled={manualEntrySaving}
+                  rows={2}
+                  placeholder="What is this payment for?"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50 leading-relaxed"
+                />
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowManualEntryModal(false)}
+                  disabled={manualEntrySaving}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const amt = Number(manualEntryDraft.amount);
+                    if (!manualEntryDraft.payment_date || !Number.isFinite(amt) || amt <= 0 || !manualEntryDraft.client_name.trim()) {
+                      setCaseActionStatus("❌ Please fill date, amount, and client name");
+                      setTimeout(() => setCaseActionStatus(""), 3000);
+                      return;
+                    }
+                    setManualEntrySaving(true);
+                    const res = await apiFetch(`/accounting/manual-entry`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(manualEntryDraft),
+                    });
+                    if (res?.ok) {
+                      // Reload list
+                      const d = await apiFetch(`/accounting/manual-entry`).then(r => r?.json()).catch(() => ({}));
+                      if (Array.isArray(d?.entries)) setManualEntries(d.entries);
+                      setShowManualEntryModal(false);
+                      setCaseActionStatus("✅ Entry added");
+                    } else {
+                      const err = await res?.json().catch(() => ({}));
+                      setCaseActionStatus(`❌ ${err.error || "Failed to add entry"}`);
+                    }
+                    setManualEntrySaving(false);
+                    setTimeout(() => setCaseActionStatus(""), 4000);
+                  }}
+                  disabled={manualEntrySaving || !manualEntryDraft.payment_date || !manualEntryDraft.amount || !manualEntryDraft.client_name.trim()}
+                  className="rounded-lg bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
+                  {manualEntrySaving ? "Saving…" : "💾 Save Entry"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AI Result Modal */}
       {aiResult && (
