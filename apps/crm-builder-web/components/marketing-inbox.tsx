@@ -34,7 +34,7 @@ const FORM_TYPES = [
   "PR Card Renewal", "Citizenship", "LMIA Work Permit", "Work Permit",
 ];
 
-export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; apiFetch: any }) {
+export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUser: any; apiFetch: any; onNewChat?: () => void }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [leads, setLeads] = useState<Record<string, Lead>>({});
   const [thread, setThread] = useState<string | null>(null);
@@ -206,10 +206,20 @@ export function MarketingInbox({ sessionUser, apiFetch }: { sessionUser: any; ap
               {filteredPhones.filter(p=>allThreads[p].some(m=>!m.is_read&&m.direction==="inbound")).length} unread
             </span>
           </div>
-          {/* Search */}
-          <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="🔍 Search name, message, phone..."
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-purple-400 mb-2" />
+          {/* Search + New Chat */}
+          <div className="flex gap-2 mb-2">
+            <input value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="🔍 Search name, message, phone..."
+              className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-purple-400" />
+            {onNewChat && (
+              <button
+                onClick={onNewChat}
+                className="rounded-lg bg-purple-600 text-white px-3 py-1.5 text-xs font-bold hover:bg-purple-700 shrink-0"
+                title="Start a new conversation">
+                + New Chat
+              </button>
+            )}
+          </div>
           {/* Filter tabs */}
           <div className="flex gap-1">
             {(["all","unread","read","archived"] as const).map(f=>(

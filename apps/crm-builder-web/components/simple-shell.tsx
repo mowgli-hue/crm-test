@@ -509,6 +509,21 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [newtonBriefing, setNewtonBriefing] = useState<{loaded:boolean; data:any}>({loaded:false, data:null});
   const [inboxSearch, setInboxSearch] = useState<Record<string,string>>({});
   const [inboxGlobalSearch, setInboxGlobalSearch] = useState("");
+  // ── New Chat modal (works for both Processing and Marketing inboxes) ──
+  // Staff clicks "+ New Chat" → modal collects phone + name + service →
+  // creates a marketing lead (so it shows in Lead Pipeline) AND sends a
+  // first WhatsApp message. We try a Meta-approved template first (works
+  // for any number outside 24h window). If template send fails, we fall
+  // back to free-form text — that works only if recipient messaged us in
+  // last 24h, otherwise Meta rejects.
+  const [showNewChatModal, setShowNewChatModal] = useState<null | "inbox" | "marketing-inbox">(null);
+  const [newChatDraft, setNewChatDraft] = useState({
+    phone: "",
+    name: "",
+    service: "",
+    message: "",
+  });
+  const [newChatSending, setNewChatSending] = useState(false);
   const [inboxReadFilter, setInboxReadFilter] = useState<"all"|"unread"|"read">("all");
   const [inboxAttachment, setInboxAttachment] = useState<Record<string,{name:string;type:string;data:string}|null>>({});
   const [aiResult, setAiResult] = useState<{caseId:string;text:string;action:string}|null>(null);
@@ -4876,7 +4891,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
           <div className="space-y-4">
           {screen === "marketing-inbox" ? (
-              <MarketingInbox sessionUser={sessionUser} apiFetch={apiFetch} />
+              <MarketingInbox
+                sessionUser={sessionUser}
+                apiFetch={apiFetch}
+                onNewChat={() => {
+                  setNewChatDraft({ phone: "", name: "", service: "", message: "" });
+                  setShowNewChatModal("marketing-inbox");
+                }}
+              />
             ) : screen === "marketing-leads" ? (
               <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "marketing-dashboard" ? (
@@ -8898,12 +8920,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               >
                   {/* Global inbox search */}
                   <div className="px-3 py-2 border-b border-slate-100 bg-white shrink-0">
-                    <input
-                      value={inboxGlobalSearch||""}
-                      onChange={e=>setInboxGlobalSearch(e.target.value)}
-                      placeholder="🔍 Search all conversations..."
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400 mb-2"
-                    />
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        value={inboxGlobalSearch||""}
+                        onChange={e=>setInboxGlobalSearch(e.target.value)}
+                        placeholder="🔍 Search all conversations..."
+                        className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
+                      />
+                      <button
+                        onClick={() => {
+                          setNewChatDraft({ phone: "", name: "", service: "", message: "" });
+                          setShowNewChatModal("inbox");
+                        }}
+                        className="rounded-lg bg-emerald-600 text-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-700 shrink-0"
+                        title="Start a new conversation">
+                        + New Chat
+                      </button>
+                    </div>
                     {/* Read/unread filter tabs */}
                     <div className="flex gap-1">
                       {(["all","unread","read"] as const).map(f=>{
@@ -10013,6 +10046,132 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           </div>
         </main>
       </div>
+
+      {/* New Chat modal — start a fresh conversation from either inbox */}
+      {showNewChatModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => !newChatSending && setShowNewChatModal(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className={`px-4 py-3 flex items-center justify-between ${showNewChatModal === "marketing-inbox" ? "bg-purple-700" : "bg-emerald-700"}`}>
+              <p className="text-sm font-bold text-white">
+                💬 New Chat — {showNewChatModal === "marketing-inbox" ? "Marketing" : "Processing"} Inbox
+              </p>
+              {!newChatSending && (
+                <button onClick={() => setShowNewChatModal(null)} className="text-white/70 hover:text-white text-xl leading-none">✕</button>
+              )}
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
+                Starts a new WhatsApp conversation + creates a Lead Pipeline entry.
+                If recipient hasn't messaged us in 24h, the welcome template gets sent
+                instead of your custom message.
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Phone <span className="text-red-500">*</span></label>
+                <input
+                  type="tel"
+                  value={newChatDraft.phone}
+                  onChange={e => setNewChatDraft(prev => ({ ...prev, phone: e.target.value }))}
+                  disabled={newChatSending}
+                  placeholder="+1 604 123 4567"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50"
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Include country code (10-digit numbers assumed Canada/US)</p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={newChatDraft.name}
+                  onChange={e => setNewChatDraft(prev => ({ ...prev, name: e.target.value }))}
+                  disabled={newChatSending}
+                  placeholder="e.g. Aman Kumar"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">Service Interest (optional)</label>
+                <select
+                  value={newChatDraft.service}
+                  onChange={e => setNewChatDraft(prev => ({ ...prev, service: e.target.value }))}
+                  disabled={newChatSending}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50">
+                  <option value="">— Select service —</option>
+                  <option>Work Permit</option>
+                  <option>PGWP</option>
+                  <option>SOWP</option>
+                  <option>LMIA Work Permit</option>
+                  <option>BOWP</option>
+                  <option>Study Permit</option>
+                  <option>Study Permit Extension</option>
+                  <option>PR / Sponsorship</option>
+                  <option>Express Entry</option>
+                  <option>Visitor Visa</option>
+                  <option>Super Visa</option>
+                  <option>Visitor Record</option>
+                  <option>Citizenship</option>
+                  <option>PR Card Renewal</option>
+                  <option>Home Care Worker</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">First Message (optional)</label>
+                <textarea
+                  value={newChatDraft.message}
+                  onChange={e => setNewChatDraft(prev => ({ ...prev, message: e.target.value }))}
+                  disabled={newChatSending}
+                  rows={3}
+                  placeholder="Leave blank to send the welcome template..."
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-emerald-400 disabled:bg-slate-50 leading-relaxed"
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {newChatDraft.message.trim() ? "Will try sending this; falls back to welcome template if outside 24h window" : "Will send welcome template (works for any new number)"}
+                </p>
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowNewChatModal(null)}
+                  disabled={newChatSending}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!newChatDraft.phone.trim() || !newChatDraft.name.trim()) {
+                      setCaseActionStatus("❌ Phone and name are required");
+                      setTimeout(() => setCaseActionStatus(""), 3000);
+                      return;
+                    }
+                    setNewChatSending(true);
+                    const res = await apiFetch(`/inbox/new-chat`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        ...newChatDraft,
+                        channel: showNewChatModal === "marketing-inbox" ? "marketing" : "inbox",
+                      }),
+                    });
+                    if (res?.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      setShowNewChatModal(null);
+                      setCaseActionStatus(`✅ Message sent (${data.method || "ok"}) to ${newChatDraft.name}`);
+                      setNewChatDraft({ phone: "", name: "", service: "", message: "" });
+                    } else {
+                      const err = await res?.json().catch(() => ({}));
+                      setCaseActionStatus(`❌ ${err.error || "Failed to send"}`);
+                    }
+                    setNewChatSending(false);
+                    setTimeout(() => setCaseActionStatus(""), 5000);
+                  }}
+                  disabled={newChatSending || !newChatDraft.phone.trim() || !newChatDraft.name.trim()}
+                  className={`rounded-lg text-white px-4 py-1.5 text-xs font-bold disabled:opacity-50 ${showNewChatModal === "marketing-inbox" ? "bg-purple-600 hover:bg-purple-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+                  {newChatSending ? "Sending…" : "💬 Start Chat"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual accounting entry modal */}
       {showManualEntryModal && (
