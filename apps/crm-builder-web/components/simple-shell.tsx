@@ -4891,14 +4891,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
           <div className="space-y-4">
           {screen === "marketing-inbox" ? (
-              <MarketingInbox
-                sessionUser={sessionUser}
-                apiFetch={apiFetch}
-                onNewChat={() => {
-                  setNewChatDraft({ phone: "", name: "", service: "", message: "" });
-                  setShowNewChatModal("marketing-inbox");
-                }}
-              />
+              <section className="h-[calc(100vh-8rem)] rounded-2xl border border-slate-200 overflow-hidden bg-white">
+                <MarketingInbox
+                  sessionUser={sessionUser}
+                  apiFetch={apiFetch}
+                  onNewChat={() => {
+                    setNewChatDraft({ phone: "", name: "", service: "", message: "" });
+                    setShowNewChatModal("marketing-inbox");
+                  }}
+                />
+              </section>
             ) : screen === "marketing-leads" ? (
               <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "marketing-dashboard" ? (
