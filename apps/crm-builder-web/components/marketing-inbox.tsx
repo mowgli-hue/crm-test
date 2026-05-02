@@ -68,6 +68,16 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  // Ref to the messages scroll container — used to check whether the user
+  // is currently at/near the bottom before we auto-scroll on new messages.
+  // If they've scrolled up to read history, we DON'T pull them back.
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the user is "stuck" to the bottom of the chat. We update
+  // this on every scroll. Initially true (so opening a thread scrolls to
+  // bottom). Only the scroll handler flips it to false.
+  const isAtBottomRef = useRef(true);
+  // Manual refresh button state (so we can show a spinner on click)
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = () => apiFetch("/marketing-inbox").then((r:any)=>r?.json()).then((d:any)=>{
     if(d.messages) setMessages(d.messages);
@@ -75,8 +85,48 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
     setLoaded(true);
   }).catch(()=>setLoaded(true));
 
+  // Manual refresh — same as `load` but with visual feedback so staff knows
+  // it actually ran. Useful when polling feels stale.
+  const manualRefresh = async () => {
+    setRefreshing(true);
+    try { await load(); } finally {
+      // Tiny min-duration so the spinner doesn't flicker on fast networks
+      setTimeout(() => setRefreshing(false), 250);
+    }
+  };
+
   useEffect(()=>{ load(); const t=setInterval(load,5000); return ()=>clearInterval(t); },[]);
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[thread,messages]);
+
+  // ── Scroll behavior ──
+  // When THREAD changes (user clicked a different conversation) → always
+  // jump to bottom on initial open. Mark them as "at bottom" so the next
+  // poll's auto-scroll behavior is correct.
+  useEffect(() => {
+    if (!thread) return;
+    // Use requestAnimationFrame so DOM has time to render messages first
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      isAtBottomRef.current = true;
+    });
+  }, [thread]);
+
+  // When MESSAGES change (poll fetched new ones, or staff sent a reply):
+  // ONLY auto-scroll if the user is already near the bottom. If they've
+  // scrolled up to read history, leave them alone — yanking them down
+  // mid-read is the bug we're fixing.
+  useEffect(() => {
+    if (!isAtBottomRef.current) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Scroll handler tracks "near bottom" state. Threshold of 80px gives some
+  // tolerance — if user is within 80px of bottom, treat it as "at bottom"
+  // so new incoming messages will still pull them down (typical chat UX).
+  const onMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isAtBottomRef.current = distanceFromBottom < 80;
+  };
 
   // Load checklists once on mount. Pulled from SERVICES catalog server-side
   // (single source of truth, also feeds the marketing AI's responses).
@@ -268,9 +318,20 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
               <p className="text-sm font-bold text-slate-900">📣 Marketing Inbox</p>
               <p className="text-[10px] text-slate-500">+1 236-501-3524 · New inquiries</p>
             </div>
-            <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">
-              {filteredPhones.filter(p=>allThreads[p].some(m=>!m.is_read&&m.direction==="inbound")).length} unread
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">
+                {filteredPhones.filter(p=>allThreads[p].some(m=>!m.is_read&&m.direction==="inbound")).length} unread
+              </span>
+              {/* Manual refresh — useful when the 5-sec poll feels stale or
+                  staff just sent a doc and wants confirmation immediately. */}
+              <button
+                onClick={manualRefresh}
+                disabled={refreshing}
+                title="Refresh now"
+                className="rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 px-2 py-1 text-xs">
+                <span className={`inline-block ${refreshing ? "animate-spin" : ""}`}>🔄</span>
+              </button>
+            </div>
           </div>
           {/* Search + New Chat */}
           <div className="flex gap-2 mb-2">
@@ -516,7 +577,7 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
           )}
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-[#f0f2f5]">
+          <div ref={messagesScrollRef} onScroll={onMessagesScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-[#f0f2f5]">
             {threadMsgs.map((m,idx)=>{
               const isOut = m.direction==="outbound";
               const time = new Date(m.created_at).toLocaleTimeString("en-CA",{hour:"2-digit",minute:"2-digit",timeZone:"America/Vancouver"});
