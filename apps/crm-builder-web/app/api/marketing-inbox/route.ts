@@ -147,13 +147,90 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, ai_enabled: !!enabled });
     }
 
-    // ── Default: send an outbound message ──
-    const { phone, message } = body;
-    if (!phone || !message) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+    // ── Default: send an outbound message (text and/or attachment) ──
+    //
+    // Accepts:
+    //   { phone, message }                      → text only (current behavior)
+    //   { phone, attachment: {...} }            → file only
+    //   { phone, message, attachment: {...} }   → file with caption
+    //
+    // Attachment shape: { name, type (mime), data (base64 string) }
+    //
+    // For attachments, we use the shared sendWhatsAppMedia helper which:
+    //   1. Uploads the file to Meta's /media endpoint
+    //   2. Sends a media message referencing the upload
+    // We pass `phoneNumberId: MARKETING_PHONE_ID` so the send goes via the
+    // Marketing WABA, not Processing. Same `[doc:...|s3=...]` format used in
+    // Processing inbox so the download button rendering is consistent.
+    const { phone, message, attachment } = body;
+    if (!phone) return NextResponse.json({ error: "Missing phone" }, { status: 400 });
+    if (!message && !attachment) return NextResponse.json({ error: "Either message or attachment required" }, { status: 400 });
 
     const cleanedPhone = phone.replace(/\D/g, "");
     if (!cleanedPhone) return NextResponse.json({ error: "Invalid phone" }, { status: 400 });
 
+    // ── Attachment path ──
+    if (attachment) {
+      // Decode base64
+      let buf: Buffer;
+      try {
+        const m = String(attachment.data || "").match(/^data:[^;]+;base64,(.*)$/);
+        const raw = m ? m[1] : String(attachment.data || "");
+        buf = Buffer.from(raw, "base64");
+      } catch {
+        return NextResponse.json({ error: "Invalid attachment data" }, { status: 400 });
+      }
+      if (!buf || buf.length === 0) return NextResponse.json({ error: "Empty attachment" }, { status: 400 });
+      if (buf.length > 16 * 1024 * 1024) return NextResponse.json({ error: "Attachment too large (16 MB max)" }, { status: 413 });
+
+      const { sendWhatsAppMedia } = await import("@/lib/whatsapp");
+      const { putObjectToS3, isS3StorageEnabled, normalizeFilename } = await import("@/lib/object-storage");
+
+      const sendRes = await sendWhatsAppMedia({
+        to: cleanedPhone,
+        fileBuffer: buf,
+        mimeType: attachment.type || "application/octet-stream",
+        filename: attachment.name || "attachment",
+        caption: typeof message === "string" && message.trim() ? message.trim() : undefined,
+        phoneNumberId: MARKETING_PHONE_ID,
+      });
+      if (!sendRes.success) {
+        return NextResponse.json({ error: sendRes.error || "Send failed" }, { status: 500 });
+      }
+
+      // Save to S3 (best-effort backup; non-fatal if it fails)
+      let s3Key = "";
+      if (isS3StorageEnabled()) {
+        try {
+          const safeName = normalizeFilename(attachment.name || "attachment");
+          s3Key = `companies/${user.companyId}/marketing-outbound/${Date.now()}-${safeName}`;
+          await putObjectToS3({ key: s3Key, content: buf, contentType: attachment.type || "application/octet-stream" });
+        } catch (e) {
+          console.error("Marketing outbound S3 save failed (non-fatal):", e);
+        }
+      }
+
+      const inboxMsgId = `mkt-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const kind = String(attachment.type || "").startsWith("image/") ? "image"
+                 : String(attachment.type || "").startsWith("audio/") ? "audio"
+                 : "document";
+      const safeName = String(attachment.name || "attachment").replace(/\|/g, "");
+      const captionPart = (typeof message === "string" && message.trim())
+        ? `|caption=${encodeURIComponent(message.trim().slice(0, 200))}`
+        : "";
+      const docPlaceholder = s3Key
+        ? `[doc:${inboxMsgId}|kind=${kind}|name=${encodeURIComponent(safeName)}|mime=${encodeURIComponent(attachment.type || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}${captionPart}]`
+        : `[doc:${inboxMsgId}|kind=${kind}|name=${encodeURIComponent(safeName)}|mime=${encodeURIComponent(attachment.type || "application/octet-stream")}|nos3=1${captionPart}]`;
+
+      await pool.query(
+        `INSERT INTO marketing_inbox (id, phone, message, direction, is_read, created_at)
+         VALUES ($1,$2,$3,'outbound',TRUE,NOW())`,
+        [inboxMsgId, phone, docPlaceholder]
+      );
+      return NextResponse.json({ ok: true, messageId: sendRes.messageId, mediaId: sendRes.mediaId });
+    }
+
+    // ── Text-only path (existing behavior, preserved) ──
     const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },

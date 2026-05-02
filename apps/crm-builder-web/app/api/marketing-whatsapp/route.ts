@@ -410,6 +410,7 @@ export async function POST(request: NextRequest) {
 
     const message = value.messages[0];
     const from = message.from;
+    const msgType = String(message?.type || "text"); // text, image, document, audio
     const text = message.text?.body || "";
     const contact = value.contacts?.[0];
     const contactName = contact?.profile?.name || "";
@@ -418,6 +419,64 @@ export async function POST(request: NextRequest) {
 
     if (text && from) {
       await handleMarketingMessage(from, text, contactName, referral);
+    } else if (from && (msgType === "image" || msgType === "document" || msgType === "audio")) {
+      // ── Inbound media on marketing number ──
+      // Save a placeholder row immediately so it shows up in the inbox.
+      // Then async: download from Meta → save to S3 → update placeholder
+      // with the full `[doc:...|s3=...]` format so the download button works.
+      // Same flow as the processing webhook handles inbound media.
+      const msgId = `mkt-in-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const docKind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
+      const docCaption = String(message[msgType]?.caption || message[msgType]?.filename || "").trim();
+      const captionPart = docCaption ? `|caption=${encodeURIComponent(docCaption)}` : "";
+      const placeholder = `[doc:${msgId}|kind=${docKind}|pending=1${captionPart}]`;
+
+      await ensureLead(from, contactName);
+      await saveMarketingMessage(from, placeholder, "inbound", contactName);
+
+      // ── Async: download + S3 upload + row update ──
+      // Don't await — webhook needs to return 200 to Meta within ~5s.
+      (async () => {
+        try {
+          const mediaObj = message[msgType];
+          if (!mediaObj?.id) return;
+
+          // Download from Meta. Two-step: get URL → fetch bytes.
+          const urlRes = await fetch(`https://graph.facebook.com/v18.0/${mediaObj.id}`, {
+            headers: { Authorization: `Bearer ${WA_TOKEN}` }
+          });
+          const urlData: any = await urlRes.json().catch(() => ({}));
+          if (!urlData?.url) return;
+
+          const fileRes = await fetch(urlData.url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+          const buffer = Buffer.from(await fileRes.arrayBuffer());
+          const mimeType: string = urlData.mime_type || "application/octet-stream";
+
+          const { putObjectToS3, isS3StorageEnabled, normalizeFilename } = await import("@/lib/object-storage");
+          if (!isS3StorageEnabled()) return;
+
+          const extMap: Record<string, string> = {
+            "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
+            "image/heic": "heic", "application/zip": "zip", "video/mp4": "mp4",
+            "audio/ogg": "ogg", "audio/mpeg": "mp3",
+          };
+          const ext = extMap[mimeType] || (mimeType.split("/")[1] || "bin").slice(0, 6);
+          const safeName = normalizeFilename(mediaObj.filename || `marketing-${from}-${Date.now()}.${ext}`);
+          const s3Key = `companies/newton/marketing-inbound/${Date.now()}-${safeName}`;
+
+          await putObjectToS3({ key: s3Key, content: buffer, contentType: mimeType });
+
+          const finalName = (mediaObj.filename || safeName).replace(/\|/g, "");
+          const updatedPlaceholder = `[doc:${msgId}|kind=${docKind}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(mimeType)}|s3=${encodeURIComponent(s3Key)}${captionPart}]`;
+
+          await pool.query(
+            `UPDATE marketing_inbox SET message = $1 WHERE id = $2`,
+            [updatedPlaceholder, msgId]
+          );
+        } catch (e) {
+          console.error("Marketing inbound media S3 save failed:", (e as Error).message);
+        }
+      })();
     }
 
     return NextResponse.json({ status: "ok" });

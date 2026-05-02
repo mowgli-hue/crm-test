@@ -49,6 +49,23 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   const [sending, setSending] = useState(false);
   const [convertingPhone, setConvertingPhone] = useState<string | null>(null);
   const [convertForm, setConvertForm] = useState<{ formType: string; assignedTo: string; leadEmail: string }>({ formType: "", assignedTo: "", leadEmail: "" });
+  // Attachment: when staff picks a file (📎 button), we stage it here. Send button
+  // will include it in the POST body. Same shape as Processing inbox uses.
+  const [attachment, setAttachment] = useState<{ name: string; type: string; data: string } | null>(null);
+  // Quick-checklists: services pulled from /api/marketing-inbox/checklist on first
+  // open. Each entry has the formatted message ready to send.
+  const [services, setServices] = useState<Array<{
+    key: string; displayName: string; emoji: string; category: string;
+    feeText: string; needsConsultation: boolean; message: string;
+  }>>([]);
+  const [showSidebar, setShowSidebar] = useState(true);
+  // Preview modal: when staff clicks a service, we open a modal showing the
+  // exact message we're about to send (so they can review/edit before commit).
+  const [previewService, setPreviewService] = useState<null | {
+    key: string; displayName: string; emoji: string; message: string;
+  }>(null);
+  const [previewEditedMessage, setPreviewEditedMessage] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -60,6 +77,15 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
 
   useEffect(()=>{ load(); const t=setInterval(load,5000); return ()=>clearInterval(t); },[]);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[thread,messages]);
+
+  // Load checklists once on mount. Pulled from SERVICES catalog server-side
+  // (single source of truth, also feeds the marketing AI's responses).
+  useEffect(() => {
+    apiFetch("/marketing-inbox/checklist")
+      .then((r: any) => r?.json())
+      .then((d: any) => { if (Array.isArray(d?.services)) setServices(d.services); })
+      .catch(() => {});
+  }, []);
 
   // Mark as read when opening a thread
   useEffect(() => {
@@ -153,24 +179,64 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
     setShowNameInput(null);
   };
 
-  const sendReply = async () => {
-    if(!reply.trim()||!thread) return;
+  // Send a reply. Optionally accepts a `messageOverride` so checklist preview
+  // modal can call this with the (possibly edited) checklist text without
+  // having to stuff it into the reply textarea first.
+  const sendReply = async (messageOverride?: string) => {
+    const text = (messageOverride !== undefined ? messageOverride : reply).trim();
+    if ((!text && !attachment) || !thread) return;
     setSending(true);
-    const text = reply.trim();
-    setReply("");
-    const res = await apiFetch("/marketing-inbox",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({phone:thread,message:text})
+
+    // Capture before clearing — failure path needs to restore them.
+    const att = attachment;
+
+    // Clear UI optimistically (will restore on failure).
+    if (messageOverride === undefined) setReply("");
+    setAttachment(null);
+
+    const payload: any = { phone: thread };
+    if (text) payload.message = text;
+    if (att) payload.attachment = att;
+
+    const res = await apiFetch("/marketing-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
-    if(res?.ok){
-      setMessages(prev=>[...prev,{
-        id:`tmp-${Date.now()}`,phone:thread,message:text,
-        direction:"outbound",contact_name:null,is_read:true,
-        created_at:new Date().toISOString()
+
+    if (res?.ok) {
+      const optimisticMessage = att
+        ? `[doc:tmp-${Date.now()}|kind=${att.type.startsWith("image/") ? "image" : "document"}|name=${encodeURIComponent(att.name)}|mime=${encodeURIComponent(att.type)}|pending=1${text ? `|caption=${encodeURIComponent(text)}` : ""}]`
+        : text;
+      setMessages(prev => [...prev, {
+        id: `tmp-${Date.now()}`, phone: thread, message: optimisticMessage,
+        direction: "outbound", contact_name: null, is_read: true,
+        created_at: new Date().toISOString(),
       }]);
+    } else {
+      // Restore on failure so staff doesn't lose their content
+      if (messageOverride === undefined) setReply(text);
+      if (att) setAttachment(att);
     }
     setSending(false);
+  };
+
+  // Read a File into base64 for the attachment payload. Same approach as
+  // Processing inbox — client-side encode, server-side decode.
+  const onPickFile = async (file: File) => {
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) {
+      alert("File too large (16 MB max)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      // result is "data:<mime>;base64,<data>" — strip the prefix
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      setAttachment({ name: file.name, type: file.type || "application/octet-stream", data: base64 });
+    };
+    reader.readAsDataURL(file);
   };
 
   const quickReplies = [
@@ -192,7 +258,7 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   };
 
   return (
-    <div className="flex h-full overflow-hidden bg-white">
+    <div className="flex h-full overflow-hidden bg-white relative">
       {/* LEFT: Thread list */}
       <div className={`flex flex-col border-r border-slate-100 ${thread?"hidden md:flex md:w-80 shrink-0":"w-full md:w-80 shrink-0"}`}>
         {/* Header */}
@@ -469,7 +535,60 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
                   )}
                   <div className={`flex ${isOut?"justify-end":"justify-start"} mb-1`}>
                     <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 shadow-sm ${isOut?"bg-[#d9fdd3] rounded-br-sm":"bg-white rounded-bl-sm border border-slate-100"}`}>
-                      <p className="text-sm text-slate-900 whitespace-pre-wrap break-words leading-relaxed">{m.message}</p>
+                      {(() => {
+                        // Detect new-format doc placeholder: [doc:msgId|kind=...|name=...|s3=...]
+                        // Same parser used in Processing Inbox + Case Comm tab.
+                        const text = String(m.message || "");
+                        if (text.startsWith("[doc:") && text.endsWith("]")) {
+                          const inner = text.slice(1, -1);
+                          const parts = inner.split("|");
+                          if (parts.length >= 2) {
+                            const obj: any = { msgId: parts[0].replace(/^doc:/, ""), pending: false };
+                            for (let i = 1; i < parts.length; i++) {
+                              const eq = parts[i].indexOf("=");
+                              if (eq < 0) continue;
+                              const k = parts[i].slice(0, eq);
+                              const v = parts[i].slice(eq + 1);
+                              if (k === "pending") obj.pending = v === "1" || v === "true";
+                              else { try { obj[k] = decodeURIComponent(v); } catch { obj[k] = v; } }
+                            }
+                            const icon = obj.kind === "image" ? "🖼️" : obj.kind === "audio" ? "🎵" : "📄";
+                            const label = obj.name || (obj.kind === "image" ? "Image" : obj.kind === "audio" ? "Voice message" : "Document");
+                            if (obj.s3) {
+                              return (
+                                <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-2 border border-emerald-200">
+                                  <span className="text-2xl">{icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-slate-800 truncate">{label}</p>
+                                    {obj.caption && obj.caption !== obj.name && (
+                                      <p className="text-[11px] text-slate-600 truncate">{obj.caption}</p>
+                                    )}
+                                    <a
+                                      href={`/api/inbox-attachment?id=${encodeURIComponent(obj.msgId)}`}
+                                      download={obj.name || ""}
+                                      className="inline-flex items-center gap-1 mt-0.5 text-[11px] font-bold text-emerald-700 hover:underline"
+                                    >
+                                      ⬇️ Download
+                                    </a>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            if (obj.pending) {
+                              return (
+                                <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-2 border border-amber-200">
+                                  <span className="text-2xl animate-pulse">{icon}</span>
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-800">{label} received</p>
+                                    <p className="text-[10px] text-amber-700">Uploading… download will appear shortly.</p>
+                                  </div>
+                                </div>
+                              );
+                            }
+                          }
+                        }
+                        return <p className="text-sm text-slate-900 whitespace-pre-wrap break-words leading-relaxed">{text}</p>;
+                      })()}
                       <div className="flex items-center justify-end gap-1 mt-0.5">
                         <span className="text-[10px] text-slate-400">{time}</span>
                         {isOut && <span className="text-[11px] text-blue-500">✓✓</span>}
@@ -494,13 +613,36 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
 
           {/* Reply box */}
           <div className="px-4 py-3 bg-white shrink-0">
+            {/* Attachment preview chip */}
+            {attachment && (
+              <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                <span className="text-lg">{attachment.type.startsWith("image/") ? "🖼️" : attachment.type.startsWith("audio/") ? "🎵" : "📄"}</span>
+                <span className="text-xs text-slate-700 truncate flex-1">{attachment.name}</span>
+                <span className="text-[10px] text-slate-400">{Math.round(((attachment.data.length * 3) / 4) / 1024)} KB</span>
+                <button onClick={() => setAttachment(null)} className="text-slate-400 hover:text-rose-500 text-sm leading-none">✕</button>
+              </div>
+            )}
             <div className="flex gap-2 items-end bg-slate-50 rounded-2xl border border-slate-200 px-3 py-2 focus-within:border-purple-400">
+              {/* Hidden file input + attach button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                style={{ display: "none" }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = ""; }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                title="Attach a file"
+                className="text-slate-500 hover:text-purple-600 disabled:opacity-40 shrink-0">
+                📎
+              </button>
               <textarea ref={textRef} value={reply} onChange={e=>setReply(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendReply();}}}
-                placeholder={`Reply to ${threadName(thread)}...`}
+                placeholder={attachment ? "Add a caption (optional)..." : `Reply to ${threadName(thread)}...`}
                 rows={1} style={{resize:"none"}}
                 className="flex-1 bg-transparent text-sm outline-none text-slate-900 placeholder-slate-400 max-h-32" />
-              <button onClick={sendReply} disabled={!reply.trim()||sending}
+              <button onClick={() => sendReply()} disabled={(!reply.trim() && !attachment) || sending}
                 className="bg-purple-600 text-white rounded-xl p-2 hover:bg-purple-700 disabled:opacity-40 shrink-0">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -515,6 +657,118 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
             <p className="text-4xl mb-3">📣</p>
             <p className="text-sm font-semibold text-slate-600">Marketing Inbox</p>
             <p className="text-xs text-slate-400 mt-1">New client inquiries via +1 236-501-3524</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Right Sidebar: Quick Checklists ── */}
+      {/* Always rendered (collapsible) so staff can browse services even with
+          no thread open. Click a service → preview modal → confirm send. */}
+      {showSidebar && services.length > 0 && (
+        <aside className="w-64 shrink-0 border-l border-slate-200 bg-slate-50 flex flex-col overflow-hidden">
+          <div className="px-3 py-2.5 border-b border-slate-200 bg-white shrink-0 flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">📋 Quick Checklists</p>
+            <button onClick={() => setShowSidebar(false)} className="text-slate-400 hover:text-slate-700 text-xs">✕</button>
+          </div>
+          <div className="px-3 py-2 text-[10px] text-slate-500 leading-relaxed border-b border-slate-100 bg-amber-50">
+            Click any service → preview → send to current thread.
+            Updates the lead's interest field too.
+          </div>
+          <div className="flex-1 overflow-y-auto py-2">
+            {/* Group by category for cleaner browsing */}
+            {(["work", "study", "visit", "pr", "other"] as const).map(cat => {
+              const inCat = services.filter(s => s.category === cat);
+              if (inCat.length === 0) return null;
+              const catLabel = cat === "work" ? "Work Permits"
+                : cat === "study" ? "Study"
+                : cat === "visit" ? "Visit / Super Visa"
+                : cat === "pr" ? "PR / Sponsorship"
+                : "Other";
+              return (
+                <div key={cat} className="mb-3">
+                  <p className="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">{catLabel}</p>
+                  {inCat.map(svc => (
+                    <button
+                      key={svc.key}
+                      disabled={!thread || sending}
+                      onClick={() => {
+                        if (!thread) return;
+                        setPreviewService({
+                          key: svc.key,
+                          displayName: svc.displayName,
+                          emoji: svc.emoji,
+                          message: svc.message || "",
+                        });
+                        setPreviewEditedMessage(svc.message || "");
+                      }}
+                      className="w-full px-3 py-2 text-left text-[11px] hover:bg-purple-50 disabled:opacity-50 flex items-start gap-2 group"
+                      title={!thread ? "Open a conversation first" : `Send ${svc.displayName} checklist`}>
+                      <span className="text-base shrink-0">{svc.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-800 truncate">{svc.displayName.split("(")[0].trim()}</p>
+                        <p className="text-[10px] text-slate-400 truncate">{svc.feeText}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      )}
+
+      {/* Sidebar collapsed → show toggle */}
+      {!showSidebar && services.length > 0 && (
+        <button
+          onClick={() => setShowSidebar(true)}
+          className="absolute right-3 top-3 z-10 rounded-lg bg-purple-600 text-white px-3 py-1.5 text-[11px] font-bold hover:bg-purple-700 shadow-md">
+          📋 Checklists
+        </button>
+      )}
+
+      {/* ── Preview modal: confirm-before-send for checklist quick actions ── */}
+      {previewService && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => { setPreviewService(null); setPreviewEditedMessage(""); }}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-purple-700 px-4 py-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-white">
+                {previewService.emoji} Send "{previewService.displayName.split("(")[0].trim()}" Checklist
+              </p>
+              <button onClick={() => { setPreviewService(null); setPreviewEditedMessage(""); }} className="text-white/70 hover:text-white text-xl leading-none">✕</button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[11px] text-slate-600">
+                Preview the message below. Edit anything you want, then click <strong>Send</strong> to deliver it to <strong>{thread ? threadName(thread) : "this client"}</strong>.
+              </p>
+              <textarea
+                value={previewEditedMessage}
+                onChange={e => setPreviewEditedMessage(e.target.value)}
+                rows={16}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono leading-relaxed focus:outline-none focus:border-purple-400 bg-slate-50"
+              />
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => { setPreviewService(null); setPreviewEditedMessage(""); }}
+                  disabled={sending}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const text = previewEditedMessage.trim();
+                    if (!text || !thread) return;
+                    setPreviewService(null);
+                    setPreviewEditedMessage("");
+                    await sendReply(text);
+                  }}
+                  disabled={sending || !previewEditedMessage.trim()}
+                  className="rounded-lg bg-purple-600 text-white px-4 py-1.5 text-xs font-bold hover:bg-purple-700 disabled:opacity-50">
+                  💬 Send to Client
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

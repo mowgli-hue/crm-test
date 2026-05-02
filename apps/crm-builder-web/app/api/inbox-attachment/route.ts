@@ -59,11 +59,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing 'id' parameter" }, { status: 400 });
   }
 
-  // Look up the inbox row
+  // Look up the inbox row — try processing-side whatsapp_inbox first,
+  // then fall back to marketing_inbox. This way both sources of [doc:...]
+  // placeholders work through the same /api/inbox-attachment?id=... URL.
   let row: any = null;
   try {
-    const r = await pool.query(`SELECT id, message FROM whatsapp_inbox WHERE id = $1`, [id]);
-    row = r.rows[0];
+    const r1 = await pool.query(`SELECT id, message FROM whatsapp_inbox WHERE id = $1`, [id]);
+    row = r1.rows[0];
+    if (!row) {
+      const r2 = await pool.query(`SELECT id, message FROM marketing_inbox WHERE id = $1`, [id]).catch(() => ({ rows: [] }));
+      row = r2.rows[0];
+    }
   } catch (e) {
     console.error("[inbox-attachment] DB lookup failed:", (e as Error).message);
     return NextResponse.json({ error: "Lookup failed" }, { status: 500 });
