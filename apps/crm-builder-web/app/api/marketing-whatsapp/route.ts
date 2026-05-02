@@ -462,7 +462,11 @@ export async function POST(request: NextRequest) {
           };
           const ext = extMap[mimeType] || (mimeType.split("/")[1] || "bin").slice(0, 6);
           const safeName = normalizeFilename(mediaObj.filename || `marketing-${from}-${Date.now()}.${ext}`);
-          const s3Key = `companies/newton/marketing-inbound/${Date.now()}-${safeName}`;
+          // Phone-based folder structure makes it easier to find a specific
+          // client's history later and keeps S3 organized.
+          // Format: companies/newton/marketing-inbound/{phone}/{ts}-{filename}
+          const phoneFolder = String(from).replace(/\D/g, "") || "unknown";
+          const s3Key = `companies/newton/marketing-inbound/${phoneFolder}/${Date.now()}-${safeName}`;
 
           await putObjectToS3({ key: s3Key, content: buffer, contentType: mimeType });
 

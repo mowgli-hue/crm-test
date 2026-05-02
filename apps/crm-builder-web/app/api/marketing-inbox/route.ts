@@ -203,7 +203,9 @@ export async function POST(request: NextRequest) {
       if (isS3StorageEnabled()) {
         try {
           const safeName = normalizeFilename(attachment.name || "attachment");
-          s3Key = `companies/${user.companyId}/marketing-outbound/${Date.now()}-${safeName}`;
+          // Phone-based folder structure (same convention as inbound).
+          const phoneFolder = String(cleanedPhone).replace(/\D/g, "") || "unknown";
+          s3Key = `companies/${user.companyId}/marketing-outbound/${phoneFolder}/${Date.now()}-${safeName}`;
           await putObjectToS3({ key: s3Key, content: buf, contentType: attachment.type || "application/octet-stream" });
         } catch (e) {
           console.error("Marketing outbound S3 save failed (non-fatal):", e);
