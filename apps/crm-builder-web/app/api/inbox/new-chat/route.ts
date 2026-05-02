@@ -95,10 +95,20 @@ export async function POST(request: NextRequest) {
   //     This will succeed if recipient messaged us in last 24h, fail otherwise.
   //   - If text fails (or no message provided) → send approved template.
   //     Templates can be sent to any number anytime.
+  //
+  // CRITICAL: route through the right WABA based on inbox.
+  //   - Marketing inbox → WHATSAPP_MARKETING_PHONE_ID (templates approved here)
+  //   - Processing inbox → WHATSAPP_PHONE_NUMBER_ID (default)
+  // Templates are PER-WABA. Sending via the wrong WABA returns 132001
+  // "Template name does not exist in the translation".
+  const phoneNumberIdForSend = channel === "marketing"
+    ? (process.env.WHATSAPP_MARKETING_PHONE_ID || undefined)
+    : undefined;  // undefined → defaults to Processing
+
   let sendResult: { success: boolean; messageId?: string; error?: string; method?: string } = { success: false };
 
   if (message) {
-    const textRes = await sendWhatsAppText(phone, message);
+    const textRes = await sendWhatsAppText(phone, message, phoneNumberIdForSend);
     if (textRes.success) {
       sendResult = { ...textRes, method: "text" };
     } else {
@@ -108,19 +118,51 @@ export async function POST(request: NextRequest) {
   }
 
   if (!sendResult.success) {
-    // Use approved template. This works for any number.
-    const templateName = process.env.TASKER_WELCOME_TEMPLATE || "missed_call_welcome";
-    const tplRes = await sendWhatsAppTemplate({
-      to: phone,
-      templateName,
-      languageCode: "en",
-    });
+    // ── Pick template name based on channel ──
+    // Each WABA has its own approved templates with their own names:
+    //   - Marketing WABA  → `missed_call_welcome` (env: MARKETING_TEMPLATE_NAME)
+    //   - Processing WABA → `newton_intake`      (env: PROCESSING_TEMPLATE_NAME)
+    // Falls back to TASKER_WELCOME_TEMPLATE for backwards compat, then to
+    // the hardcoded default for whichever channel.
+    const templateName = channel === "marketing"
+      ? (process.env.MARKETING_TEMPLATE_NAME
+         || process.env.TASKER_WELCOME_TEMPLATE
+         || "missed_call_welcome")
+      : (process.env.PROCESSING_TEMPLATE_NAME
+         || "newton_intake");
+
+    // Try common language codes — Meta is strict about en vs en_US vs en_GB.
+    // Saves us from hardcoding the wrong one for either WABA.
+    const languagesToTry = ["en_US", "en", "en_GB"];
+    let tplRes: { success: boolean; messageId?: string; error?: string } = { success: false };
+    let lastError = "";
+
+    for (const lang of languagesToTry) {
+      tplRes = await sendWhatsAppTemplate({
+        to: phone,
+        templateName,
+        languageCode: lang,
+        phoneNumberId: phoneNumberIdForSend,
+      });
+      if (tplRes.success) break;
+      lastError = tplRes.error || "";
+      // Only keep retrying on "translation not found" — anything else is a
+      // real error (auth, network, etc.) that won't get fixed by lang change.
+      if (!/132001|translation/i.test(lastError)) break;
+    }
+
     if (tplRes.success) {
       sendResult = { ...tplRes, method: "template" };
     } else {
-      console.error(`❌ New chat: both text and template failed | template error: ${tplRes.error}`);
+      console.error(`❌ New chat: both text and template failed | template=${templateName} | error: ${lastError}`);
+      let userFacingError = lastError || "Failed to send message";
+      if (/132001|Template name does not exist/i.test(userFacingError)) {
+        userFacingError = `Template "${templateName}" not found on the ${channel === "marketing" ? "marketing" : "processing"} WABA. Check Meta Business Manager → Templates that this name and language are approved.`;
+      } else if (/24.hour|outside.*window/i.test(userFacingError)) {
+        userFacingError = "Outside the 24-hour reply window. Wait for the recipient to message first, or use the welcome template.";
+      }
       return NextResponse.json(
-        { error: tplRes.error || "Failed to send message", method_tried: "template" },
+        { error: userFacingError, method_tried: "template", channel, templateAttempted: templateName },
         { status: 500 }
       );
     }
