@@ -67,6 +67,7 @@ OTHER:
   • Passport Renewal: $350 (includes taxes)
   • WES Evaluation: $475
   • US Application: $265
+  • UK Visitor Visa (from Canada): $525 + UKVI fees on client's card
   • E-Visa: quoted after review
   • Travel Documents: quoted after review
   • Refugee Case: $4,000 (excluding taxes)
@@ -631,6 +632,29 @@ export const SERVICES: Record<string, ServiceInfo> = {
       "Any relatives in US (names if yes)",
     ],
     emoji: "🇺🇸",
+  },
+  UK_VISITOR_VISA: {
+    key: "UK_VISITOR_VISA",
+    displayName: "UK Visitor Visa (from Canada)",
+    category: "other",
+    feeText: "$525 processing (UKVI fees paid separately on client's card)",
+    feeAmount: 525,
+    needsConsultation: false,
+    eligibility: [
+      "Currently in Canada with valid status (PR / Study / Work / Visitor)",
+      "Visiting UK temporarily (tourism / family / short business trip)",
+      "Can show ties to home country (Canada job / studies / family)",
+    ],
+    checklist: [
+      "Passport (front, back, all stamped pages)",
+      "Current Canadian status (PR card / Study permit / Work permit)",
+      "Bank statement (recent 3 months)",
+      "Employment letter or Study enrolment letter",
+      "Travel itinerary / hotel booking (if available)",
+      "Invitation letter from UK host (if visiting family/friends)",
+      "Digital photo",
+    ],
+    emoji: "🇬🇧",
   },
   PASSPORT_RENEWAL: {
     key: "PASSPORT_RENEWAL",
