@@ -235,7 +235,32 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   });
 
   const threadMsgs = thread ? [...(allThreads[thread]||[])].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime()) : [];
-  const threadName = (phone: string) => allThreads[phone]?.[0]?.contact_name || editName[phone] || phone;
+  // Resolve the display name for a thread by checking multiple sources in
+  // priority order. Different staff actions store names in different places:
+  //   - "Save Name" button updates: marketing_leads.contact_name (canonical) +
+  //     messages' contact_name (denormalized for display)
+  //   - Convert-to-case sets the case client name AND lead contact_name
+  //   - WhatsApp's profile name auto-populates incoming message contact_name
+  //
+  // We check leads FIRST because it's the most reliable: saveName always
+  // upserts the lead row, but message-level updates can race with polling.
+  // Falls back to message-level name → in-memory edit → phone digits.
+  const threadName = (phone: string) => {
+    // 1. Lead row (most reliable; updated by saveName + convert)
+    const leadName = leads[phone]?.contact_name;
+    if (leadName && leadName.trim()) return leadName.trim();
+    // 2. WhatsApp profile name on the most recent inbound message
+    //    (use latest, not first — WhatsApp may update profile name over time)
+    const msgs = allThreads[phone] || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const n = msgs[i]?.contact_name;
+      if (n && String(n).trim()) return String(n).trim();
+    }
+    // 3. In-memory edit (just typed by staff, not saved yet to server)
+    if (editName[phone] && editName[phone].trim()) return editName[phone].trim();
+    // 4. Last resort: phone digits
+    return phone;
+  };
 
   const saveName = async (phone: string, name: string) => {
     await apiFetch("/marketing-inbox", {
