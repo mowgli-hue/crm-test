@@ -27,12 +27,17 @@ export async function sendWhatsAppTemplate(params: {
   to: string;
   templateName: string;
   languageCode: string;
-  components: Array<{
+  components?: Array<{
     type: string;
     parameters: Array<{ type: string; text?: string }>;
   }>;
+  phoneNumberId?: string;          // optional override — pass Marketing WABA's ID to send via marketing number
 }): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const phoneId = getPhoneNumberId();
+  // If caller passed a phone ID explicitly, use it. Otherwise default to
+  // Processing WABA (WHATSAPP_PHONE_NUMBER_ID). This lets the same function
+  // serve both inboxes — Processing-side calls use the default, Marketing-
+  // side calls pass `WHATSAPP_MARKETING_PHONE_ID` from env.
+  const phoneId = params.phoneNumberId || getPhoneNumberId();
   const token = getAccessToken();
   if (!phoneId || !token) return { success: false, error: "WhatsApp not configured" };
 
@@ -40,6 +45,7 @@ export async function sendWhatsAppTemplate(params: {
   if (!phone || phone.length < 10) return { success: false, error: "Invalid phone number" };
 
   try {
+    console.log(`📤 WA Template Send: to=${phone} | phoneId=${phoneId ? phoneId.slice(0,6)+"..." : "MISSING"} | template=${params.templateName} | lang=${params.languageCode} | hasParams=${(params.components?.length || 0) > 0}`);
     const res = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
@@ -51,7 +57,7 @@ export async function sendWhatsAppTemplate(params: {
         template: {
           name: params.templateName,
           language: { code: params.languageCode },
-          components: params.components
+          ...(params.components && params.components.length > 0 ? { components: params.components } : {})
         }
       })
     });
@@ -91,12 +97,14 @@ export async function deleteWhatsAppMessage(messageId: string): Promise<boolean>
   } catch { return false; }
 }
 
-export async function sendWhatsAppText(to: string, message: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const phoneId = getPhoneNumberId();
+export async function sendWhatsAppText(to: string, message: string, phoneNumberId?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  // phoneNumberId override allows callers to send from a different WABA
+  // (e.g., Marketing). Defaults to Processing's WHATSAPP_PHONE_NUMBER_ID.
+  const phoneId = phoneNumberId || getPhoneNumberId();
   const token = getAccessToken();
   console.log(`📤 WA Send: to=${to} | phoneId=${phoneId ? phoneId.slice(0,6)+"..." : "MISSING"} | token=${token ? "SET" : "MISSING"}`);
-  
-  if (!isWhatsAppConfigured()) {
+
+  if (!phoneId || !token) {
     console.error("❌ WhatsApp not configured — PHONE_NUMBER_ID or ACCESS_TOKEN missing");
     return { success: false, error: "WhatsApp not configured" };
   }
@@ -109,11 +117,11 @@ export async function sendWhatsAppText(to: string, message: string): Promise<{ s
   }
 
   try {
-    const res = await fetch(`${WHATSAPP_API_URL}/${getPhoneNumberId()}/messages`, {
+    const res = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${getAccessToken()}`
+        "Authorization": `Bearer ${token}`
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
@@ -159,8 +167,9 @@ export async function sendWhatsAppMedia(params: {
   mimeType: string;
   filename: string;
   caption?: string;
+  phoneNumberId?: string;          // optional override — see sendWhatsAppText
 }): Promise<{ success: boolean; messageId?: string; mediaId?: string; whatsappType?: string; error?: string }> {
-  const phoneId = getPhoneNumberId();
+  const phoneId = params.phoneNumberId || getPhoneNumberId();
   const token = getAccessToken();
   if (!phoneId || !token) {
     return { success: false, error: "WhatsApp not configured" };
