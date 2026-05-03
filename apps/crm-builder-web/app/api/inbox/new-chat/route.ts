@@ -131,6 +131,37 @@ export async function POST(request: NextRequest) {
       : (process.env.PROCESSING_TEMPLATE_NAME
          || "newton_intake");
 
+    // ── Build body parameters for templates that have variables ──
+    //
+    // Processing's `newton_intake` template body:
+    //   "Hi {{1}}! Welcome to Newton Immigration. Thank you for choosing
+    //    us for your {{2}} application. Our team will be guiding you
+    //    through every step. Please reply to confirm you received this
+    //    message."
+    //
+    // {{1}} = first name, {{2}} = service (e.g., "Study Permit").
+    //
+    // Marketing's `missed_call_welcome` has no body params (per Meta
+    // approval), so we send an empty components array which the lib then
+    // omits from the request body.
+    let templateComponents: Array<{ type: string; parameters: Array<{ type: string; text?: string }> }> | undefined;
+    if (channel === "inbox") {
+      // Use first word of name as {{1}} — full name can look awkward in the
+      // greeting "Hi John Smith!". If name is empty (it's required earlier
+      // but be defensive), fall back to "there".
+      const firstName = (name.split(/\s+/)[0] || "there").trim();
+      // {{2}} should be a friendly, human-readable service label. If staff
+      // didn't pick one, default to "immigration" — generic but works.
+      const serviceLabel = service && service.trim() ? service.trim() : "immigration";
+      templateComponents = [{
+        type: "body",
+        parameters: [
+          { type: "text", text: firstName },
+          { type: "text", text: serviceLabel },
+        ],
+      }];
+    }
+
     // Try common language codes — Meta is strict about en vs en_US vs en_GB.
     // Order matters: most Newton templates are approved as plain "en". Try
     // that first to avoid wasted API calls and noisy 132001 errors in logs.
@@ -144,11 +175,13 @@ export async function POST(request: NextRequest) {
         templateName,
         languageCode: lang,
         phoneNumberId: phoneNumberIdForSend,
+        components: templateComponents,
       });
       if (tplRes.success) break;
       lastError = tplRes.error || "";
       // Only keep retrying on "translation not found" — anything else is a
-      // real error (auth, network, etc.) that won't get fixed by lang change.
+      // real error (auth, network, params mismatch, etc.) that won't get
+      // fixed by changing language.
       if (!/132001|translation/i.test(lastError)) break;
     }
 
@@ -159,6 +192,8 @@ export async function POST(request: NextRequest) {
       let userFacingError = lastError || "Failed to send message";
       if (/132001|Template name does not exist/i.test(userFacingError)) {
         userFacingError = `Template "${templateName}" not found on the ${channel === "marketing" ? "marketing" : "processing"} WABA. Check Meta Business Manager → Templates that this name and language are approved.`;
+      } else if (/132000|Number of parameters/i.test(userFacingError)) {
+        userFacingError = `Template "${templateName}" expects different parameters than provided. Verify the template body's {{N}} variables match what we're passing.`;
       } else if (/24.hour|outside.*window/i.test(userFacingError)) {
         userFacingError = "Outside the 24-hour reply window. Wait for the recipient to message first, or use the welcome template.";
       }
