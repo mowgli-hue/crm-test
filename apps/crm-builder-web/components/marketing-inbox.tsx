@@ -78,6 +78,10 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   const isAtBottomRef = useRef(true);
   // Manual refresh button state (so we can show a spinner on click)
   const [refreshing, setRefreshing] = useState(false);
+  // Payment summary indexed by last-10-digit phone — used to show "$X paid"
+  // tag on each thread in the left list. Pulled from /api/marketing-inbox/payments
+  // on mount + every minute. Light data (small JSON) so polling is cheap.
+  const [payments, setPayments] = useState<Record<string, { paidTotal: number; outstandingTotal: number; sources: string[] }>>({});
 
   const load = () => apiFetch("/marketing-inbox").then((r:any)=>r?.json()).then((d:any)=>{
     if(d.messages) setMessages(d.messages);
@@ -135,6 +139,21 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
       .then((r: any) => r?.json())
       .then((d: any) => { if (Array.isArray(d?.services)) setServices(d.services); })
       .catch(() => {});
+  }, []);
+
+  // Load per-phone payment summary on mount + refresh every 60 sec.
+  // Used to show "$X paid" tag in left thread list. Slower poll than messages
+  // since payment data changes much less frequently than messages.
+  useEffect(() => {
+    const loadPayments = () => {
+      apiFetch("/marketing-inbox/payments")
+        .then((r: any) => r?.json())
+        .then((d: any) => { if (d?.summary) setPayments(d.summary); })
+        .catch(() => {});
+    };
+    loadPayments();
+    const t = setInterval(loadPayments, 60000);
+    return () => clearInterval(t);
   }, []);
 
   // Mark as read when opening a thread
@@ -415,6 +434,25 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
                           )}
                         </div>
                       )}
+                      {/* Payment tag — outside lead conditional since payment can
+                          exist for cases that aren't in the leads table. Shows
+                          {paid amount} or {paid /-{outstanding}}. Color = emerald
+                          if fully paid, blue if balance owed. */}
+                      {(() => {
+                        const phoneLast10 = String(phone).replace(/\D/g, "").slice(-10);
+                        const pay = payments[phoneLast10];
+                        if (!pay || pay.paidTotal <= 0) return null;
+                        const isFullyPaid = pay.outstandingTotal === 0;
+                        return (
+                          <div className="mt-0.5">
+                            <span className={`inline-flex text-[9px] font-bold px-1.5 py-0.5 rounded ${isFullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}
+                                  title={`Paid: $${pay.paidTotal.toLocaleString()}${pay.outstandingTotal > 0 ? ` · Outstanding: $${pay.outstandingTotal.toLocaleString()}` : ""}`}>
+                              💰 ${pay.paidTotal.toLocaleString()}
+                              {pay.outstandingTotal > 0 && <span className="opacity-70"> · -${pay.outstandingTotal.toLocaleString()}</span>}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       <p className="text-[11px] text-slate-400 truncate mt-0.5">
                         {waitMins!==null?"⚠️ Needs reply · ":lastMsg?.direction==="outbound"?"You: ":""}{lastMsg?.message?.slice(0,45)}
                       </p>
@@ -615,6 +653,35 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
                             }
                             const icon = obj.kind === "image" ? "🖼️" : obj.kind === "audio" ? "🎵" : "📄";
                             const label = obj.name || (obj.kind === "image" ? "Image" : obj.kind === "audio" ? "Voice message" : "Document");
+                            // Image previews: render inline thumbnail rather than a download
+                            // card. Click → opens full-size in new tab.
+                            // The /api/inbox-attachment endpoint streams from S3 with the
+                            // proper Content-Type so <img src> just works.
+                            if (obj.s3 && obj.kind === "image") {
+                              const src = `/api/inbox-attachment?id=${encodeURIComponent(obj.msgId)}`;
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <a href={src} target="_blank" rel="noopener noreferrer" className="block">
+                                    <img
+                                      src={src}
+                                      alt={label}
+                                      loading="lazy"
+                                      className="rounded-xl max-w-full max-h-72 object-cover border border-slate-200 hover:opacity-90 transition-opacity cursor-zoom-in"
+                                    />
+                                  </a>
+                                  {obj.caption && obj.caption !== obj.name && (
+                                    <p className="text-[11px] text-slate-600 px-1">{obj.caption}</p>
+                                  )}
+                                  <a
+                                    href={src}
+                                    download={obj.name || ""}
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:underline px-1"
+                                  >
+                                    ⬇️ Download {label}
+                                  </a>
+                                </div>
+                              );
+                            }
                             if (obj.s3) {
                               return (
                                 <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-2 border border-emerald-200">
