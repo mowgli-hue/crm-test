@@ -773,8 +773,10 @@ export const NEWTON_DOCS = `
 KEY FACTS:
 - Surrey office: 9850 King George Hub, Surrey, BC
 - Calgary office: 4715 88 Ave NE, Calgary, AB T3J 4C5
-- Calls: Surrey +1 604-897-5894 / +1 604-653-5031 / +1 (236) 877-2225
-- Calls: Calgary +1 604-907-0314 / +1 604-907-0218
+- Primary phone (regular calls): +1 604-653-5031
+- Other Surrey lines: +1 604-897-5894 / +1 (236) 877-2225
+- Calgary calls: +1 604-907-0314 / +1 604-907-0218
+- Marketing WhatsApp (this number): +1 236-501-3524 — chat only, does not accept incoming WhatsApp calls
 - Processing Team WhatsApp: +1 604-779-5700
 - Email: newtonimmigration@gmail.com
 - Interac: newtonimmigration@gmail.com (alt: navisandhu0297@gmail.com)
