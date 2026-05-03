@@ -304,7 +304,7 @@ export async function POST(request: NextRequest) {
       // 132001 ("Template name does not exist in the translation") when
       // language code doesn't match what's approved (e.g. "en" vs "en_US").
       const langPrimary = process.env.TASKER_WELCOME_TEMPLATE_LANG || "en";
-      const langCandidates = Array.from(new Set([langPrimary, "en_US", "en", "en_GB"]));
+      const langCandidates = Array.from(new Set([langPrimary, "en", "en_US", "en_GB"]));
       let result: { success: boolean; messageId?: string; error?: string } = { success: false };
       for (const lang of langCandidates) {
         result = await sendMarketingTemplate(cleanPhone, templateName, lang, []);

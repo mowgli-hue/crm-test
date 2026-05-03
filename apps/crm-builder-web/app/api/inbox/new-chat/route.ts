@@ -132,8 +132,9 @@ export async function POST(request: NextRequest) {
          || "newton_intake");
 
     // Try common language codes — Meta is strict about en vs en_US vs en_GB.
-    // Saves us from hardcoding the wrong one for either WABA.
-    const languagesToTry = ["en_US", "en", "en_GB"];
+    // Order matters: most Newton templates are approved as plain "en". Try
+    // that first to avoid wasted API calls and noisy 132001 errors in logs.
+    const languagesToTry = ["en", "en_US", "en_GB"];
     let tplRes: { success: boolean; messageId?: string; error?: string } = { success: false };
     let lastError = "";
 
