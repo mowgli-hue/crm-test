@@ -1059,6 +1059,53 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     }).catch(() => {});
   }, [screen]);
 
+  // ── Processing Inbox: load + auto-refresh ──
+  //
+  // Previously this was done inline inside the JSX render which created
+  // multiple polling timers (one per render) that never cleaned up. The
+  // result was archived/active tabs fighting each other on every poll —
+  // looked like the list was "glitching" / threads jumping around.
+  //
+  // Now: single useEffect tied to (screen, inboxShowArchived). Switching
+  // tabs cancels old timer + starts a fresh one for the new view. Ensures
+  // EXACTLY ONE poll runs at a time for the visible tab.
+  useEffect(() => {
+    if (screen !== "inbox") return;
+
+    const archivedQS = inboxShowArchived ? "?archived=1" : "";
+    let cancelled = false;
+
+    // Initial fetch
+    setInboxLoaded(false);
+    apiFetch(`/inbox${archivedQS}`, { cache: "no-store" })
+      .then(r => r?.json())
+      .then(d => {
+        if (cancelled) return;
+        setInboxMessages(d?.messages || []);
+        setInboxLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setInboxLoaded(true); });
+
+    // Keep refreshing every 5s until tab/screen changes
+    const t = setInterval(() => {
+      apiFetch(`/inbox${archivedQS}`, { cache: "no-store" })
+        .then(r => r?.json())
+        .then(d => {
+          if (cancelled) return;
+          if (d?.messages) setInboxMessages(d.messages);
+        })
+        .catch(() => {});
+    }, 5000);
+
+    // When screen changes OR inboxShowArchived flips, cleanup runs first:
+    // mark cancelled (so any in-flight fetches' .then's no-op) and clear
+    // timer. This is the critical fix vs the old broken inline version.
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [screen, inboxShowArchived]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const host = window.location.hostname.toLowerCase();
@@ -8983,18 +9030,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   }} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[10px] font-semibold hover:bg-white">↻</button>
                 </div>
 
-                {!inboxLoaded && (() => {
-                  apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" }).then(r => r.json()).then(d => { setInboxMessages(d.messages || []); setInboxLoaded(true); }).catch(()=>setInboxLoaded(true));
-                  // Auto-refresh inbox every 5 seconds
-                  const inboxTimer = setInterval(() => {
-                    apiFetch(`/inbox${inboxShowArchived ? "?archived=1" : ""}`, { cache: "no-store" })
-                      .then(r => r.json())
-                      .then(d => { if (d.messages) setInboxMessages(d.messages); })
-                      .catch(() => {});
-                  }, 5000);
-                  return () => clearInterval(inboxTimer);
-                  return <p className="text-xs text-slate-400 py-8 text-center">Loading...</p>;
-                })()}
+                {!inboxLoaded && (
+                  <p className="text-xs text-slate-400 py-8 text-center">Loading...</p>
+                )}
 
                 <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
                   {inboxLoaded && (() => {
