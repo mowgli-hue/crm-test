@@ -308,15 +308,30 @@ export function mergeAIIntoFormData(
     if (val !== undefined && val !== null && val !== "") merged[key] = val;
   };
 
+  // CODE-AWARE setIf: skips override when the regex mapper already produced
+  // a numeric IRCC code in this slot (e.g. mailing_country="511"). Without
+  // this, the AI parser's text values ("Canada", "BC", "Punjabi") would
+  // overwrite the numeric codes the v2 mapper carefully produced for IMM5710.
+  // Safe for non-PGWP forms: their mappers output text, so `existing` won't
+  // match /^\d+$/, and behavior falls through to the original setIf logic.
+  const setIfNotOverridingCode = (key: string, val: any) => {
+    if (val === undefined || val === null || val === "") return;
+    const existing = String(merged[key] ?? "");
+    // Treat 2+ digit numeric values as IRCC codes ("02", "511", "324", etc.).
+    // Single digits like "0"/"1" are checkbox flags, not codes — let those be overridden.
+    if (/^\d+$/.test(existing) && existing.length >= 2) return;
+    merged[key] = val;
+  };
+
   // Mailing address
   if (ai.mailing) {
     setIf("mailing_apt_unit", ai.mailing.apt_unit);
     setIf("mailing_street_num", ai.mailing.street_num);
     setIf("mailing_street_name", ai.mailing.street_name);
     setIf("mailing_city", ai.mailing.city);
-    setIf("mailing_province", ai.mailing.province);
+    setIfNotOverridingCode("mailing_province", ai.mailing.province);
     setIf("mailing_postal_code", ai.mailing.postal_code);
-    setIf("mailing_country", ai.mailing.country);
+    setIfNotOverridingCode("mailing_country", ai.mailing.country);
   }
 
   // Residential
@@ -328,7 +343,7 @@ export function mergeAIIntoFormData(
     setIf("residential_street_num", ai.residential.street_num);
     setIf("residential_street_name", ai.residential.street_name);
     setIf("residential_city", ai.residential.city);
-    setIf("residential_province", ai.residential.province);
+    setIfNotOverridingCode("residential_province", ai.residential.province);
   }
 
   // Spouse
@@ -358,7 +373,7 @@ export function mergeAIIntoFormData(
     setIf("edu_school_name", e.school_name);
     setIf("edu_field_of_study", e.field_of_study);
     setIf("edu_city", e.city);
-    setIf("edu_country", e.country);
+    setIfNotOverridingCode("edu_country", e.country);
     setIf("edu_from_year", e.from_year);
     setIf("edu_from_month", e.from_month);
     setIf("edu_to_year", e.to_year);
@@ -369,7 +384,22 @@ export function mergeAIIntoFormData(
 
   // Employment (full array — many forms support multiple entries)
   if (ai.employment && ai.employment.length > 0) {
-    merged.employment = ai.employment;
+    // PGWP legal compliance: the v2 regex mapper for PGWP prepends an
+    // "Unemployed / N/A" entry that runs from the completion-letter date to
+    // present, so the form shows continuous accountability of time. If we
+    // detect that entry as employment[0], preserve it and append AI's real
+    // jobs after — instead of letting AI's array wipe it out.
+    const existing = formData.employment;
+    const firstIsUnemployed =
+      Array.isArray(existing) &&
+      existing[0] &&
+      existing[0].occupation === "Unemployed" &&
+      existing[0].employer === "N/A";
+    if (firstIsUnemployed) {
+      merged.employment = [existing[0], ...ai.employment];
+    } else {
+      merged.employment = ai.employment;
+    }
   }
 
   // Travel history
@@ -439,7 +469,7 @@ export function mergeAIIntoFormData(
 
   // Language
   if (ai.language) {
-    setIf("native_language", ai.language.native);
+    setIfNotOverridingCode("native_language", ai.language.native);
     setIf("communicate_language", ai.language.communicate);
     setIf("language_test_taken", ai.language.test_taken);
     if (ai.language.native) merged.frequent_language = ai.language.native;
@@ -449,7 +479,7 @@ export function mergeAIIntoFormData(
   if (ai.entry) {
     setIf("original_entry_date", ai.entry.original_date);
     setIf("original_entry_place", ai.entry.original_place);
-    setIf("original_entry_purpose", ai.entry.original_purpose);
+    setIfNotOverridingCode("original_entry_purpose", ai.entry.original_purpose);
     setIf("recent_entry_date", ai.entry.recent_date);
     setIf("recent_entry_place", ai.entry.recent_place);
   }
