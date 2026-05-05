@@ -80,8 +80,33 @@ export async function POST(req: NextRequest) {
 
     for (const message of messages) {
       const from = message.from;
-      const msgType = message.type; // text, image, document, audio
-      const text = message?.text?.body || "";
+      const msgType = message.type; // text, image, document, audio, button, interactive
+      let text = message?.text?.body || "";
+
+      // ── Button & interactive reply normalization ──
+      // When a client taps a button on a template message (e.g., the "newton_intake"
+      // template's confirm button) or selects from an interactive list/buttons,
+      // WhatsApp sends msgType="button" or "interactive" with no text.body field.
+      // Without this normalization, our intake handler at line 638 (`msgType === "text"`)
+      // never fires — bot acknowledges nothing, intake doesn't start.
+      // Symptom: "initial message goes, client confirms by tapping button, but bot
+      // doesn't start asking questions."
+      if (!text && msgType === "button") {
+        text = String(message?.button?.text || message?.button?.payload || "").trim();
+      } else if (!text && msgType === "interactive") {
+        const ir = message?.interactive;
+        text = String(
+          ir?.button_reply?.title ||
+          ir?.list_reply?.title ||
+          ir?.button_reply?.id ||
+          ir?.list_reply?.id ||
+          ""
+        ).trim();
+      }
+      // After normalization, treat button/interactive replies the same as text
+      // for routing decisions below.
+      const isTextLike = msgType === "text" || (text && (msgType === "button" || msgType === "interactive"));
+
       // Hoisted so the post-S3 inbox UPDATE block (line ~430) can reference
       // the same id we used for the INSERT below. Generated once per message.
       const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
@@ -112,7 +137,10 @@ export async function POST(req: NextRequest) {
         const docKind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
         const docCaption = String(message[msgType]?.caption || message[msgType]?.filename || message[msgType]?.name || "").trim();
         const captionPart = docCaption ? `|caption=${encodeURIComponent(docCaption)}` : "";
-        const displayMsg = msgType === "text"
+        // For button/interactive replies, we extracted readable text above and
+        // should display that — NOT a "[doc:...]" placeholder, which would
+        // confuse staff reviewing the inbox.
+        const displayMsg = (msgType === "text" || (text && (msgType === "button" || msgType === "interactive")))
           ? text
           : `[doc:${msgId}|kind=${docKind}|pending=1${captionPart}]`;
         // ─── Normalize phone before insert ───
@@ -164,7 +192,7 @@ export async function POST(req: NextRequest) {
       //   - Staff numbers (their "hi" is internal, no auto-reply needed)
       //   - When a greeting has already been auto-replied to in last 60 minutes
       //     (don't loop on someone repeatedly saying "hi")
-      if (msgType === "text" && text) {
+      if (isTextLike && text) {
         const STAFF_PHONES = ["16046535031","17789828954","17787236662"];
         const isStaffNumber = STAFF_PHONES.some(p => from.includes(p.slice(-9)));
 
@@ -635,7 +663,7 @@ Reply ONLY with JSON: {
         } catch(e) { console.error("Intake image handler error:", e); }
       }
 
-      if (msgType === "text" && text) {
+      if (isTextLike && text) {
         let handledByIntake = false;
         try {
           const intakeMod = await import("@/lib/whatsapp-ai-intake");
