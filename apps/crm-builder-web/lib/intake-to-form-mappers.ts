@@ -174,35 +174,280 @@ const buildIdentitySection = (intake: Record<string, any>) => {
   };
 };
 
+// ── Patched helpers for form-fill bug fixes ─────────────────────────────
+// (added by the form-fill mapper patch — see commit message for details)
+
+/**
+ * Strip a leading "Yes"/"Yeah"/"Y"/"No"/"N" prefix and any separator before
+ * extracting subsequent fields. Fixes the bug where "Yes from India" landed
+ * in recent_entry_place instead of just "from India".
+ */
+const stripYesNoPrefix = (s: string): string => {
+  if (!s) return "";
+  return String(s)
+    .replace(/^\s*(?:yes|yeah|yep|y|no|nope|n)\b[\s,;:.\-–]*/i, "")
+    .trim();
+};
+
+/**
+ * A document number must look like a real IRCC permit number:
+ * letters + digits, at least 4 digits. Anything else (yes/no answers,
+ * "WORK PERMIT", "Same") returns "".
+ */
+const sanitizeDocumentNumber = (raw: string): string => {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  if (isNo(v) || isYes(v)) return "";
+  const cleaned = stripYesNoPrefix(v).replace(/[\s\-]/g, "");
+  if (!/[A-Za-z]/.test(cleaned) || (cleaned.match(/\d/g) || []).length < 4) {
+    return "";
+  }
+  return cleaned.toUpperCase();
+};
+
+/**
+ * Map Newton's canonical formType (from normalizeFormType in import-cases.ts)
+ * to the exact dropdown text the IRCC IMM 5710 PDF expects.
+ *
+ * Without this mapping, the PDF's dropdown defaults to "Start-up Business
+ * Class".
+ */
+const deriveWorkPermitType = (formType: string): { type: string; other: string } => {
+  const ft = (formType || "").toLowerCase().trim();
+  if (ft === "pgwp" || ft.includes("pgwp") || ft.includes("post-graduation") || ft.includes("post graduation")) {
+    return { type: "Post Graduation Work Permit", other: "" };
+  }
+  if (ft === "sowp" || ft.includes("sowp") || ft.includes("spousal open work")) {
+    return { type: "Open Work Permit", other: "" };
+  }
+  if (ft === "bowp" || ft.includes("bowp") || ft.includes("bridging")) {
+    return { type: "Open Work Permit", other: "" };
+  }
+  if (ft === "vowp" || ft.includes("vowp") || ft.includes("vulnerable")) {
+    return { type: "Open Work Permit for Vulnerable Workers", other: "" };
+  }
+  if (ft.includes("co-op") || ft.includes("co op")) {
+    return { type: "Co-op Work Permit", other: "" };
+  }
+  if (ft.includes("lmia exempt") || ft.includes("exemption")) {
+    return { type: "Exemption from Labour Market Impact Assessment", other: "" };
+  }
+  if (ft.includes("lmia")) {
+    return { type: "Labour Market Impact Assessment Stream", other: "" };
+  }
+  if (ft.includes("caregiver") || ft.includes("live-in")) {
+    return { type: "Live-in Caregiver Program", other: "" };
+  }
+  if (ft.includes("start-up") || ft.includes("start up") || ft.includes("startup")) {
+    return { type: "Start-up Business Class", other: "" };
+  }
+  if (ft.includes("open work")) {
+    return { type: "Open Work Permit", other: "" };
+  }
+  return { type: "", other: "" };
+};
+
+/** Common language names — used to detect when a client mistakenly answered
+ * an employment/education question with a language name. */
+const LANGUAGE_NAMES = [
+  "english", "french", "punjabi", "hindi", "urdu", "gujarati", "tamil",
+  "telugu", "marathi", "bengali", "malayalam", "kannada", "spanish",
+  "portuguese", "italian", "german", "mandarin", "cantonese", "korean",
+  "japanese", "arabic", "tagalog", "vietnamese", "thai", "russian",
+  "ukrainian", "polish", "turkish", "farsi", "persian", "dari", "pashto",
+];
+
+const looksLikeLanguage = (s: string): boolean => {
+  const v = (s || "").toLowerCase().trim();
+  if (!v) return false;
+  if (isYes(v) || isNo(v)) return false;
+  return v.split(/[,;]/).every((part) => {
+    const word = part.trim().split(/\s+/)[0];
+    return word && (LANGUAGE_NAMES.includes(word) || word.length >= 4);
+  });
+};
+
+const looksLikeEmployment = (s: string): boolean => {
+  const v = (s || "").trim();
+  if (!v) return false;
+  if (isYes(v) || isNo(v)) return false;
+  if (v.length < 15) return false;
+  if (LANGUAGE_NAMES.includes(v.toLowerCase())) return false;
+  if (/^(yes[\s\-,]+)?(ielts|celpip|toefl|tef|tcf|pte)\b/i.test(v)) return false;
+  const employmentSignals = [
+    /\b(19|20)\d{2}\b/,
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
+    /\b(cook|chef|cashier|cleaner|driver|handler|assistant|manager|engineer|developer|operator|labourer|laborer|worker|technician|nurse|teacher|sales|clerk|server|host|barista|baker|delivery|warehouse|forklift|security|guard|janitor|maintenance|electrician|plumber|carpenter|painter|mechanic|farm|construction|retail)\b/i,
+    /\b(from|to|current|present|continuing|ongoing)\b/i,
+    /\bemployer\b/i,
+  ];
+  return employmentSignals.some((re) => re.test(v));
+};
+
+/**
+ * Best-effort employment parser. Splits free-text employment answers into
+ * structured entries. Used as a fallback until a Claude-based extractor
+ * is wired up. Handles Newton's typical client formats well enough for v1.
+ */
+function parseEmploymentBestEffort(raw: string): any[] {
+  if (!raw || isNo(raw)) return [];
+
+  const monthMap: Record<string, string> = {
+    jan: "01", january: "01",
+    feb: "02", february: "02",
+    mar: "03", march: "03",
+    apr: "04", april: "04",
+    may: "05",
+    jun: "06", june: "06",
+    jul: "07", july: "07",
+    aug: "08", august: "08",
+    sep: "09", september: "09", sept: "09",
+    oct: "10", october: "10",
+    nov: "11", november: "11",
+    dec: "12", december: "12",
+  };
+
+  const parseMonthYear = (s: string): { year: string; month: string } => {
+    const txt = s.trim();
+    const iso = txt.match(/(\d{4})[-/](\d{1,2})/);
+    if (iso) return { year: iso[1], month: iso[2].padStart(2, "0") };
+    const wordMonth = txt.match(/(?:\d{1,2}\s*)?([A-Za-z]+)\s*(\d{4})/);
+    if (wordMonth) {
+      const m = monthMap[wordMonth[1].toLowerCase()];
+      if (m) return { year: wordMonth[2], month: m };
+    }
+    const yearOnly = txt.match(/(\d{4})/);
+    return { year: yearOnly ? yearOnly[1] : "", month: "" };
+  };
+
+  const isCurrent = (s: string): boolean =>
+    /\b(continuing|present|current|now|ongoing|to date|till date)\b/i.test(s);
+
+  const blocks = (() => {
+    const numbered = raw.split(/\n\s*\d+[).:]\s*|\n\s*Job\s*\d+[:.\-]\s*/i);
+    if (numbered.length > 1) return numbered.map((b) => b.trim()).filter(Boolean);
+    const blank = raw.split(/\n\s*\n/);
+    if (blank.length > 1) return blank.map((b) => b.trim()).filter(Boolean);
+    const lines = raw.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2 && lines.every((l) => /\d{4}/.test(l))) return lines;
+    return [raw.trim()];
+  })();
+
+  const entries: any[] = [];
+  for (const block of blocks) {
+    if (!block || isNo(block)) continue;
+
+    const fromMatch = block.match(/[Ff]rom\s+([^,\n]+?)\s+to\s+([^,\n]+?)(?:[,\n]|$)/);
+    let from = { year: "", month: "" };
+    let to = { year: "", month: "" };
+    let current = false;
+
+    if (fromMatch) {
+      from = parseMonthYear(fromMatch[1]);
+      current = isCurrent(fromMatch[2]);
+      to = current ? { year: "", month: "" } : parseMonthYear(fromMatch[2]);
+    } else {
+      const dates = [...block.matchAll(/(\d{4}[-/]\d{1,2}|\b\d{0,2}\s*[A-Za-z]+\s+\d{4}|\b[A-Za-z]+\s+\d{4})/g)].map((m) => m[1]);
+      if (dates.length >= 1) from = parseMonthYear(dates[0]);
+      if (dates.length >= 2) to = parseMonthYear(dates[1]);
+      current = isCurrent(block);
+      if (current) to = { year: "", month: "" };
+    }
+
+    const noDates = block
+      .replace(/[Ff]rom\s+[^,\n]+?\s+to\s+[^,\n]+?(?:[,\n]|$)/g, "")
+      .replace(/\d{4}[-/]\d{1,2}/g, "")
+      .replace(/\b\d{0,2}\s*[A-Za-z]+\s+\d{4}\b/g, "")
+      .replace(/\b(continuing|present|current|now|ongoing|to date|till date)\b/gi, "")
+      .replace(/\bworked in\b/gi, "")
+      .replace(/\bemployer[:\s]?/gi, "")
+      .trim();
+
+    const parts = noDates.split(",").map((p) => p.trim().replace(/\.$/, "")).filter(Boolean);
+
+    let occupation = "";
+    let employer = "";
+    let city = "";
+    let prov_state = "";
+    let country = "";
+
+    if (parts.length >= 1) {
+      const jobIdx = parts.findIndex((p) =>
+        /\b(cook|chef|cashier|cleaner|driver|handler|assistant|manager|engineer|developer|operator|labourer|laborer|worker|technician|nurse|teacher|sales|clerk|server|host|barista|baker|delivery|warehouse|forklift|security|guard|janitor|maintenance|electrician|plumber|carpenter|painter|mechanic|farm|construction|retail|customer\s*service)\b/i.test(p)
+      );
+      if (jobIdx >= 0) {
+        occupation = parts[jobIdx];
+        const rest = parts.filter((_, i) => i !== jobIdx);
+        employer = rest[0] || "";
+        city = rest[1] || "";
+        prov_state = rest[2] || "";
+        country = rest[3] || "";
+      } else {
+        occupation = parts[0] || "";
+        employer = parts[1] || "";
+        city = parts[2] || "";
+        prov_state = parts[3] || "";
+        country = parts[4] || "";
+      }
+    }
+
+    if (!country && /^(BC|AB|ON|QC|MB|SK|NS|NB|NL|PE|YT|NT|NU|British\s*Columbia|Alberta|Ontario|Quebec)/i.test(prov_state)) {
+      country = "Canada";
+    }
+
+    if (occupation) {
+      occupation = occupation
+        .split(/\s+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+    }
+
+    entries.push({
+      from_year: from.year,
+      from_month: from.month,
+      to_year: to.year,
+      to_month: to.month,
+      is_current: current,
+      occupation,
+      employer,
+      city,
+      prov_state,
+      country,
+    });
+  }
+
+  return entries;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // MAPPER 1: PGWP / SOWP / BOWP / VOWP / Work Permits → IMM5710E
 // ─────────────────────────────────────────────────────────────────────────
 //
-// Question flow (from application-question-flows.ts → 'pgwp' / 'work_permit'):
-//   Q1  Have you used any other name?
+// CORRECTED Question flow (matches application-question-flows.ts → 'work_permit'):
+//   Q1  Have you used any other name?      [Yes/No + details]
 //   Q2  Marital status
-//   Q3  Spouse name & marriage date
-//   Q4  Previous marriage / common-law
+//   Q3  Spouse name & marriage date         [if married]
+//   Q4  Previous marriage / common-law      [Yes/No + details]
 //   Q5  Mailing address
-//   Q6  Residential (or SAME)
+//   Q6  Residential address                 [or SAME]
 //   Q7  Phone
-//   Q8  Original entry to Canada (date and place)
-//   Q9  Current entry to Canada
-//   Q10 Current document number (Study/Work Permit)
-//   Q11 Have you ever been refused?
-//   Q12 Medical history
-//   Q13 Criminal history
-//   Q14 Education history
-//   Q15 Employment history
-//   Q16 Native language and English/French
+//   Q8  Original entry — date & place
+//   Q9  Purpose of original visit           [Study/Work/Visit]
+//   Q10 Any recent entry?                   [Yes/No + date and reason]
+//   Q11 Refused a visa/permit?              [Yes/No + details]
+//   Q12 Medical history?                    [Yes/No + details]
+//   Q13 Criminal history?                   [Yes/No + details]
+//   Q14 Employment details                  ← was treated as education
+//   Q15 Education after 12th                ← was ignored
+//   Q16 Native language
 //   Q17 Language test taken?
-//   Q18 Medical field worker?
+//   Q18 Plan to work in medical field?      [Yes/No]
 
 function mapForPGWP(intake: Record<string, any>, formType: string): Record<string, any> {
   const { qN } = buildLookup(intake);
   const ft = (formType || "").toLowerCase();
 
-  // Marital
+  // Q2: Marital status
   const maritalRaw = stripPrefix(qN(2) || intake.maritalStatus || "Single");
   const marital = (() => {
     const v = maritalRaw.toLowerCase();
@@ -214,35 +459,57 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     return "Single";
   })();
 
-  // Spouse (Q3): "Jane Doe, 2020-06-15"
+  // Q3: Spouse details (only if married/common-law and answer isn't "NA")
   const spouseRaw = qN(3);
   const isMarried = marital === "Married" || marital === "Common-Law";
-  const spouseParts = isMarried && !isNo(spouseRaw) ? spouseRaw.split(",").map((p) => p.trim()) : [];
+  const spouseProvided = isMarried && !isNo(spouseRaw) && spouseRaw.toLowerCase() !== "na";
+  const spouseParts = spouseProvided ? spouseRaw.split(",").map((p) => p.trim()) : [];
   const spouseName = spouseParts[0] || "";
-  const spouseNameParts = spouseName.split(" ");
+  const spouseNameParts = spouseName.split(/\s+/).filter(Boolean);
 
-  // Previous marriage (Q4)
+  // Q4: Previous marriage
   const prevRaw = qN(4);
   const hasPrev = isYes(prevRaw);
-  const prevParts = hasPrev ? prevRaw.split(/[,;]+/).map((p) => p.trim()) : [];
+  const prevDetails = hasPrev ? detailsAfterYN(prevRaw) : "";
+  const prevParts = hasPrev ? prevDetails.split(/[,;]+/).map((p) => p.trim()) : [];
+  const prevSpouseNameParts = (prevParts[0] || "").split(/\s+/).filter(Boolean);
 
-  // Addresses (Q5/Q6)
+  // Q5/Q6: Addresses
   const mailing = parseAddress(qN(5));
   const resRaw = qN(6);
   const resSame = isNo(resRaw) || resRaw.toLowerCase().includes("same") || !resRaw;
   const residential = resSame ? mailing : parseAddress(resRaw);
 
-  // Phone (Q7)
+  // Q7: Phone
   const phone = parsePhone(qN(7));
 
-  // Entry (Q8): "2020-09-01, Vancouver/YVR"
-  const entryParts = qN(8).split(",").map((p) => p.trim());
-  const entryDate = parseDate(entryParts[0] || "");
+  // Q8: Original entry — "2023-08-11, Vancouver International Airport"
+  const entryRaw = qN(8);
+  const entryParts = entryRaw.split(",").map((p) => p.trim());
+  const originalEntryDate = entryParts[0] || "";
+  const originalEntryPlace = entryParts[1] || "";
 
-  // Current document (Q10)
-  const docNum = qN(10);
+  // Q9: Purpose of original visit
+  const purposeRaw = qN(9).toLowerCase();
+  const originalEntryPurpose =
+    purposeRaw.includes("stud") ? "Study" :
+    purposeRaw.includes("work") ? "Work" :
+    purposeRaw.includes("visit") || purposeRaw.includes("tour") ? "Visit" :
+    ft.includes("study") ? "Study" : "Work";
 
-  // Background (Q11/Q12/Q13)
+  // ── BUG FIX: Q10 is "Any recent entry? Yes/No + details" ──
+  // Recent entry is now empty when client said no, instead of duplicating Q8.
+  const recentRaw = qN(10);
+  const hasRecentEntry = isYes(recentRaw);
+  const recentDetails = hasRecentEntry ? stripYesNoPrefix(recentRaw) : "";
+  const recentParts = hasRecentEntry ? recentDetails.split(",").map((p) => p.trim()) : [];
+
+  const datePattern = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/;
+  const recentDateCandidate = recentParts[0] || "";
+  const recentEntryDate = datePattern.test(recentDateCandidate) ? recentDateCandidate : "";
+  const recentEntryPlace = recentEntryDate ? (recentParts[1] || "") : (recentParts[0] || "");
+
+  // Q11/Q12/Q13: Background
   const refusalRaw = qN(11);
   const hasRefusal = isYes(refusalRaw);
   const medicalRaw = qN(12);
@@ -250,21 +517,63 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   const criminalRaw = qN(13);
   const hasCriminal = isYes(criminalRaw);
 
-  // Education (Q14)
-  const eduRaw = qN(14);
-  const hasEdu = !!eduRaw && !isNo(eduRaw);
-  const eduParts = hasEdu ? eduRaw.split(",").map((p) => p.trim()) : [];
+  // ── BUG FIX: Q14 = Employment, Q15 = Education ──
+  // Plus fallback: if Q15 looks more like employment than education,
+  // include it in employment scan. Catches clients who put a 2nd job
+  // in the education slot.
+  const employmentRaw = qN(14);
+  const educationRaw = qN(15);
+  const additionalNotes = stripPrefix(intake.additionalNotes || "");
 
-  // Languages (Q16/Q17)
-  const langRaw = qN(16);
-  const langParts = langRaw.split(/[,;]/).map((p) => p.trim());
-  const nativeLang = langParts[0] || "";
-  const commLang = (langParts[1] || "English").toLowerCase().includes("french")
-    ? "French"
-    : langParts[1]?.toLowerCase().includes("both")
-    ? "Both"
-    : "English";
-  const langTest = isYes(qN(17));
+  const employmentLooksValid = looksLikeEmployment(employmentRaw);
+  const educationLooksLikeEmployment = looksLikeEmployment(educationRaw);
+
+  const employmentSources: string[] = [];
+  if (employmentLooksValid) employmentSources.push(employmentRaw);
+  if (educationLooksLikeEmployment) employmentSources.push(educationRaw);
+  if (additionalNotes && looksLikeEmployment(additionalNotes)) employmentSources.push(additionalNotes);
+
+  const employment = employmentSources.length > 0
+    ? parseEmploymentBestEffort(employmentSources.join("\n"))
+    : [];
+
+  const educationLooksValid = !educationLooksLikeEmployment && !!educationRaw && !isNo(educationRaw);
+  const eduParts = educationLooksValid ? educationRaw.split(",").map((p) => p.trim()) : [];
+  const eduYears = educationLooksValid ? (educationRaw.match(/(20\d{2})/g) || []) : [];
+
+  // Q16: Native language — only fill if it looks like a real language name
+  const q16Raw = qN(16);
+  const nativeLang = looksLikeLanguage(q16Raw) ? q16Raw.split(/[,;]/)[0].trim() : "";
+
+  // Q17: Language test
+  const langTestRaw = qN(17);
+  const langTest = isYes(langTestRaw);
+  const langTestDetails = langTest ? detailsAfterYN(langTestRaw) : "";
+
+  // Q18: Plan to work in medical field
+  const medicalFieldRaw = qN(18);
+  const planMedicalField = isYes(medicalFieldRaw);
+
+  // Q1: Other name (alias)
+  const aliasRaw = qN(1);
+  const hasAlias = isYes(aliasRaw);
+  const aliasDetails = hasAlias ? detailsAfterYN(aliasRaw) : "";
+  const aliasNameParts = hasAlias ? aliasDetails.split(/\s+/).filter(Boolean) : [];
+
+  // ── BUG FIX: work_permit_type was empty → IRCC PDF defaulted to "Start-up Business Class" ──
+  const wpType = deriveWorkPermitType(formType);
+
+  // Identify any fields that need human review (review UI hook)
+  const reviewFlags: string[] = [];
+  if (!employmentLooksValid && employmentRaw && !isNo(employmentRaw)) {
+    reviewFlags.push(`Q14 employment doesn't look like job details: "${employmentRaw}"`);
+  }
+  if (!educationLooksValid && educationRaw && !isNo(educationRaw) && !educationLooksLikeEmployment) {
+    reviewFlags.push(`Q15 education doesn't look like education details: "${educationRaw}"`);
+  }
+  if (q16Raw && !looksLikeLanguage(q16Raw)) {
+    reviewFlags.push(`Q16 native language looks suspicious: "${q16Raw}"`);
+  }
 
   return {
     ...buildIdentitySection(intake),
@@ -278,22 +587,22 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     uci_client_id: stripPrefix(intake.uci || ""),
 
     // Q1: Other names
-    has_alias: isYes(qN(1)),
-    alias_family_name: hasPrev ? "" : "",
-    alias_given_name: "",
+    has_alias: hasAlias,
+    alias_family_name: aliasNameParts.length > 1 ? aliasNameParts[aliasNameParts.length - 1] : "",
+    alias_given_name: aliasNameParts.length > 1 ? aliasNameParts.slice(0, -1).join(" ") : (aliasNameParts[0] || ""),
 
     // Q2-Q4: Marital
     marital_status: marital,
-    spouse_family_name: spouseNameParts.slice(-1)[0] || "",
-    spouse_given_name: spouseNameParts.slice(0, -1).join(" ") || "",
-    date_of_marriage: spouseParts[1] || "",
+    spouse_family_name: spouseNameParts.length > 1 ? spouseNameParts[spouseNameParts.length - 1] : "",
+    spouse_given_name: spouseNameParts.length > 1 ? spouseNameParts.slice(0, -1).join(" ") : (spouseNameParts[0] || ""),
+    date_of_marriage: spouseProvided ? (spouseParts[1] || "") : "",
     spouse_status_in_canada: "",
     previously_married: hasPrev,
-    prev_spouse_family_name: hasPrev ? (prevParts[1] || "").split(" ").slice(-1)[0] : "",
-    prev_spouse_given_name: hasPrev ? (prevParts[1] || "").split(" ").slice(0, -1).join(" ") : "",
+    prev_spouse_family_name: prevSpouseNameParts.length > 1 ? prevSpouseNameParts[prevSpouseNameParts.length - 1] : "",
+    prev_spouse_given_name: prevSpouseNameParts.length > 1 ? prevSpouseNameParts.slice(0, -1).join(" ") : (prevSpouseNameParts[0] || ""),
     prev_relationship_type: hasPrev ? "Married" : "",
-    prev_marriage_from: hasPrev ? prevParts[3] || "" : "",
-    prev_marriage_to: hasPrev ? prevParts[4] || "" : "",
+    prev_marriage_from: hasPrev ? (prevParts[2] || "") : "",
+    prev_marriage_to: hasPrev ? (prevParts[3] || "") : "",
 
     // Q5-Q7: Address & phone
     mailing_apt_unit: mailing.apt_unit,
@@ -316,45 +625,51 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     phone_last_five: phone.last_five,
     email: stripPrefix(intake.email || ""),
 
-    // Q8: Original entry
-    original_entry_date: entryParts[0] || "",
-    original_entry_place: entryParts[1] || "",
-    original_entry_purpose: ft.includes("study") ? "Study" : "Work",
-    recent_entry_date: entryParts[0] || "",
-    recent_entry_place: entryParts[1] || "",
+    // Q8/Q9: Original entry
+    original_entry_date: originalEntryDate,
+    original_entry_place: originalEntryPlace,
+    original_entry_purpose: originalEntryPurpose,
 
-    // Q10: Document
-    previous_doc_number: docNum,
-    work_permit_type: ft.includes("lmia") ? "Work" : "",
+    // Q10: Recent entry — ONLY filled if client said yes
+    recent_entry_date: recentEntryDate,
+    recent_entry_place: recentEntryPlace,
+
+    // Document number — sanitized; empty if not a real permit number
+    previous_doc_number: sanitizeDocumentNumber(intake.previousDocNumber || ""),
+    work_permit_type: wpType.type,
+    work_permit_type_other: wpType.other,
 
     // Section 5: Languages
     native_language: nativeLang,
-    communicate_language: commLang,
+    communicate_language: "English",
     language_test_taken: langTest,
+    language_test_details: langTestDetails,
     frequent_language: nativeLang || "English",
 
     // Status (in Canada — temporary)
     current_status: ft.includes("study") ? "Student" : "Worker",
-    current_status_from_date: entryParts[0] || "",
+    current_status_from_date: originalEntryDate,
     current_status_to_date: "",
 
-    // Q14: Education
-    has_education: hasEdu,
-    edu_school_name: eduParts[0] || "",
-    edu_field_of_study: eduParts[1] || "",
-    edu_city: eduParts[2] || "",
-    edu_country: eduParts[3] || "Canada",
-    edu_from_year: (eduRaw.match(/(20\d{2})/g) || [])[0] || "",
-    edu_from_month: "09",
-    edu_to_year: (eduRaw.match(/(20\d{2})/g) || [])[1] || "",
-    edu_to_month: "06",
+    // Q15: Education
+    has_education: educationLooksValid,
+    edu_school_name: educationLooksValid ? (eduParts[0] || "") : "",
+    edu_field_of_study: educationLooksValid ? (eduParts[1] || "") : "",
+    edu_city: educationLooksValid ? (eduParts[2] || "") : "",
+    edu_country: educationLooksValid ? (eduParts[3] || "Canada") : "",
+    edu_from_year: educationLooksValid ? (eduYears[0] || "") : "",
+    edu_from_month: educationLooksValid ? "09" : "",
+    edu_to_year: educationLooksValid ? (eduYears[1] || "") : "",
+    edu_to_month: educationLooksValid ? "06" : "",
 
-    // Q15: Employment (single record, can be expanded)
-    employment: [],
+    // Q14: Employment (now actually populated)
+    employment,
 
-    // Q11/Q12/Q13: Background
-    has_medical_condition: hasMedical,
-    medical_details: hasMedical ? detailsAfterYN(medicalRaw) : "",
+    // Q11/Q12/Q13/Q18: Background + medical
+    has_medical_condition: hasMedical || planMedicalField,
+    medical_details: hasMedical
+      ? detailsAfterYN(medicalRaw) + (planMedicalField ? " | Plans to work in medical field" : "")
+      : (planMedicalField ? "Plans to work in medical field" : ""),
     prev_application_refused: hasRefusal,
     prev_refused_to_canada: hasRefusal && refusalRaw.toLowerCase().includes("canada"),
     prev_refused_details: hasRefusal ? detailsAfterYN(refusalRaw) : "",
@@ -363,6 +678,9 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     has_military_service: false,
     held_government_position: false,
     witnessed_ill_treatment: false,
+
+    // Review hooks — staff sees these before submitting
+    _review_flags: reviewFlags,
   };
 }
 
@@ -998,13 +1316,29 @@ export function mapIntakeToForm(intake: Record<string, any>, formType: string): 
     return mapForStudyPermitExtension(intake, formType);
   }
 
+  // ── BUG FIX: TRV Inside Canada routing ──
+  // normalizeFormType() collapses both "TRV Inside" and "TRV Outside" to
+  // just "TRV", so we can't distinguish them from formType alone. Look at
+  // the intake itself: a TRV-Inside intake includes a question about
+  // "current immigration status in Canada" (their work/study permit
+  // expiry), which a TRV-Outside intake does not.
+  const isInsideCanada =
+    ft.includes("inside") ||
+    ft.includes("visitor record") ||
+    /current.+(?:immigration\s+)?status\s+in\s+canada/i.test(
+      String(intake.q6 || "") + " " + String(intake.q7 || "")
+    ) ||
+    /\b(work permit|study permit)\b.+expir/i.test(
+      String(intake.q6 || "") + " " + String(intake.q7 || "")
+    );
+
   // Visitor Record (Inside Canada) — IMM5708E
-  if (ft.includes("visitor record") || (ft.includes("trv") && ft.includes("inside"))) {
+  if (ft.includes("visitor record") || (ft.includes("trv") && isInsideCanada)) {
     return mapForVisitorRecord(intake, formType);
   }
 
   // Visitor Visa (Outside Canada) — IMM5257E
-  if (ft.includes("visitor visa") || (ft.includes("trv") && !ft.includes("inside")) || ft.includes("super visa")) {
+  if (ft.includes("visitor visa") || (ft.includes("trv") && !isInsideCanada) || ft.includes("super visa")) {
     return mapForVisitorVisa(intake, formType);
   }
 
