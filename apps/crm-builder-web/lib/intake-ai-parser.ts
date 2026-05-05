@@ -14,6 +14,15 @@
  * can replace their regex parsing with `await parseIntakeWithAI(intake, formType)`.
  */
 
+import {
+  textToCountryCode,
+  textToProvinceCode,
+  textToLanguageCode,
+  textToVisitPurposeCode,
+  textToStatusCode,
+  textToMaritalCode,
+} from "./ircc-codes";
+
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -308,19 +317,31 @@ export function mergeAIIntoFormData(
     if (val !== undefined && val !== null && val !== "") merged[key] = val;
   };
 
-  // CODE-AWARE setIf: skips override when the regex mapper already produced
-  // a numeric IRCC code in this slot (e.g. mailing_country="511"). Without
-  // this, the AI parser's text values ("Canada", "BC", "Punjabi") would
-  // overwrite the numeric codes the v2 mapper carefully produced for IMM5710.
-  // Safe for non-PGWP forms: their mappers output text, so `existing` won't
-  // match /^\d+$/, and behavior falls through to the original setIf logic.
-  const setIfNotOverridingCode = (key: string, val: any) => {
+  // CODE-AWARE setIf for IRCC numeric-coded fields. Behavior:
+  //   - If existing value is already a numeric IRCC code (matches /^\d+$/ and >=2 digits),
+  //     LEAVE IT ALONE. The v2 regex mapper produced the right value, don't second-guess.
+  //   - If existing is empty or text, take AI's value but CONVERT it to numeric via the
+  //     supplied converter when possible. If conversion fails (unknown country/lang/etc),
+  //     fall back to writing AI's raw text so the form still has SOMETHING (and staff
+  //     can fix it during review).
+  //
+  // Safe for non-PGWP forms whose mappers output text: their existing values won't match
+  // the numeric-code regex, so we just convert text→code if possible (which produces the
+  // same code anyway — IRCC codes are universal across forms).
+  const setIfNotOverridingCode = (
+    key: string,
+    val: any,
+    converter?: (s: string) => string,
+  ) => {
     if (val === undefined || val === null || val === "") return;
     const existing = String(merged[key] ?? "");
-    // Treat 2+ digit numeric values as IRCC codes ("02", "511", "324", etc.).
-    // Single digits like "0"/"1" are checkbox flags, not codes — let those be overridden.
     if (/^\d+$/.test(existing) && existing.length >= 2) return;
-    merged[key] = val;
+    if (converter) {
+      const code = converter(String(val));
+      merged[key] = code || val;
+    } else {
+      merged[key] = val;
+    }
   };
 
   // Mailing address
@@ -329,9 +350,9 @@ export function mergeAIIntoFormData(
     setIf("mailing_street_num", ai.mailing.street_num);
     setIf("mailing_street_name", ai.mailing.street_name);
     setIf("mailing_city", ai.mailing.city);
-    setIfNotOverridingCode("mailing_province", ai.mailing.province);
+    setIfNotOverridingCode("mailing_province", ai.mailing.province, textToProvinceCode);
     setIf("mailing_postal_code", ai.mailing.postal_code);
-    setIfNotOverridingCode("mailing_country", ai.mailing.country);
+    setIfNotOverridingCode("mailing_country", ai.mailing.country, textToCountryCode);
   }
 
   // Residential
@@ -343,7 +364,7 @@ export function mergeAIIntoFormData(
     setIf("residential_street_num", ai.residential.street_num);
     setIf("residential_street_name", ai.residential.street_name);
     setIf("residential_city", ai.residential.city);
-    setIfNotOverridingCode("residential_province", ai.residential.province);
+    setIfNotOverridingCode("residential_province", ai.residential.province, textToProvinceCode);
   }
 
   // Spouse
@@ -373,7 +394,7 @@ export function mergeAIIntoFormData(
     setIf("edu_school_name", e.school_name);
     setIf("edu_field_of_study", e.field_of_study);
     setIf("edu_city", e.city);
-    setIfNotOverridingCode("edu_country", e.country);
+    setIfNotOverridingCode("edu_country", e.country, textToCountryCode);
     setIf("edu_from_year", e.from_year);
     setIf("edu_from_month", e.from_month);
     setIf("edu_to_year", e.to_year);
@@ -382,24 +403,55 @@ export function mergeAIIntoFormData(
     merged.education_history = ai.education;
   }
 
+  // Garbage-employment filter: reject entries that don't look like real jobs.
+  // The v2 mapper's parseEmploymentBestEffort splits by comma and assigns
+  // positionally — when q14/q15 contain test-info or single language words
+  // (intake-bot Q-mapping bug), this produces nonsense entries. Apply the
+  // same filter to AI's array too. Real "Unemployed/N/A" entries (PGWP legal
+  // compliance) pass through because their occupation is long enough and
+  // doesn't match rejection patterns.
+  const looksLikeRealJob = (e: any): boolean => {
+    const occ = String(e?.occupation || "").replace(/[\u2060\u200B-\u200D\uFEFF]/g, "").trim();
+    const emp = String(e?.employer || "").replace(/[\u2060\u200B-\u200D\uFEFF]/g, "").trim();
+    const city = String(e?.city || "").replace(/[\u2060\u200B-\u200D\uFEFF]/g, "").trim();
+    if (occ.length < 3) return false;
+    if (/^(yes|no|na|n\/a|none|nil)$/i.test(occ)) return false;
+    // Score-like values in the city slot (e.g. "6.5 bands", "7.0") are language-test data.
+    if (/^[\d.]+\s*(bands?|points?)?$/i.test(city)) return false;
+    // Test-name in employer slot (e.g. "IELTS", "TOEFL") — language test, not a job.
+    if (/^(ielts|toefl|pte|celpip|test)$/i.test(emp)) return false;
+    return true;
+  };
+
+  // First clean v2's existing employment, preserving the legally-required
+  // "Unemployed/N/A" entry if present.
+  if (Array.isArray(merged.employment)) {
+    merged.employment = merged.employment.filter(looksLikeRealJob);
+  }
+
   // Employment (full array — many forms support multiple entries)
   if (ai.employment && ai.employment.length > 0) {
-    // PGWP legal compliance: the v2 regex mapper for PGWP prepends an
-    // "Unemployed / N/A" entry that runs from the completion-letter date to
-    // present, so the form shows continuous accountability of time. If we
-    // detect that entry as employment[0], preserve it and append AI's real
-    // jobs after — instead of letting AI's array wipe it out.
-    const existing = formData.employment;
-    const firstIsUnemployed =
-      Array.isArray(existing) &&
-      existing[0] &&
-      existing[0].occupation === "Unemployed" &&
-      existing[0].employer === "N/A";
-    if (firstIsUnemployed) {
-      merged.employment = [existing[0], ...ai.employment];
-    } else {
-      merged.employment = ai.employment;
+    const cleanedAi = ai.employment.filter(looksLikeRealJob);
+    if (cleanedAi.length > 0) {
+      // PGWP legal compliance: the v2 regex mapper for PGWP prepends an
+      // "Unemployed / N/A" entry that runs from the completion-letter date to
+      // present. Preserve it as employment[0] when present, append AI's real
+      // jobs after — instead of letting AI's array wipe it out.
+      const existing = formData.employment;
+      const firstIsUnemployed =
+        Array.isArray(existing) &&
+        existing[0] &&
+        existing[0].occupation === "Unemployed" &&
+        existing[0].employer === "N/A";
+      if (firstIsUnemployed) {
+        merged.employment = [existing[0], ...cleanedAi];
+      } else {
+        merged.employment = cleanedAi;
+      }
     }
+    // If cleanedAi is empty (all entries were garbage), leave merged.employment
+    // as the already-cleaned v2 output (which may also be empty if v2's only
+    // entries were garbage too — that's correct: staff fills in manually).
   }
 
   // Travel history
@@ -469,7 +521,7 @@ export function mergeAIIntoFormData(
 
   // Language
   if (ai.language) {
-    setIfNotOverridingCode("native_language", ai.language.native);
+    setIfNotOverridingCode("native_language", ai.language.native, textToLanguageCode);
     setIf("communicate_language", ai.language.communicate);
     setIf("language_test_taken", ai.language.test_taken);
     if (ai.language.native) merged.frequent_language = ai.language.native;
@@ -479,7 +531,7 @@ export function mergeAIIntoFormData(
   if (ai.entry) {
     setIf("original_entry_date", ai.entry.original_date);
     setIf("original_entry_place", ai.entry.original_place);
-    setIfNotOverridingCode("original_entry_purpose", ai.entry.original_purpose);
+    setIfNotOverridingCode("original_entry_purpose", ai.entry.original_purpose, textToVisitPurposeCode);
     setIf("recent_entry_date", ai.entry.recent_date);
     setIf("recent_entry_place", ai.entry.recent_place);
   }

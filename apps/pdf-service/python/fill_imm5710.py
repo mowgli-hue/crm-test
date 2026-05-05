@@ -378,10 +378,16 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
     sv(data["uci_client_id"],       "Page1","PersonalDetails","ServiceIn","UCIClientID")
     sv(data["family_name"],         "Page1","PersonalDetails","Name","FamilyName")
     sv(data["given_name"],          "Page1","PersonalDetails","Name","GivenName")
+    # Alias / "Have you ever used another name": always tick the indicator
+    # (Y or N) so the form has a definitive answer, never a blank box. Verified
+    # against Paras's filed form: the indicator value is the literal character
+    # "Y" or "N", not "1"/"0".
     if data["has_alias"]:
         sv(data["alias_family_name"], "Page1","PersonalDetails","AliasName","AliasFamilyName")
         sv(data["alias_given_name"],  "Page1","PersonalDetails","AliasName","AliasGivenName")
-        sv("1",                       "Page1","PersonalDetails","AliasName","AliasNameIndicator","AliasNameIndicator")
+        sv("Y",                       "Page1","PersonalDetails","AliasName","AliasNameIndicator","AliasNameIndicator")
+    else:
+        sv("N",                       "Page1","PersonalDetails","AliasName","AliasNameIndicator","AliasNameIndicator")
     sv(data["sex"],                 "Page1","PersonalDetails","q3-4-5","sex","Sex")
     sv(data["dob_day"],             "Page1","PersonalDetails","q3-4-5","dob","DOBDay")
     sv(data["dob_month"],           "Page1","PersonalDetails","q3-4-5","dob","DOBMonth")

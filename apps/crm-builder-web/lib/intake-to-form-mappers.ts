@@ -35,17 +35,64 @@ const NEWTON_EMAIL = "newtonimmigration@gmail.com";
 
 // ── Shared parsing helpers ────────────────────────────────────────────────
 
+// Canadian postal code regex: A1A 1A1 / A1A1A1 / a1a1a1 etc.
+const POSTAL_RE = /\b([A-Za-z]\d[A-Za-z])\s*(\d[A-Za-z]\d)\b/;
+// Common apt-unit keywords clients write as a single word: "basement", "main floor",
+// "upper unit", "1st floor". Match if the WHOLE part matches one of these patterns.
+const APT_KEYWORDS_RE = /^(basement|main\s*floor|upper(\s*unit|\s*floor)?|lower(\s*unit|\s*floor)?|\d+(st|nd|rd|th)?\s*floor|unit\s*\S+|apt\s*\S+|suite\s*\S+|#\s*\S+)$/i;
+// Canadian provinces (full names + abbreviations)
+const PROVINCE_RE = /^(BC|British Columbia|AB|Alberta|SK|Saskatchewan|MB|Manitoba|ON|Ontario|QC|Quebec|NB|New Brunswick|NS|Nova Scotia|PE|PEI|Prince Edward Island|NL|Newfoundland(\s*and Labrador)?|YT|Yukon|NT|Northwest Territories|NU|Nunavut)$/i;
+
 const parseAddress = (raw: string) => {
-  const parts = (raw || "").split(",").map((p) => p.trim());
-  const streetMatch = (parts[0] || "").match(/^(\d+)\s+(.+)/);
+  const parts = (raw || "").split(",").map((p) => p.trim()).filter(Boolean);
+
+  // First pass: pull out the components we can identify by pattern, regardless
+  // of position. Clients write addresses in any order — "15469 86ave, V3S 2P9,
+  // basement" is real intake data and the OLD parser put postal_code in city
+  // and "basement" in province. Detect-by-pattern fixes that.
+  let apt_unit = "";
+  let postal_code = "";
+  let province = "";
+  const remaining: string[] = [];
+
+  for (const p of parts) {
+    if (!postal_code) {
+      const pm = p.match(POSTAL_RE);
+      if (pm) {
+        postal_code = (pm[1] + " " + pm[2]).toUpperCase();
+        // If the part is JUST the postal code, consume it. Otherwise leave the rest.
+        const rest = p.replace(POSTAL_RE, "").trim().replace(/^[,\s]+|[,\s]+$/g, "");
+        if (rest) remaining.push(rest);
+        continue;
+      }
+    }
+    if (!apt_unit && APT_KEYWORDS_RE.test(p)) {
+      apt_unit = p;
+      continue;
+    }
+    if (!province && PROVINCE_RE.test(p)) {
+      province = p;
+      continue;
+    }
+    remaining.push(p);
+  }
+
+  // From the remaining parts, the FIRST is street (with optional leading number),
+  // the SECOND is city, the rest are extras (might include country).
+  const streetMatch = (remaining[0] || "").match(/^(\d+)\s+(.+)/);
+  const street_num = streetMatch ? streetMatch[1] : "";
+  const street_name = streetMatch ? streetMatch[2] : (remaining[0] || "");
+  const city = remaining[1] || "";
+  const country = remaining[2] || "Canada";
+
   return {
-    apt_unit: "",
-    street_num: streetMatch ? streetMatch[1] : "",
-    street_name: streetMatch ? streetMatch[2] : (parts[0] || ""),
-    city: parts[1] || "",
-    province: parts[2] || "",
-    postal_code: parts[3] || "",
-    country: parts[4] || "Canada",
+    apt_unit,
+    street_num,
+    street_name,
+    city,
+    province,
+    postal_code,
+    country,
   };
 };
 
@@ -91,6 +138,28 @@ const parseDate = (raw: string) => {
   const cleaned = (raw || "").replace(/\//g, "-");
   const parts = cleaned.split("-");
   return { year: parts[0] || "", month: parts[1] || "", day: parts[2] || "" };
+};
+
+// Normalize any date-ish string to YYYY-MM-DD (hyphens). IMM5710 and IRCC
+// generally store dates in this format — verified against Paras's filed form.
+// Mixed slash/hyphen output looks unprofessional and can confuse officers.
+const normalizeDate = (raw: string): string => {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  // Already YYYY-MM-DD with 2-digit month/day
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // YYYY/MM/DD or YYYY-M-D variations
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) {
+    return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  }
+  // YYYY-MM or YYYY/MM (no day)
+  const m2 = s.match(/^(\d{4})[-/](\d{1,2})$/);
+  if (m2) {
+    return `${m2[1]}-${m2[2].padStart(2, "0")}`;
+  }
+  // Format unrecognized — leave alone, staff can fix during review.
+  return s;
 };
 
 // Strip leading "N.) " or "N. " or "N) " prefix from answers — defensive cleanup
@@ -691,7 +760,7 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     spouse_given_name: spouseNameParts.length > 1
       ? spouseNameParts.slice(0, -1).join(" ")
       : (spouseNameParts[0] || ""),
-    date_of_marriage: spouseProvided ? (spouseParts[1] || "") : "",
+    date_of_marriage: spouseProvided ? normalizeDate(spouseParts[1] || "") : "",
     spouse_status_in_canada: "",
     spouse_canadian_citizen_or_pr: false, // default NO (most clients)
     previously_married: hasPrev,
@@ -701,14 +770,14 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
       ? prevSpouseNameParts.slice(0, -1).join(" ")
       : (prevSpouseNameParts[0] || ""),
     prev_relationship_type: hasPrev ? "Married" : "",
-    prev_marriage_from: hasPrev ? (prevParts[2] || "") : "",
-    prev_marriage_to: hasPrev ? (prevParts[3] || "") : "",
+    prev_marriage_from: hasPrev ? normalizeDate(prevParts[2] || "") : "",
+    prev_marriage_to: hasPrev ? normalizeDate(prevParts[3] || "") : "",
 
     // ── Section 3: Status in Canada (PGWP applicant = currently Student) ──
     current_status: currentStatusCode,           // "05" = Student
     current_status_country: mailingCountryCode,  // "511" = Canada
-    current_status_from_date: currentStatusFrom,
-    current_status_to_date: currentStatusTo,
+    current_status_from_date: normalizeDate(currentStatusFrom),
+    current_status_to_date: normalizeDate(currentStatusTo),
     prev_country_indicator: false,
 
     // ── Section 5: Languages — defaults ──
@@ -755,7 +824,7 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     email: NEWTON_EMAIL,                         // HARDCODED — IRCC mail to Newton
 
     // ── Section 8: Original entry ──
-    original_entry_date: originalEntryDate,
+    original_entry_date: normalizeDate(originalEntryDate),
     original_entry_place: originalEntryPlace,
     original_entry_purpose: purposeCode,         // NUMERIC "04" = Study
 
