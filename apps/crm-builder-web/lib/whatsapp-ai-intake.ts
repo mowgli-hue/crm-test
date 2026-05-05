@@ -182,6 +182,14 @@ export type IntakeSession = {
   // Map of question index → pre-known answer from passport / case data.
   // Skipped during the WhatsApp Q&A; pre-filled into answers automatically.
   preAnswered?: Record<number, string>;
+  // Per-question validation retry counter. Lets the bot re-ask once on
+  // clearly wrong answers (e.g., "punjabi" for employment) but not loop
+  // forever — after 1 retry, accept and flag for staff review (Smart mode).
+  // Keyed by question index as string.
+  validationRetries?: Record<string, number>;
+  // Audit trail of validation flags — answers that passed validation but
+  // looked borderline. Surfaced to staff via the form mapper's _review_flags.
+  validationFlags?: Array<{ qIndex: number; reason: string }>;
 };
 
 // Session store in case DB
@@ -710,6 +718,50 @@ export async function handleIncomingReply(params: {
       answersCaptured = 1;
     }
 
+    // ─── Validation ────────────────────────────────────────────────
+    //
+    // After capturing answers, check the CURRENT-question answer (the one
+    // we're about to "leave"). If it's clearly wrong (e.g., "punjabi" for
+    // employment), re-ask the client. After 1 retry, accept + flag.
+    //
+    // We deliberately validate ONLY the current question, not earlier ones
+    // in a batch — once the client moves past a question, we trust them.
+    // Going back to re-ask question 1 when they've already answered 5 is
+    // confusing. Better to flag earlier ones for staff review at form-gen.
+    if (answersCaptured > 0 && currentQuestion) {
+      try {
+        const { validateAnswer } = await import("@/lib/intake-validators");
+        const currentAnswer = session.answers[`q${qIndex + 1}`] || "";
+        const retries = session.validationRetries || {};
+        const retryCount = retries[String(qIndex)] || 0;
+        const result = validateAnswer(currentQuestion, currentAnswer, retryCount);
+
+        if (result.ok === false) {
+          // Re-ask. Don't advance chatTurns. Bump retry counter.
+          retries[String(qIndex)] = retryCount + 1;
+          session.validationRetries = retries;
+          // Roll back the captured answer so the bot doesn't keep the bad one
+          delete session.answers[`q${qIndex + 1}`];
+          delete session.answers[currentQuestion.slice(0, 50)];
+          await setSession(phone, session);
+          await sendAndSave(phone, result.hint, session.caseId, session.clientName);
+          return;
+        }
+
+        if (result.ok === "flag") {
+          // Accept the answer but record the concern for staff
+          const flags = session.validationFlags || [];
+          flags.push({ qIndex, reason: result.reason });
+          session.validationFlags = flags;
+          console.log(`⚠️  Intake validation flag for ${phone} q${qIndex + 1}: ${result.reason}`);
+        }
+        // result.ok === true → just continue normally
+      } catch (e) {
+        // Validator threw — never block intake. Log and continue.
+        console.error(`Intake validator error (non-fatal):`, (e as Error).message);
+      }
+    }
+
     // Advance the question pointer by however many answers we just captured
     session.chatTurns += answersCaptured;
 
@@ -744,6 +796,11 @@ export async function handleIncomingReply(params: {
         ...session.answers as any,
         whatsappIntakePhase: "complete",
         whatsappIntakeCompletedAt: new Date().toISOString(),
+        // Surface validation flags to staff via the case data. Form mapper
+        // can read these and merge into _review_flags on the form output.
+        ...(session.validationFlags && session.validationFlags.length > 0
+          ? { _intakeValidationFlags: session.validationFlags }
+          : {}),
       });
       await completeIntake(session);
     } else {
@@ -870,7 +927,14 @@ export async function handleIncomingReply(params: {
       await setSession(phone, session);
       await sendWhatsAppText(phone, `Thank you ${session.clientName.split(" ")[0]}! 🙏 Your answers have been saved.\n\nPlease send photos of:\n📄 *Your current permit* (Study/Work Permit)\n🛂 *Your passport bio page*\n\nThis helps us auto-fill your forms accurately.\n\n— Newton Immigration Team 🍁`);
       await updateCaseProcessing(session.companyId, session.caseId, {
-        pgwpIntake: { ...session.answers, whatsappIntakePhase: "complete", whatsappIntakeCompletedAt: new Date().toISOString() },
+        pgwpIntake: {
+          ...session.answers,
+          whatsappIntakePhase: "complete",
+          whatsappIntakeCompletedAt: new Date().toISOString(),
+          ...(session.validationFlags && session.validationFlags.length > 0
+            ? { _intakeValidationFlags: session.validationFlags }
+            : {}),
+        },
         aiStatus: "intake_complete"
       });
       await completeIntake(session);
