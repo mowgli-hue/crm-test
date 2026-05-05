@@ -428,8 +428,11 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
             sv(dom[:4],  "Page1","MaritalStatus","Current","b","MarriageDate","FromYr")
             sv(dom[5:7], "Page1","MaritalStatus","Current","b","MarriageDate","FromMM")
             sv(dom[8:],  "Page1","MaritalStatus","Current","b","MarriageDate","FromDD")
+    # Previous marriage / common-law: always write the Y/N indicator so the No
+    # box ticks for clients who weren't previously married. Paras's verified
+    # form: PrevMarriedIndicator = "N".
     if data["previously_married"]:
-        sv("1",                               "Page2","MaritalStatus","PrevMarriage","PrevMarriedIndicator")
+        sv("Y",                               "Page2","MaritalStatus","PrevMarriage","PrevMarriedIndicator")
         sv(data["prev_spouse_family_name"],   "Page2","MaritalStatus","PrevMarriage","PMFamilyName")
         sv(data["prev_spouse_given_name"],    "Page2","MaritalStatus","PrevMarriage","PMGivenName")
         sv(data["prev_relationship_type"],    "Page2","MaritalStatus","PrevMarriage","TypeOfRelationship")
@@ -438,6 +441,8 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
         sv(data["prev_spouse_dob_day"],       "Page2","MaritalStatus","PrevMarriage","dob","DOBDay")
         sv(data["prev_spouse_dob_month"],     "Page2","MaritalStatus","PrevMarriage","dob","DOBMonth")
         sv(data["prev_spouse_dob_year"],      "Page2","MaritalStatus","PrevMarriage","dob","DOBYear")
+    else:
+        sv("N",                               "Page2","MaritalStatus","PrevMarriage","PrevMarriedIndicator")
 
     # ── SECTION 5: Languages ─────────────────────────────────────
     sv(data["native_language"],      "Page2","Languages","nativeLang")
@@ -455,16 +460,25 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
     sv(data["passport_expiry_year"],  "Page2","Passport","Expiry","YYYY")
     sv(data["passport_expiry_month"], "Page2","Passport","Expiry","MM")
     sv(data["passport_expiry_day"],   "Page2","Passport","Expiry","DD")
+    # National ID: always write the Y/N indicator so the No box ticks for the
+    # 99% of clients without a national ID. When Yes, also write the document
+    # details. Paras's verified form: natIDIndicator = "N".
     if data["has_national_id"]:
-        sv("1",                            "Page2","natID","q1","natIDIndicator")
+        sv("Y",                            "Page2","natID","q1","natIDIndicator")
         sv(data["national_id_number"],     "Page2","natID","natIDdocs","DocNum","DocNum")
         sv(data["national_id_country"],    "Page2","natID","natIDdocs","CountryofIssue","CountryofIssue")
         sv(data["national_id_issue_date"], "Page2","natID","natIDdocs","IssueDate","IssueDate")
         sv(data["national_id_expiry_date"],"Page2","natID","natIDdocs","ExpiryDate")
+    else:
+        sv("N",                            "Page2","natID","q1","natIDIndicator")
+
+    # US PR Card (green card): same pattern. Paras's verified form: usCardIndicator = "N".
     if data["has_us_card"]:
-        sv("1",                      "Page2","USCard","q1","usCardIndicator")
+        sv("Y",                      "Page2","USCard","q1","usCardIndicator")
         sv(data["us_card_number"],   "Page2","USCard","usCarddocs","DocNum","DocNum")
         sv(data["us_card_expiry_date"],"Page2","USCard","usCarddocs","ExpiryDate")
+    else:
+        sv("N",                      "Page2","USCard","q1","usCardIndicator")
 
     # ── SECTION 7: Contact Information ───────────────────────────
     sv(data["mailing_po_box"],       "Page2","ContactInformation","Mailing","AddrLine1","POBox")
