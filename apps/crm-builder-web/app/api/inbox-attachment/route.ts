@@ -107,11 +107,22 @@ export async function GET(request: NextRequest) {
   // For everything else, force attachment so PDFs etc. don't open in tab.
   const disposition = mime.startsWith("image/") ? "inline" : "attachment";
 
+  // ── Filename encoding (RFC 5987 / RFC 6266) ──
+  // HTTP headers must be ASCII (Node's strict ByteString validator throws on
+  // any char > 255). Filenames with curly apostrophes ('), accented letters,
+  // or non-Latin scripts (e.g. "Jasmeen's Document.pdf" — index 6 is U+2019)
+  // crash the Response constructor. The fix: provide an ASCII-safe fallback
+  // in `filename=` and the real Unicode version in `filename*=UTF-8''<encoded>`.
+  // Modern browsers (all ≥2010) honor the starred parameter for the actual
+  // saved filename.
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
+  const encoded = encodeURIComponent(filename);
+
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,
     headers: {
       "Content-Type": mime,
-      "Content-Disposition": `${disposition}; filename="${filename.replace(/"/g, "")}"`,
+      "Content-Disposition": `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`,
       "Content-Length": String(buffer.length),
       "Cache-Control": "private, max-age=300",
     },
