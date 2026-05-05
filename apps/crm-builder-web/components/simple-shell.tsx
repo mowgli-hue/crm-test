@@ -6921,6 +6921,129 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                         )}
 
+                        
+                        {/* ── PGWP Submission Package Assembly ── */}
+
+                                                {selectedCase.formType.toLowerCase().includes("pgwp") || selectedCase.formType.toLowerCase().includes("post-graduation") || selectedCase.formType.toLowerCase().includes("post graduation") ? (
+
+                                                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 flex items-center justify-between gap-3 flex-wrap">
+
+                                                    <div>
+
+                                                      <p className="text-xs font-bold text-indigo-900">📦 Submission Package</p>
+
+                                                      <p className="text-[10px] text-indigo-700 mt-0.5">
+
+                                                        Assembles all docs into a Drive folder with standardized names. Generates IMM5476 + bundles supporting docs into Client Info PDF.
+
+                                                      </p>
+
+                                                    </div>
+
+                                                    <button
+
+                                                      onClick={async () => {
+
+                                                        setCaseActionStatus("📦 Assembling submission package...");
+
+                                                        const res = await apiFetch(`/cases/${selectedCase.id}/submission-package`, {
+
+                                                          method: "POST",
+
+                                                          headers: { "Content-Type": "application/json" },
+
+                                                          body: JSON.stringify({ systemToken: "newton-recovery-2024" }),
+
+                                                        }).catch(() => null);
+
+                                                        const d = await res?.json().catch(() => ({}));
+
+
+                                                        if (!res?.ok) {
+
+                                                          // Missing docs case — show explicit list
+
+                                                          if (d?.missingRequired && Array.isArray(d.missingRequired) && d.missingRequired.length > 0) {
+
+                                                            const list = d.missingRequired.map((m: string) => `  • ${m}`).join("\n");
+
+                                                            alert(`Cannot generate submission package — missing required docs:\n\n${list}\n\nUpload the missing docs (or generate the missing forms) and try again.`);
+
+                                                            setCaseActionStatus("");
+
+                                                            return;
+
+                                                          }
+
+                                                          // Other error
+
+                                                          const msg = d?.error || (d?.errors && d.errors.join(", ")) || `Failed (${res?.status})`;
+
+                                                          setCaseActionStatus(`❌ ${msg}`);
+
+                                                          setTimeout(() => setCaseActionStatus(""), 6000);
+
+                                                          return;
+
+                                                        }
+
+
+                                                        const fileCount = (d.filesAdded || []).length;
+
+                                                        const warningSuffix = d.warnings && d.warnings.length > 0 ? ` (${d.warnings.length} warning${d.warnings.length === 1 ? "" : "s"})` : "";
+
+                                                        setCaseActionStatus(`✅ Package ready — ${fileCount} file${fileCount === 1 ? "" : "s"} in Drive folder${warningSuffix}`);
+
+
+                                                        // Refresh documents list so the new files appear in the Docs tab
+
+                                                        const docsRes = await apiFetch(`/cases/${selectedCase.id}/documents`);
+
+                                                        const docsData = await docsRes?.json().catch(() => ({}));
+
+                                                        if (docsData?.documents) setDocuments(docsData.documents);
+
+
+                                                        // Open the Drive folder in a new tab
+
+                                                        if (d.folderLink) {
+
+                                                          window.open(d.folderLink, "_blank");
+
+                                                        }
+
+
+                                                        // Show warnings (non-blocking) in console for staff visibility
+
+                                                        if (d.warnings && d.warnings.length > 0) {
+
+                                                          console.warn("Submission package warnings:", d.warnings);
+
+                                                        }
+
+                                                        if (d.errors && d.errors.length > 0) {
+
+                                                          console.warn("Submission package non-fatal errors:", d.errors);
+
+                                                        }
+
+
+                                                        setTimeout(() => setCaseActionStatus(""), 6000);
+
+                                                      }}
+
+                                                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 shrink-0"
+
+                                                    >
+
+                                                      📦 Assemble Submission
+
+                                                    </button>
+
+                                                  </div>
+
+                                                ) : null}
+
                         {/* ── IRCC Portal Script Generator ── */}
                         {(selectedCase.formType.toLowerCase().includes("visitor visa") || selectedCase.formType.toLowerCase().includes("trv")) && (
                           <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 flex items-center justify-between gap-3 flex-wrap">

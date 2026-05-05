@@ -1,0 +1,449 @@
+/**
+ * PGWP Submission Package Assembly
+ *
+ * Given a case ID, this module:
+ *   1. Validates that all required documents are present on the case
+ *   2. Generates IMM5476 (Use of Representative) form
+ *   3. Bundles client supporting documents (study permit + IELTS + previous
+ *      school records) into a single Client_Info PDF
+ *   4. Copies/uploads everything into a Submission_<First>_<Last> subfolder
+ *      in the case's Drive folder with standardized filenames
+ *
+ * Naming convention (per Newton scope decision A):
+ *   Passport_<First>_<Last>.pdf
+ *   Photo_<First>_<Last>.<ext>
+ *   Transcript_<First>_<Last>.pdf
+ *   Completion_Letter_<First>_<Last>.pdf
+ *   IMM5710e_<First>_<Last>.pdf
+ *   IMM5476e_<First>_<Last>.pdf
+ *   Representative_Submission_Letter_<First>_<Last>.pdf
+ *   Client_Info_<First>_<Last>.pdf
+ *
+ * Re-running on the same case overwrites the existing submission subfolder
+ * (per scope decision Q4 = "existing").
+ *
+ * Required documents — generation blocks if any are missing:
+ *   - passport, photo, transcript, completion_letter (uploaded by client)
+ *   - imm_form (specifically IMM5710 — must already be generated)
+ *   - submission_letter (must already be generated)
+ *
+ * Optional documents — included if present, skipped silently if not:
+ *   - study_permit (current + previous)
+ *   - language_test (IELTS / CELPIP)
+ *   - older transcripts and LOAs (e.g., from a previous school)
+ */
+
+import { getCase, listDocuments } from "@/lib/store";
+import { CaseItem, DocumentItem } from "@/lib/models";
+import {
+  getOrCreateDriveSubfolder,
+  uploadFileToDriveFolder,
+  copyDriveFileToFolder,
+  downloadDriveFileBytes,
+  extractDriveFileId,
+  extractDriveFolderId,
+  emptyDriveFolder,
+} from "@/lib/google-drive";
+import { categorizeDocumentByFilename, DocCategory } from "@/lib/document-categories";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SubmissionPackageResult = {
+  ok: boolean;
+  folderLink?: string;
+  folderId?: string;
+  filesAdded?: Array<{ name: string; link: string; source: "copied" | "generated" }>;
+  missingRequired?: string[];   // populated when ok=false
+  errors?: string[];            // non-fatal errors during assembly
+  warnings?: string[];          // e.g., optional docs not found
+};
+
+type CategorizedDoc = DocumentItem & {
+  category: DocCategory;
+  driveFileId: string | null;
+};
+
+// Required categories for a complete PGWP submission
+const REQUIRED_FOR_PGWP: DocCategory[] = [
+  "passport",
+  "photo",
+  "transcript",
+  "completion_letter",
+  "imm_form",        // IMM5710 must be already generated
+  "submission_letter",
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function splitClientName(fullName: string): { first: string; last: string } {
+  const parts = (fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { first: "Client", last: "" };
+  if (parts.length === 1) return { first: parts[0], last: "" };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
+function safeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9 _.-]/g, "").trim() || "File";
+}
+
+function buildStandardName(template: string, firstName: string, lastName: string, extension: string): string {
+  const f = safeFileName(firstName).replace(/\s+/g, "_");
+  const l = safeFileName(lastName).replace(/\s+/g, "_");
+  const stem = template.replace("<First>", f).replace("<Last>", l).replace(/_+$/, "");
+  return `${stem}.${extension.replace(/^\./, "")}`;
+}
+
+function inferExtension(filename: string, fallback = "pdf"): string {
+  const m = filename.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : fallback;
+}
+
+function categorizeDocs(documents: DocumentItem[]): CategorizedDoc[] {
+  return documents.map((d) => ({
+    ...d,
+    category: categorizeDocumentByFilename(d.name),
+    driveFileId: extractDriveFileId(d.link),
+  }));
+}
+
+/**
+ * Pick "the" doc for each required category.
+ * - For passport/photo/completion_letter/submission_letter: most recently uploaded
+ * - For transcript: most recently uploaded is treated as the CURRENT school transcript;
+ *     older transcripts are pushed into the Client Info bundle
+ * - For imm_form: prefer IMM5710 specifically; fall back to other IMM forms
+ */
+function selectPrimaryDocs(categorized: CategorizedDoc[]): {
+  passport?: CategorizedDoc;
+  photo?: CategorizedDoc;
+  transcript?: CategorizedDoc;
+  completionLetter?: CategorizedDoc;
+  imm5710?: CategorizedDoc;
+  imm5476?: CategorizedDoc;
+  submissionLetter?: CategorizedDoc;
+  olderTranscripts: CategorizedDoc[];
+  studyPermits: CategorizedDoc[];
+  languageTests: CategorizedDoc[];
+  loas: CategorizedDoc[];
+} {
+  // Sort by uploadedAt descending so .find() picks the most recent
+  const byDateDesc = [...categorized].sort((a, b) => {
+    const aT = a.uploadedAt ? Date.parse(a.uploadedAt) : 0;
+    const bT = b.uploadedAt ? Date.parse(b.uploadedAt) : 0;
+    return bT - aT;
+  });
+
+  const passport = byDateDesc.find((d) => d.category === "passport");
+  const photo = byDateDesc.find((d) => d.category === "photo");
+  const completionLetter = byDateDesc.find((d) => d.category === "completion_letter");
+  const submissionLetter = byDateDesc.find((d) => d.category === "submission_letter");
+
+  // IMM forms: prefer IMM5710 by filename match, fall back to first imm_form
+  const immForms = byDateDesc.filter((d) => d.category === "imm_form");
+  const imm5710 = immForms.find((d) => /\b5710/i.test(d.name)) || immForms[0];
+  const imm5476 = immForms.find((d) => /\b5476/i.test(d.name));
+
+  // Transcripts: newest = current; older = into bundle
+  const allTranscripts = byDateDesc.filter((d) => d.category === "transcript");
+  const transcript = allTranscripts[0];
+  const olderTranscripts = allTranscripts.slice(1);
+
+  const studyPermits = byDateDesc.filter((d) => d.category === "study_permit");
+  const languageTests = byDateDesc.filter((d) => d.category === "language_test");
+  const loas = byDateDesc.filter((d) => d.category === "loa");
+
+  return {
+    passport, photo, transcript, completionLetter,
+    imm5710, imm5476, submissionLetter,
+    olderTranscripts, studyPermits, languageTests, loas,
+  };
+}
+
+function validateRequired(
+  primary: ReturnType<typeof selectPrimaryDocs>
+): { ok: boolean; missing: string[] } {
+  const missing: string[] = [];
+  if (!primary.passport)         missing.push("Passport (upload as 'passport.pdf' or similar)");
+  if (!primary.photo)            missing.push("Digital photo");
+  if (!primary.transcript)       missing.push("Official transcript");
+  if (!primary.completionLetter) missing.push("Completion letter");
+  if (!primary.imm5710)          missing.push("IMM5710 (use 'Generate Forms' button first)");
+  if (!primary.submissionLetter) missing.push("Representative Submission Letter (use letter generator first)");
+  return { ok: missing.length === 0, missing };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF Service callers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function pdfServiceUrl(): string {
+  return process.env.PDF_SERVICE_URL || "https://crm-test-production-b755.up.railway.app";
+}
+
+async function generateImm5476(applicantData: Record<string, unknown>): Promise<Buffer> {
+  const res = await fetch(`${pdfServiceUrl()}/fill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ formId: "imm5476", data: applicantData }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`IMM5476 generation failed: ${(err as { error?: string }).error || res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function bundleClientInfo(
+  files: Array<{ filename: string; bytes: Buffer }>
+): Promise<Buffer> {
+  if (files.length === 0) {
+    throw new Error("bundleClientInfo: no files to bundle");
+  }
+  const payload = {
+    files: files.map((f) => ({
+      filename: f.filename,
+      base64: f.bytes.toString("base64"),
+    })),
+  };
+  const res = await fetch(`${pdfServiceUrl()}/bundle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Bundle failed: ${(err as { error?: string }).error || res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMM5476 input mapper — pulls applicant fields out of pgwpIntake / case
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildImm5476Data(caseItem: CaseItem): Record<string, unknown> {
+  const intake = (caseItem.pgwpIntake as Record<string, unknown>) || {};
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Try multiple intake field names (clients may store under different keys)
+  const firstName =
+    (intake.firstName as string) ||
+    (intake.first_name as string) ||
+    (intake.givenName as string) ||
+    splitClientName(caseItem.client || "").first;
+  const lastName =
+    (intake.lastName as string) ||
+    (intake.last_name as string) ||
+    (intake.familyName as string) ||
+    splitClientName(caseItem.client || "").last;
+  const dob =
+    (intake.dateOfBirth as string) ||
+    (intake.dob as string) ||
+    "";
+  const email =
+    (intake.email as string) ||
+    "";
+  const phone =
+    (intake.phone as string) ||
+    (intake.q7 as string) ||  // q7 of PGWP intake is phone
+    (caseItem.phone as string) ||
+    "";
+  const uci =
+    (intake.uci as string) ||
+    (intake.UCI as string) ||
+    "";
+
+  // Application type — derive from case formType (always "Post Graduate Work Permit" for PGWP)
+  const formType = (caseItem.formType || "").toLowerCase();
+  let applicationType = "Post Graduate Work Permit";
+  if (formType.includes("study permit")) applicationType = "Study Permit Extension";
+  else if (formType.includes("visitor")) applicationType = "Temporary Resident Visa";
+  else if (formType.includes("trv")) applicationType = "Temporary Resident Visa";
+  else if (formType.includes("work permit")) applicationType = "Work Permit";
+
+  return {
+    applicant_family_name:  lastName,
+    applicant_given_name:   firstName,
+    applicant_dob:          dob,
+    applicant_email:        email,
+    applicant_phone:        phone,
+    application_type:       applicationType,
+    applicant_uci:          uci,
+    rep_signed_date:        today,
+    applicant_signed_date:  today,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drive folder resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getCaseDriveFolderId(caseItem: CaseItem): string | null {
+  // Prefer applicationFormsLink's parent (the main case folder), fall back to docsUploadLink
+  const candidates = [
+    caseItem.docsUploadLink,
+    caseItem.applicationFormsLink,
+    caseItem.submittedFolderLink,
+  ].filter(Boolean) as string[];
+  for (const link of candidates) {
+    const id = extractDriveFolderId(link);
+    if (id) return id;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function assemblePgwpSubmissionPackage(
+  companyId: string,
+  caseId: string
+): Promise<SubmissionPackageResult> {
+  const caseItem = await getCase(companyId, caseId);
+  if (!caseItem) return { ok: false, errors: [`Case ${caseId} not found`] };
+
+  // Step 1: load + categorize documents
+  const docs = await listDocuments(companyId, caseId);
+  const categorized = categorizeDocs(docs);
+  const primary = selectPrimaryDocs(categorized);
+
+  // Step 2: validate required docs (Q3 = block on missing)
+  const validation = validateRequired(primary);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      missingRequired: validation.missing,
+      errors: ["Required documents are missing. Upload or generate them first."],
+    };
+  }
+
+  // Step 3: resolve target Drive folder. We use the case's docsUploadLink folder
+  // as the parent and create/reuse a "Submission_<First>_<Last>" subfolder inside.
+  const caseFolderId = getCaseDriveFolderId(caseItem);
+  if (!caseFolderId) {
+    return {
+      ok: false,
+      errors: ["No Drive folder set for this case. Generate Forms first to set up Drive folders."],
+    };
+  }
+
+  const { first, last } = splitClientName(caseItem.client || "Client");
+  const subfolderName = buildStandardName("Submission_<First>_<Last>", first, last, "")
+    .replace(/^\.|\.$/g, "")
+    .replace(/\.+$/, "");
+
+  const subfolder = await getOrCreateDriveSubfolder(caseFolderId, subfolderName);
+  const submissionFolderId = subfolder.id;
+
+  // Q4 = "existing" → wipe before re-populating (idempotent regeneration)
+  const wipe = await emptyDriveFolder(submissionFolderId);
+  const errors: string[] = [];
+  if (wipe.errors.length > 0) {
+    errors.push(`Folder cleanup partial: ${wipe.errors.length} files could not be removed`);
+  }
+
+  const filesAdded: SubmissionPackageResult["filesAdded"] = [];
+  const warnings: string[] = [];
+
+  // Step 4: copy top-level required docs with standardized names
+  const copyJobs: Array<{ doc: CategorizedDoc; template: string; ext?: string }> = [
+    { doc: primary.passport!,         template: "Passport_<First>_<Last>" },
+    { doc: primary.photo!,            template: "Photo_<First>_<Last>" },
+    { doc: primary.transcript!,       template: "Transcript_<First>_<Last>" },
+    { doc: primary.completionLetter!, template: "Completion_Letter_<First>_<Last>" },
+    { doc: primary.imm5710!,          template: "IMM5710e_<First>_<Last>" },
+    { doc: primary.submissionLetter!, template: "Representative_Submission_Letter_<First>_<Last>" },
+  ];
+
+  for (const job of copyJobs) {
+    if (!job.doc.driveFileId) {
+      errors.push(`${job.doc.name}: cannot copy (no Drive file ID)`);
+      continue;
+    }
+    const ext = job.ext || inferExtension(job.doc.name, "pdf");
+    const newName = buildStandardName(job.template, first, last, ext);
+    try {
+      const copied = await copyDriveFileToFolder({
+        sourceFileId: job.doc.driveFileId,
+        newName,
+        targetFolderId: submissionFolderId,
+      });
+      filesAdded.push({ name: newName, link: copied.webViewLink, source: "copied" });
+    } catch (e) {
+      errors.push(`Copy failed for ${job.doc.name}: ${(e as Error).message}`);
+    }
+  }
+
+  // Step 5: generate IMM5476 and upload to subfolder
+  try {
+    const imm5476Data = buildImm5476Data(caseItem);
+    const imm5476Bytes = await generateImm5476(imm5476Data);
+    const imm5476Name = buildStandardName("IMM5476e_<First>_<Last>", first, last, "pdf");
+    const uploaded = await uploadFileToDriveFolder({
+      folderId: submissionFolderId,
+      fileName: imm5476Name,
+      fileBuffer: imm5476Bytes,
+      mimeType: "application/pdf",
+    });
+    filesAdded.push({ name: imm5476Name, link: uploaded.webViewLink, source: "generated" });
+  } catch (e) {
+    errors.push(`IMM5476 generation failed: ${(e as Error).message}`);
+  }
+
+  // Step 6: bundle Client_Info from study permits + language tests + older transcripts + loas
+  const bundleSources: CategorizedDoc[] = [
+    ...primary.studyPermits,
+    ...primary.languageTests,
+    ...primary.olderTranscripts,
+    ...primary.loas,
+  ];
+
+  if (bundleSources.length === 0) {
+    warnings.push("No study permit / IELTS / prior school records found — Client_Info bundle skipped.");
+  } else {
+    try {
+      const fetchedFiles: Array<{ filename: string; bytes: Buffer }> = [];
+      for (const src of bundleSources) {
+        if (!src.driveFileId) {
+          warnings.push(`Skipped from bundle (no Drive ID): ${src.name}`);
+          continue;
+        }
+        try {
+          const bytes = await downloadDriveFileBytes(src.driveFileId);
+          fetchedFiles.push({ filename: src.name, bytes });
+        } catch (e) {
+          warnings.push(`Skipped from bundle (download failed): ${src.name}`);
+        }
+      }
+      if (fetchedFiles.length > 0) {
+        const bundled = await bundleClientInfo(fetchedFiles);
+        const bundleName = buildStandardName("Client_Info_<First>_<Last>", first, last, "pdf");
+        const uploaded = await uploadFileToDriveFolder({
+          folderId: submissionFolderId,
+          fileName: bundleName,
+          fileBuffer: bundled,
+          mimeType: "application/pdf",
+        });
+        filesAdded.push({ name: bundleName, link: uploaded.webViewLink, source: "generated" });
+      } else {
+        warnings.push("Client_Info bundle: all source files unreachable — skipped.");
+      }
+    } catch (e) {
+      errors.push(`Client_Info bundle failed: ${(e as Error).message}`);
+    }
+  }
+
+  return {
+    ok: true,
+    folderLink: subfolder.webViewLink,
+    folderId: submissionFolderId,
+    filesAdded,
+    errors: errors.length > 0 ? errors : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+}

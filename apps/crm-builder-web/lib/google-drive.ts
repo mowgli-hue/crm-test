@@ -502,3 +502,131 @@ export async function syncCaseToUnderReviewSheet(caseItem: {
     console.error("syncCaseToUnderReviewSheet error:", (e as Error).message);
   }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// Submission-package helpers (Increment 3)
+// Append-only addition. Uses existing private getDriveAccessToken().
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Download the binary contents of a Drive file by its file ID.
+ * Used by the submission-package orchestrator to fetch already-uploaded
+ * client docs (passport, photo, study permit, IELTS, etc.) so they can
+ * be sent to the bundler service.
+ */
+export async function downloadDriveFileBytes(fileId: string): Promise<Buffer> {
+  if (!fileId) throw new Error("downloadDriveFileBytes: empty fileId");
+  const accessToken = await getDriveAccessToken();
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive download failed for ${fileId} (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const arrayBuf = await res.arrayBuffer();
+  return Buffer.from(arrayBuf);
+}
+
+/**
+ * Server-side copy of a Drive file into a target folder, with a new name.
+ * Drive copies the file metadata + content without re-uploading bytes
+ * through our server. Much faster than download+re-upload.
+ *
+ * Used by the submission-package orchestrator to assemble standardized
+ * filenames in the submission subfolder.
+ */
+export async function copyDriveFileToFolder(input: {
+  sourceFileId: string;
+  newName: string;
+  targetFolderId: string;
+}): Promise<DriveFileResult> {
+  const { sourceFileId, newName, targetFolderId } = input;
+  if (!sourceFileId || !targetFolderId) {
+    throw new Error("copyDriveFileToFolder: sourceFileId and targetFolderId required");
+  }
+  const accessToken = await getDriveAccessToken();
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(sourceFileId)}/copy?supportsAllDrives=true&fields=id,webViewLink`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: sanitizeFolderName(newName),
+      parents: [targetFolderId],
+    }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive copy failed for ${sourceFileId} → ${newName} (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { id?: string; webViewLink?: string };
+  if (!json.id || !json.webViewLink) {
+    throw new Error("Drive copy response missing id/webViewLink");
+  }
+  return { id: json.id, webViewLink: json.webViewLink };
+}
+
+/**
+ * Look up a Drive file's ID from its webViewLink. The CRM stores doc
+ * links as full URLs (e.g., https://drive.google.com/file/d/{id}/view?usp=...);
+ * this extracts the ID for use with copy/download operations.
+ */
+export function extractDriveFileId(webViewLink: string | undefined | null): string | null {
+  if (!webViewLink) return null;
+  // Pattern 1: https://drive.google.com/file/d/{id}/view?...
+  const m1 = webViewLink.match(/\/file\/d\/([a-zA-Z0-9_-]{25,})/);
+  if (m1) return m1[1];
+  // Pattern 2: https://drive.google.com/open?id={id}
+  const m2 = webViewLink.match(/[?&]id=([a-zA-Z0-9_-]{25,})/);
+  if (m2) return m2[1];
+  // Pattern 3: bare id
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(webViewLink)) return webViewLink;
+  return null;
+}
+
+/**
+ * Delete all children of a Drive folder. Used for "overwrite existing folder"
+ * regeneration semantics — we wipe the submission subfolder before re-populating.
+ *
+ * Note: this trashes files (Drive's default), not permanent delete. They go
+ * to the service account's Drive trash where they can be recovered.
+ */
+export async function emptyDriveFolder(folderId: string): Promise<{ removed: number; errors: string[] }> {
+  if (!folderId) throw new Error("emptyDriveFolder: empty folderId");
+  const accessToken = await getDriveAccessToken();
+  const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed=false`)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+  const listRes = await fetch(listUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  if (!listRes.ok) {
+    const text = await listRes.text();
+    throw new Error(`Drive list failed (${listRes.status}): ${text.slice(0, 200)}`);
+  }
+  const data = (await listRes.json()) as { files?: Array<{ id: string; name: string }> };
+  const children = data.files || [];
+
+  const errors: string[] = [];
+  let removed = 0;
+  for (const child of children) {
+    const delRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(child.id)}?supportsAllDrives=true`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (delRes.ok || delRes.status === 204) {
+      removed++;
+    } else {
+      const text = await delRes.text();
+      errors.push(`${child.name}: ${delRes.status} ${text.slice(0, 100)}`);
+    }
+  }
+  return { removed, errors };
+}
