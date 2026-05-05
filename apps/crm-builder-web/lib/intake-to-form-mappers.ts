@@ -20,6 +20,19 @@
  * `fill_imm5710.py`, etc.).
  */
 
+import {
+  textToCountryCode,
+  textToProvinceCode,
+  textToMaritalCode,
+  textToPhoneTypeCode,
+  textToVisitPurposeCode,
+  textToStatusCode,
+  textToLanguageCode,
+} from "./ircc-codes";
+
+// Newton's hardcoded email — IRCC correspondence always goes here, never to client
+const NEWTON_EMAIL = "newtonimmigration@gmail.com";
+
 // ── Shared parsing helpers ────────────────────────────────────────────────
 
 const parseAddress = (raw: string) => {
@@ -447,9 +460,15 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   const { qN } = buildLookup(intake);
   const ft = (formType || "").toLowerCase();
 
-  // Q2: Marital status
+  // ─── Q1: Other names (alias) ───
+  const aliasRaw = qN(1);
+  const hasAlias = isYes(aliasRaw);
+  const aliasDetails = hasAlias ? detailsAfterYN(aliasRaw) : "";
+  const aliasNameParts = hasAlias ? aliasDetails.split(/\s+/).filter(Boolean) : [];
+
+  // ─── Q2: Marital status (NUMERIC code "01"/"02"/etc) ───
   const maritalRaw = stripPrefix(qN(2) || intake.maritalStatus || "Single");
-  const marital = (() => {
+  const maritalText = (() => {
     const v = maritalRaw.toLowerCase();
     if (v.startsWith("mar")) return "Married";
     if (v.startsWith("com")) return "Common-Law";
@@ -458,58 +477,62 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     if (v.startsWith("sep")) return "Separated";
     return "Single";
   })();
+  const maritalCode = textToMaritalCode(maritalText) || "02"; // "02" = Single fallback
+  const isMarried = maritalText === "Married" || maritalText === "Common-Law";
 
-  // Q3: Spouse details (only if married/common-law and answer isn't "NA")
+  // ─── Q3: Spouse details (only fill if married/common-law) ───
   const spouseRaw = qN(3);
-  const isMarried = marital === "Married" || marital === "Common-Law";
   const spouseProvided = isMarried && !isNo(spouseRaw) && spouseRaw.toLowerCase() !== "na";
   const spouseParts = spouseProvided ? spouseRaw.split(",").map((p) => p.trim()) : [];
   const spouseName = spouseParts[0] || "";
   const spouseNameParts = spouseName.split(/\s+/).filter(Boolean);
 
-  // Q4: Previous marriage
+  // ─── Q4: Previous marriage (default NO) ───
   const prevRaw = qN(4);
   const hasPrev = isYes(prevRaw);
   const prevDetails = hasPrev ? detailsAfterYN(prevRaw) : "";
   const prevParts = hasPrev ? prevDetails.split(/[,;]+/).map((p) => p.trim()) : [];
   const prevSpouseNameParts = (prevParts[0] || "").split(/\s+/).filter(Boolean);
 
-  // Q5/Q6: Addresses
-  const mailing = parseAddress(qN(5));
+  // ─── Q5/Q6: Addresses ───
+  const mailing = parseAddress(qN(5) || intake.address || "");
   const resRaw = qN(6);
   const resSame = isNo(resRaw) || resRaw.toLowerCase().includes("same") || !resRaw;
   const residential = resSame ? mailing : parseAddress(resRaw);
 
-  // Q7: Phone
-  const phone = parsePhone(qN(7));
+  // Convert mailing province/country to NUMERIC codes
+  const mailingProvCode = textToProvinceCode(mailing.province);
+  const mailingCountryCode = textToCountryCode("Canada"); // PGWP applicants are in Canada
 
-  // Q8: Original entry — "2023-08-11, Vancouver International Airport"
+  // ─── Q7: Phone (mobile = code 02) ───
+  const phone = parsePhone(qN(7) || intake.phone || "");
+  const phoneTypeCode = textToPhoneTypeCode("mobile");
+
+  // ─── Q8/Q9: Original entry to Canada ───
   const entryRaw = qN(8);
   const entryParts = entryRaw.split(",").map((p) => p.trim());
-  const originalEntryDate = entryParts[0] || "";
+  const originalEntryDate = entryParts[0] || intake.originalEntryDate || "";
   const originalEntryPlace = entryParts[1] || "";
 
-  // Q9: Purpose of original visit
-  const purposeRaw = qN(9).toLowerCase();
-  const originalEntryPurpose =
+  const purposeRaw = (qN(9) || "").toLowerCase();
+  const purposeText =
     purposeRaw.includes("stud") ? "Study" :
     purposeRaw.includes("work") ? "Work" :
-    purposeRaw.includes("visit") || purposeRaw.includes("tour") ? "Visit" :
-    ft.includes("study") ? "Study" : "Work";
+    purposeRaw.includes("visit") || purposeRaw.includes("tour") ? "Tourism" :
+    "Study"; // PGWP applicants are almost always study-permit holders
+  const purposeCode = textToVisitPurposeCode(purposeText);
 
-  // ── BUG FIX: Q10 is "Any recent entry? Yes/No + details" ──
-  // Recent entry is now empty when client said no, instead of duplicating Q8.
+  // ─── Q10: Recent entry (only fill if YES) ───
   const recentRaw = qN(10);
   const hasRecentEntry = isYes(recentRaw);
   const recentDetails = hasRecentEntry ? stripYesNoPrefix(recentRaw) : "";
   const recentParts = hasRecentEntry ? recentDetails.split(",").map((p) => p.trim()) : [];
-
   const datePattern = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/;
   const recentDateCandidate = recentParts[0] || "";
   const recentEntryDate = datePattern.test(recentDateCandidate) ? recentDateCandidate : "";
   const recentEntryPlace = recentEntryDate ? (recentParts[1] || "") : (recentParts[0] || "");
 
-  // Q11/Q12/Q13: Background
+  // ─── Q11/Q12/Q13: Background — DEFAULT NO ───
   const refusalRaw = qN(11);
   const hasRefusal = isYes(refusalRaw);
   const medicalRaw = qN(12);
@@ -517,10 +540,8 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   const criminalRaw = qN(13);
   const hasCriminal = isYes(criminalRaw);
 
-  // ── BUG FIX: Q14 = Employment, Q15 = Education ──
-  // Plus fallback: if Q15 looks more like employment than education,
-  // include it in employment scan. Catches clients who put a 2nd job
-  // in the education slot.
+  // ─── Q14: Employment + Q15: Education ───
+  // For PGWP, Education = the Canadian DLI program completed (not highest after 12th).
   const employmentRaw = qN(14);
   const educationRaw = qN(15);
   const additionalNotes = stripPrefix(intake.additionalNotes || "");
@@ -533,37 +554,87 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   if (educationLooksLikeEmployment) employmentSources.push(educationRaw);
   if (additionalNotes && looksLikeEmployment(additionalNotes)) employmentSources.push(additionalNotes);
 
-  const employment = employmentSources.length > 0
+  const realJobs = employmentSources.length > 0
     ? parseEmploymentBestEffort(employmentSources.join("\n"))
     : [];
 
+  // ─── EMPLOYMENT LEGAL COMPLIANCE (PGWP-specific) ───
+  // After completion-letter date, applicant is NOT allowed to work until PGWP approved.
+  // 1. Cap real jobs at completion-letter date (if known).
+  // 2. Add an "Unemployed / N/A" entry from completion date to current.
+  // If completionLetterDate is missing, we add nothing (better than fabricating dates) —
+  // a review flag is set below so staff can fix it before submission.
+  const completionLetterDate = intake.completionLetterDate || "";
+  const completionYear = completionLetterDate.slice(0, 4);
+  const completionMonth = completionLetterDate.slice(5, 7);
+
+  const cappedJobs = realJobs.map((j: any) => {
+    if (completionYear && (!j.to_year || j.to_year > completionYear)) {
+      return { ...j, to_year: completionYear, to_month: completionMonth || j.to_month || "" };
+    }
+    return j;
+  });
+
+  const cityForEmployment = residential.city || mailing.city || "";
+  const provForEmployment = textToProvinceCode(residential.province || mailing.province) || "";
+  const unemployedEntry = completionLetterDate ? {
+    from_year: completionYear,
+    from_month: completionMonth || "01",
+    occupation: "Unemployed",
+    employer: "N/A",
+    city: cityForEmployment,
+    country: "511",            // Canada (numeric)
+    prov_state: provForEmployment,
+    to_year: "",
+    to_month: "",
+  } : null;
+
+  // Order matters: filler maps employment[0] → EmpRec1 (most-recent slot on
+  // the form). Unemployed entry is the *current* state, so it goes FIRST,
+  // followed by older real jobs in EmpRec2/EmpRec3. Verified against Paras's
+  // filed form: EmpRec1 = Unemployed, with prior real jobs in subsequent slots.
+  const employment = unemployedEntry ? [unemployedEntry, ...cappedJobs] : cappedJobs;
+
+  // ─── Education: Canadian program (PGWP) ───
   const educationLooksValid = !educationLooksLikeEmployment && !!educationRaw && !isNo(educationRaw);
-  const eduParts = educationLooksValid ? educationRaw.split(",").map((p) => p.trim()) : [];
+  const eduParts = educationLooksValid ? educationRaw.split(",").map((p: string) => p.trim()) : [];
   const eduYears = educationLooksValid ? (educationRaw.match(/(20\d{2})/g) || []) : [];
 
-  // Q16: Native language — only fill if it looks like a real language name
+  // ─── Q16: Native language (NUMERIC code) ───
   const q16Raw = qN(16);
-  const nativeLang = looksLikeLanguage(q16Raw) ? q16Raw.split(/[,;]/)[0].trim() : "";
+  const nativeLangText = looksLikeLanguage(q16Raw) ? q16Raw.split(/[,;]/)[0].trim() : "";
+  const nativeLangCode = textToLanguageCode(nativeLangText);
 
-  // Q17: Language test
+  // ─── Q17: Language test — DEFAULT YES (PGWP requires it) ───
   const langTestRaw = qN(17);
-  const langTest = isYes(langTestRaw);
+  const langTest = !isNo(langTestRaw); // YES unless they explicitly said NO
   const langTestDetails = langTest ? detailsAfterYN(langTestRaw) : "";
 
-  // Q18: Plan to work in medical field
+  // ─── Q18: Plan to work in medical field ───
   const medicalFieldRaw = qN(18);
   const planMedicalField = isYes(medicalFieldRaw);
 
-  // Q1: Other name (alias)
-  const aliasRaw = qN(1);
-  const hasAlias = isYes(aliasRaw);
-  const aliasDetails = hasAlias ? detailsAfterYN(aliasRaw) : "";
-  const aliasNameParts = hasAlias ? aliasDetails.split(/\s+/).filter(Boolean) : [];
-
-  // ── BUG FIX: work_permit_type was empty → IRCC PDF defaulted to "Start-up Business Class" ──
+  // ─── Work permit type (PGWP / SOWP / etc — text dropdown) ───
   const wpType = deriveWorkPermitType(formType);
 
-  // Identify any fields that need human review (review UI hook)
+  // ─── Place of birth: combine city + state ("Karnal, Haryana") ───
+  const birthCity = stripPrefix(intake.placeOfBirthCity || intake.cityOfBirth || "");
+  const birthState = stripPrefix(intake.placeOfBirthState || intake.stateOfBirth || "");
+  const placeBirthCombined = birthState ? `${birthCity}, ${birthState}` : birthCity;
+
+  // ─── Country codes (numeric) ───
+  const birthCountryText = stripPrefix(intake.countryOfBirth || "India");
+  const birthCountryCode = textToCountryCode(birthCountryText);
+  const citizenshipText = stripPrefix(intake.citizenship || birthCountryText);
+  const citizenshipCode = textToCountryCode(citizenshipText);
+
+  // ─── Current status: PGWP applicants are currently STUDENTS ───
+  // Dates from study permit (start → expiry).
+  const currentStatusCode = textToStatusCode("Student"); // "05"
+  const currentStatusFrom = intake.studyPermitStartDate || originalEntryDate;
+  const currentStatusTo = intake.studyPermitExpiryDate || "";
+
+  // ─── Review flags for staff to inspect before submitting ───
   const reviewFlags: string[] = [];
   if (!employmentLooksValid && employmentRaw && !isNo(employmentRaw)) {
     reviewFlags.push(`Q14 employment doesn't look like job details: "${employmentRaw}"`);
@@ -574,98 +645,140 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   if (q16Raw && !looksLikeLanguage(q16Raw)) {
     reviewFlags.push(`Q16 native language looks suspicious: "${q16Raw}"`);
   }
+  if (!completionLetterDate) {
+    reviewFlags.push(`Completion letter date missing — employment section will be incomplete`);
+  }
+  if (!intake.uci) {
+    reviewFlags.push(`UCI number missing — extract from study permit document and add to case`);
+  }
+  if (!intake.studyPermitExpiryDate) {
+    reviewFlags.push(`Study permit expiry date missing — current status To-date will be empty`);
+  }
 
   return {
     ...buildIdentitySection(intake),
-    // Section 1: Application type
+
+    // ── Section 1: Application type ──
+    // PGWP = applying for a NEW work permit (XFA NewEmployer=1, despite the misleading
+    // name — it actually means "applying for new permit / change conditions").
     applying_restore_status: ft.includes("restore"),
-    applying_extend_stay: !ft.includes("restore"),
-    applying_change_employer: ft.includes("lmia") || ft.includes("change employer"),
+    applying_extend_stay: false, // PGWP is NOT an extension of an existing permit
+    applying_change_employer: !ft.includes("restore") && !ft.includes("trp"),
     applying_trp: ft.includes("trp"),
 
-    // UCI from intake (rare)
+    // UCI from study permit (staff fills this on the case if missing from intake)
     uci_client_id: stripPrefix(intake.uci || ""),
 
-    // Q1: Other names
+    // ── Q1: Other names (alias) ──
     has_alias: hasAlias,
     alias_family_name: aliasNameParts.length > 1 ? aliasNameParts[aliasNameParts.length - 1] : "",
-    alias_given_name: aliasNameParts.length > 1 ? aliasNameParts.slice(0, -1).join(" ") : (aliasNameParts[0] || ""),
+    alias_given_name: aliasNameParts.length > 1
+      ? aliasNameParts.slice(0, -1).join(" ")
+      : (aliasNameParts[0] || ""),
 
-    // Q2-Q4: Marital
-    marital_status: marital,
-    spouse_family_name: spouseNameParts.length > 1 ? spouseNameParts[spouseNameParts.length - 1] : "",
-    spouse_given_name: spouseNameParts.length > 1 ? spouseNameParts.slice(0, -1).join(" ") : (spouseNameParts[0] || ""),
+    // ── Section 2: Personal — birth city includes state, country uses NUMERIC code ──
+    place_birth_city: placeBirthCombined,
+    place_birth_country: birthCountryCode,
+    citizenship_country: citizenshipCode,
+    // Passport country must also be numeric — buildIdentitySection sets it as
+    // text by default; verified against Paras's filed form (= "205" for India).
+    passport_country: citizenshipCode,
+
+    // ── Q2-Q4: Marital — NUMERIC code ──
+    marital_status: maritalCode,
+    spouse_family_name: spouseNameParts.length > 1
+      ? spouseNameParts[spouseNameParts.length - 1] : "",
+    spouse_given_name: spouseNameParts.length > 1
+      ? spouseNameParts.slice(0, -1).join(" ")
+      : (spouseNameParts[0] || ""),
     date_of_marriage: spouseProvided ? (spouseParts[1] || "") : "",
     spouse_status_in_canada: "",
+    spouse_canadian_citizen_or_pr: false, // default NO (most clients)
     previously_married: hasPrev,
-    prev_spouse_family_name: prevSpouseNameParts.length > 1 ? prevSpouseNameParts[prevSpouseNameParts.length - 1] : "",
-    prev_spouse_given_name: prevSpouseNameParts.length > 1 ? prevSpouseNameParts.slice(0, -1).join(" ") : (prevSpouseNameParts[0] || ""),
+    prev_spouse_family_name: prevSpouseNameParts.length > 1
+      ? prevSpouseNameParts[prevSpouseNameParts.length - 1] : "",
+    prev_spouse_given_name: prevSpouseNameParts.length > 1
+      ? prevSpouseNameParts.slice(0, -1).join(" ")
+      : (prevSpouseNameParts[0] || ""),
     prev_relationship_type: hasPrev ? "Married" : "",
     prev_marriage_from: hasPrev ? (prevParts[2] || "") : "",
     prev_marriage_to: hasPrev ? (prevParts[3] || "") : "",
 
-    // Q5-Q7: Address & phone
+    // ── Section 3: Status in Canada (PGWP applicant = currently Student) ──
+    current_status: currentStatusCode,           // "05" = Student
+    current_status_country: mailingCountryCode,  // "511" = Canada
+    current_status_from_date: currentStatusFrom,
+    current_status_to_date: currentStatusTo,
+    prev_country_indicator: false,
+
+    // ── Section 5: Languages — defaults ──
+    native_language: nativeLangCode,             // numeric (e.g. 324 Punjabi, 321 Hindi)
+    native_language_text: nativeLangText,        // human-readable for display
+    communicate_language: "English",             // ALWAYS English for IRCC service
+    prefer_service_language: "English",
+    language_test_taken: langTest,               // DEFAULT YES (PGWP requirement)
+    language_test_details: langTestDetails,
+    frequent_language: nativeLangText || "English",
+
+    // ── Section 6: Documents — DEFAULT NO ──
+    taiwan_passport: false,
+    israeli_passport: false,
+    has_national_id: false,
+    has_us_card: false,
+
+    // Document number — sanitized
+    previous_doc_number: sanitizeDocumentNumber(intake.previousDocNumber || ""),
+    work_permit_type: wpType.type,
+    work_permit_type_other: wpType.other,
+
+    // ── Section 7: Address & phone — client's actual ──
     mailing_apt_unit: mailing.apt_unit,
     mailing_street_num: mailing.street_num,
     mailing_street_name: mailing.street_name,
     mailing_city: mailing.city,
-    mailing_province: mailing.province,
+    mailing_province: mailingProvCode,           // NUMERIC (e.g. "11" = BC)
     mailing_postal_code: mailing.postal_code,
-    mailing_country: "Canada",
+    mailing_country: mailingCountryCode,         // NUMERIC "511" = Canada
     residential_same_as_mailing: resSame,
     residential_apt_unit: resSame ? "" : residential.apt_unit,
     residential_street_num: resSame ? "" : residential.street_num,
     residential_street_name: resSame ? "" : residential.street_name,
     residential_city: resSame ? "" : residential.city,
-    residential_province: resSame ? "" : residential.province,
-    phone_type: "Canada/US",
+    residential_province: resSame ? "" : textToProvinceCode(residential.province),
+    phone_type: phoneTypeCode,                   // NUMERIC "02" = Cellular
     phone_number_type: "Mobile",
+    phone_canada_us: "1",
     phone_area_code: phone.area_code,
     phone_first_three: phone.first_three,
     phone_last_five: phone.last_five,
-    email: stripPrefix(intake.email || ""),
+    phone_actual_number: `${phone.area_code}${phone.first_three}${phone.last_five}`,
+    email: NEWTON_EMAIL,                         // HARDCODED — IRCC mail to Newton
 
-    // Q8/Q9: Original entry
+    // ── Section 8: Original entry ──
     original_entry_date: originalEntryDate,
     original_entry_place: originalEntryPlace,
-    original_entry_purpose: originalEntryPurpose,
+    original_entry_purpose: purposeCode,         // NUMERIC "04" = Study
 
-    // Q10: Recent entry — ONLY filled if client said yes
+    // Recent entry — only filled if YES
     recent_entry_date: recentEntryDate,
     recent_entry_place: recentEntryPlace,
 
-    // Document number — sanitized; empty if not a real permit number
-    previous_doc_number: sanitizeDocumentNumber(intake.previousDocNumber || ""),
-    work_permit_type: wpType.type,
-    work_permit_type_other: wpType.other,
-
-    // Section 5: Languages
-    native_language: nativeLang,
-    communicate_language: "English",
-    language_test_taken: langTest,
-    language_test_details: langTestDetails,
-    frequent_language: nativeLang || "English",
-
-    // Status (in Canada — temporary)
-    current_status: ft.includes("study") ? "Student" : "Worker",
-    current_status_from_date: originalEntryDate,
-    current_status_to_date: "",
-
-    // Q15: Education
+    // ── Section 9: Education (PGWP = Canadian DLI program) ──
     has_education: educationLooksValid,
     edu_school_name: educationLooksValid ? (eduParts[0] || "") : "",
     edu_field_of_study: educationLooksValid ? (eduParts[1] || "") : "",
     edu_city: educationLooksValid ? (eduParts[2] || "") : "",
-    edu_country: educationLooksValid ? (eduParts[3] || "Canada") : "",
+    edu_country: educationLooksValid ? textToCountryCode("Canada") : "", // PGWP = Canada
+    edu_province: educationLooksValid ? textToProvinceCode(eduParts[3] || "") : "",
     edu_from_year: educationLooksValid ? (eduYears[0] || "") : "",
     edu_from_month: educationLooksValid ? "09" : "",
     edu_to_year: educationLooksValid ? (eduYears[1] || "") : "",
     edu_to_month: educationLooksValid ? "06" : "",
 
-    // Q14: Employment (now actually populated)
+    // ── Section 10: Employment (with legal compliance) ──
     employment,
 
-    // Q11/Q12/Q13/Q18: Background + medical
+    // ── Section 11: Background — DEFAULT NO ──
     has_medical_condition: hasMedical || planMedicalField,
     medical_details: hasMedical
       ? detailsAfterYN(medicalRaw) + (planMedicalField ? " | Plans to work in medical field" : "")
@@ -679,7 +792,7 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     held_government_position: false,
     witnessed_ill_treatment: false,
 
-    // Review hooks — staff sees these before submitting
+    // ── Review hooks — staff sees these before submitting ──
     _review_flags: reviewFlags,
   };
 }

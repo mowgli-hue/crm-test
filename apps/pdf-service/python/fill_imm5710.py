@@ -409,8 +409,11 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
         sv(data["prev_to_date_2"],       "Page1","PersonalDetails","PrevCOR","PreviousCOR","Row3","ToDate")
 
     # ── SECTION 4: Marital Status ─────────────────────────────────
+    # marital_status is the numeric IRCC code ("01"=Married, "02"=Single,
+    # "03"=Common-Law, etc). Accept legacy text values too for backward compat
+    # with any old data that still flows through.
     sv(data["marital_status"], "Page1","MaritalStatus","Current","MaritalStatus")
-    if data["marital_status"] in ("Married", "Common-Law"):
+    if data["marital_status"] in ("Married", "Common-Law", "01", "03"):
         sv(data["spouse_family_name"],     "Page1","MaritalStatus","Current","c","FamilyName")
         sv(data["spouse_given_name"],      "Page1","MaritalStatus","Current","c","GivenName")
         sv(data["spouse_status_in_canada"],"Page1","MaritalStatus","d","SpouseStatus")
@@ -473,9 +476,35 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
         sv(data["residential_city"],        "Page2","ContactInformation","Resi","AddrLine2","City")
         sv(data["residential_country"],     "Page2","ContactInformation","Resi","AddrLine2","Country")
         sv(data["residential_province"],    "Page2","ContactInformation","Resi","AddrLine2","Prov")
-    is_ca_us = str(data.get("phone_type","")).upper() in ("CANADA/US","CANADA","US","")
+    # ── Phone ──
+    # The mapper now provides:
+    #   phone_type:        IRCC numeric type code ("02"=Cellular, "01"=Residential, etc.)
+    #   phone_canada_us:   "1" if Canada/US-format, else "0"/"" (drives split vs intl format)
+    #   phone_number_type: legacy human-readable label ("Mobile") — kept for back-compat
+    #   phone_actual_number: full digits as one string (e.g. "6475458967")
+    phone_type_value = str(data.get("phone_type", "")).strip()
+    phone_canada_us_flag = str(data.get("phone_canada_us", "")).strip()
+
+    # Route NA-format vs intl: prefer the explicit phone_canada_us flag,
+    # fall back to legacy phone_type text values for old/intermediate data.
+    if phone_canada_us_flag in ("1", "true", "True"):
+        is_ca_us = True
+    elif phone_canada_us_flag in ("0", "false", "False"):
+        is_ca_us = False
+    else:
+        # No explicit flag — sniff legacy text values.
+        is_ca_us = phone_type_value.upper() in ("CANADA/US", "CANADA", "US", "")
+
     sv("1" if is_ca_us else "0",     "Page2","ContactInformation","q3-4","Phone","CanOtherInd","CanadaUS")
-    sv(data["phone_number_type"],    "Page2","ContactInformation","q3-4","Phone","Type")
+
+    # Phone/Type: IRCC dropdown wants the numeric code. If phone_type looks
+    # like a code (digits), use it; otherwise fall back to the legacy
+    # phone_number_type text so old data still writes something.
+    if phone_type_value.isdigit() and phone_type_value:
+        sv(phone_type_value,         "Page2","ContactInformation","q3-4","Phone","Type")
+    else:
+        sv(data["phone_number_type"],"Page2","ContactInformation","q3-4","Phone","Type")
+
     sv(data["phone_extension"],      "Page2","ContactInformation","q3-4","Phone","NumberExt")
     if is_ca_us:
         sv(data["phone_area_code"],  "Page2","ContactInformation","q3-4","Phone","NANumber","AreaCode")
@@ -483,6 +512,18 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
         sv(data["phone_last_five"],  "Page2","ContactInformation","q3-4","Phone","NANumber","LastFive")
     else:
         sv(data["phone_intl_number"],"Page2","ContactInformation","q3-4","Phone","IntlNumber","IntlNumber")
+
+    # Phone/ActualNumber: a separate merged-format field IRCC populates alongside
+    # the split fields (verified against Paras Kamboj's filed form). Use the
+    # mapper-provided value if present, else compute from the split parts.
+    actual = str(data.get("phone_actual_number", "")).strip()
+    if not actual:
+        actual = "{}{}{}".format(
+            data.get("phone_area_code", "") or "",
+            data.get("phone_first_three", "") or "",
+            data.get("phone_last_five", "") or "",
+        )
+    sv(actual,                       "Page2","ContactInformation","q3-4","Phone","ActualNumber")
     if data["alt_phone_area_code"]:
         sv("1",                           "Page2","ContactInformation","q3-4","AltPhone","CanOtherInd","CanadaUS")
         sv(data["alt_phone_area_code"],   "Page2","ContactInformation","q3-4","AltPhone","NANumber","AreaCode")
