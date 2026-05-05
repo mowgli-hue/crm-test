@@ -690,15 +690,64 @@ export async function handleIncomingReply(params: {
 
       // Need at least 2 markers to qualify as a multi-answer reply
       if (positions.length >= 2) {
+        // ── Map client's marker numbers to ACTUAL question indices ──
+        //
+        // CRITICAL: Don't assume questions in a batch are contiguous in
+        // session.questions. PGWP Section 5's batch is [Q11, Q12, Q13, Q16,
+        // Q17, Q18] — Q14 and Q15 belong to Section 4. The bot prompts
+        // these renumbered "1." through "6.", and the client replies with
+        // matching numbers. The OLD code used `qIndex + (pos.num - 1)`,
+        // which silently mismapped "4. Punjabi" to Q14 (employment) instead
+        // of Q16 (native language) — wrecking q14/q15 storage for every
+        // PGWP intake.
+        //
+        // Correct behavior: build the same prompted-order list the bot used
+        // (= batch's questions filtered to the still-missing ones) and use
+        // `promptedIndices[pos.num - 1]` as the target index.
+        const batches = session.batches || [session.questions];
+        const batchIdx = session.currentBatch ?? 0;
+        const batchPrompts = batches[batchIdx] || [];
+        const batchIndices = batchPrompts
+          .map(p => session.questions.indexOf(p))
+          .filter(i => i >= 0);
+        const isAlreadyAnswered = (i: number): boolean => {
+          if (session.preAnswered && session.preAnswered[i] !== undefined) return true;
+          const v = session.answers[`q${i + 1}`];
+          if (v !== undefined && String(v).trim() !== "") return true;
+          const q = session.questions[i];
+          if (q && session.answers[q.slice(0, 50)] !== undefined &&
+              String(session.answers[q.slice(0, 50)]).trim() !== "") return true;
+          return false;
+        };
+        // The bot's most recent prompt only included questions that were
+        // still missing (see sendNextBatchIfReady line ~526 and the re-ask
+        // flow line ~889). Match that filter so client's "1." maps to the
+        // FIRST question the bot just asked, regardless of where it sits
+        // in the master question list.
+        const promptedIndices = batchIndices.filter(i => !isAlreadyAnswered(i));
+
         for (let i = 0; i < positions.length; i++) {
           const pos = positions[i];
           const nextStart = i + 1 < positions.length ? positions[i + 1].start : text.length;
           const answerText = text.substring(pos.end, nextStart).trim();
           if (!answerText) continue;
-          // The client's numbering is relative to the current section — "1" = first question of this section.
-          // qIndex is the question we're currently asking (0-based), so client's "1" maps to qIndex,
-          // client's "2" maps to qIndex + 1, etc.
-          const targetIdx = qIndex + (pos.num - 1);
+
+          let targetIdx: number;
+          if (pos.num >= 1 && pos.num <= promptedIndices.length) {
+            targetIdx = promptedIndices[pos.num - 1];
+          } else if (promptedIndices.length === 0 && batchIndices.length > 0 &&
+                     pos.num >= 1 && pos.num <= batchIndices.length) {
+            // Defensive: if every batch question is somehow already marked
+            // answered (shouldn't normally happen on an active reply), fall
+            // back to the full batch order so we don't drop the answer.
+            targetIdx = batchIndices[pos.num - 1];
+          } else {
+            // Client's marker number is out of range for the current prompt.
+            // Skip rather than misalign — better to drop one stray answer
+            // than to land it on the wrong question.
+            continue;
+          }
+
           if (targetIdx >= 0 && targetIdx < session.questions.length) {
             const q = session.questions[targetIdx];
             session.answers[`q${targetIdx + 1}`] = answerText;
