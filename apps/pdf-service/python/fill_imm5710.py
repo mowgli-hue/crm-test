@@ -442,7 +442,8 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
     # ── SECTION 5: Languages ─────────────────────────────────────
     sv(data["native_language"],      "Page2","Languages","nativeLang")
     sv(data["communicate_language"], "Page2","Languages","communicateLang")
-    sv("1" if data["language_test_taken"] else "0", "Page2","Languages","LangTestIndicator")
+    # LangTestIndicator: Y/N character format (verified against Paras's filed form, "Y"/"N", not "1"/"0").
+    sv("Y" if data["language_test_taken"] else "N", "Page2","Languages","LangTestIndicator")
     sv(data["frequent_language"],    "Page2","Languages","FreqLang")
 
     # ── SECTION 6: Travel Documents ──────────────────────────────
@@ -593,23 +594,45 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
         sv(job.get("prov_state"),  *b,"Line2","ProvState")
 
     # ── SECTION 11: Background Questions ─────────────────────────
-    sv("1" if data["has_medical_condition"]    else "0", "Page4","BackgroundInfo","HealthQ","qANY")
-    sv("0" if data["has_medical_condition"]    else "1", "Page4","BackgroundInfo","HealthQ","qBNY")
-    sv(data["medical_details"],                          "Page4","BackgroundInfo","HealthQ","MedicalDetails")
+    # Format note: IRCC uses literal "Y"/"N" character codes for these Yes/No
+    # radio indicators, NOT "1"/"0". Verified against Paras Kamboj's filed
+    # form (which IRCC accepted): qANY="N", qBNY="N", qCNY="Y" for sub-questions.
+    #
+    # IMPORTANT: qANY, qBNY, and qCNY are INDEPENDENT sub-questions, not a
+    # mirror Yes/No pair for the same question. The OLD filler wrote qBNY as
+    # the inverse of qANY (e.g., qANY=0, qBNY=1) — treating them as Yes/No
+    # for one question. That was wrong; they're separate Y/N answers for
+    # different sub-questions on the form. When the client says "No" to the
+    # umbrella question, all sub-question indicators should be "N".
+    #
+    # Defaults (matching the standard "all No" client answer):
+    #   - HealthQ:    qANY = qBNY = "N"
+    #   - PrevApplied: qANY = qBNY = qCNY = "N"
+    #   - Criminal:   qANY = "N"
+    #   - Military:   qANY = "N"
+    #   - GovPosition: qGovtNY = "N"
+    #   - Illtreatment: qWitnessNY = "N"
+    # When a client answers Yes (with details), staff reviews the form and
+    # adjusts the specific sub-question that applies.
+    yn = lambda b: "Y" if b else "N"
 
-    sv("1" if data["prev_application_refused"] else "0", "Page4","BackgroundInfo","PrevApplied","qANY")
-    sv("0" if data["prev_application_refused"] else "1", "Page4","BackgroundInfo","PrevApplied","qBNY")
-    sv("1" if data["prev_refused_to_canada"]   else "0", "Page4","BackgroundInfo","PrevApplied","qCNY")
-    sv(data["prev_refused_details"],                     "Page4","BackgroundInfo","PrevApplied","refusedDetails")
+    sv(yn(data["has_medical_condition"]),    "Page4","BackgroundInfo","HealthQ","qANY")
+    sv("N",                                  "Page4","BackgroundInfo","HealthQ","qBNY")
+    sv(data["medical_details"],              "Page4","BackgroundInfo","HealthQ","MedicalDetails")
 
-    sv("1" if data["has_criminal_record"]      else "0", "Page4","BackgroundInfo","Criminal","qANY")
-    sv(data["criminal_details"],                         "Page4","BackgroundInfo","Criminal","refusedDetails")
+    sv(yn(data["prev_application_refused"]), "Page4","BackgroundInfo","PrevApplied","qANY")
+    sv("N",                                  "Page4","BackgroundInfo","PrevApplied","qBNY")
+    sv(yn(data["prev_refused_to_canada"]),   "Page4","BackgroundInfo","PrevApplied","qCNY")
+    sv(data["prev_refused_details"],         "Page4","BackgroundInfo","PrevApplied","refusedDetails")
 
-    sv("1" if data["has_military_service"]     else "0", "Page4","BackgroundInfo","Military","qANY")
-    sv(data["military_details"],                         "Page4","BackgroundInfo","Military","militaryServiceDetails")
+    sv(yn(data["has_criminal_record"]),      "Page4","BackgroundInfo","Criminal","qANY")
+    sv(data["criminal_details"],             "Page4","BackgroundInfo","Criminal","refusedDetails")
 
-    sv("1" if data["held_government_position"] else "0", "Page4","BackgroundInfo","GovPosition","qGovtNY")
-    sv("1" if data["witnessed_ill_treatment"]  else "0", "Page4","BackgroundInfo","Illtreatment","qWitnessNY")
+    sv(yn(data["has_military_service"]),     "Page4","BackgroundInfo","Military","qANY")
+    sv(data["military_details"],             "Page4","BackgroundInfo","Military","militaryServiceDetails")
+
+    sv(yn(data["held_government_position"]), "Page4","BackgroundInfo","GovPosition","qGovtNY")
+    sv(yn(data["witnessed_ill_treatment"]),  "Page4","BackgroundInfo","Illtreatment","qWitnessNY")
 
     # ── Save PDF ──────────────────────────────────────────────────
     ET.register_namespace('xfa', XFA_NS)
