@@ -13,7 +13,7 @@
  *   500 + { ok: false, errors: [...] } on assembly failure
  */
 import { NextRequest, NextResponse } from "next/server";
-import { resolveRequestUser } from "@/lib/auth";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { getCase } from "@/lib/store";
 import { assemblePgwpSubmissionPackage } from "@/lib/submission-package";
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     String(rawBody.systemToken || "").trim() ===
     (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
 
-  const user = await resolveRequestUser(request, params.id);
+  const user = await getCurrentUserFromRequest(request);
   if (!user && !isSystemCall) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -35,11 +35,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Case not found" }, { status: 404 });
   }
 
-  if (!isSystemCall) {
-    if (user!.userType === "client") {
+  if (!isSystemCall && user) {
+    if (user.userType === "client") {
       return NextResponse.json({ error: "Forbidden — staff only" }, { status: 403 });
     }
-    if (user!.userType === "staff" && !canStaffAccessCase(user!.role, user!.name, caseItem.assignedTo)) {
+    if (user.userType === "staff" && !canStaffAccessCase(user.role, user.name, caseItem.assignedTo)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
