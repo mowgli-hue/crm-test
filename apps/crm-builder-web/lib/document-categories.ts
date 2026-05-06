@@ -55,6 +55,11 @@ const CATEGORY_RULES: CategoryRule[] = [
       /representative\s+submission/i,
       /submission\s+letter/i,
       /support\s+letter/i,
+      // Newton's actual generated filename pattern: "<Client> - Representative Letter.pdf"
+      /representative\s+letter/i,
+      // Alt generator produces: "<Client>_Rep_Letter.docx" — \b doesn't work
+      // around underscores, so match either separator explicitly.
+      /(^|[\s_-])rep[\s_-]+letter([\s_-]|\.|$)/i,
     ],
   },
   {
