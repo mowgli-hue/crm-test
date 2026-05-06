@@ -192,66 +192,80 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Auto: generate AI summary and save as first note
+  // Auto: generate AI summary, register in All Cases sheet, and start WhatsApp
+  // intake. All three of these used to run inside a `setTimeout(() => {...}, 3000)`
+  // which doesn't survive serverless function termination — when this POST
+  // returned its NextResponse, the runtime would tear down before the timer
+  // fired, dropping the work silently. Fixed by running them inline (awaited)
+  // so they complete before the response is returned. Each is wrapped in
+  // try/catch so partial failures don't block case creation.
+
+  // Auto AI summary note
   try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
-    
-    // Brief delay to let case be fully saved
-    setTimeout(async () => {
-      try {
-        // Auto AI summary note
-        const summaryRes = await fetch(`${appUrl}/api/cases/${created.id}/ai-smart`, {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || "https://crm.newtonimmigration.com";
+    const summaryRes = await fetch(`${appUrl}/api/cases/${created.id}/ai-smart`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "summary" })
+    });
+    if (summaryRes.ok) {
+      const summaryData = await summaryRes.json();
+      if (summaryData.text) {
+        await fetch(`${appUrl}/api/cases/${created.id}/notes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "summary" })
-        });
-        if (summaryRes.ok) {
-          const summaryData = await summaryRes.json();
-          if (summaryData.text) {
-            await fetch(`${appUrl}/api/cases/${created.id}/notes`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                text: `🤖 AI Case Summary (auto-generated):
+          body: JSON.stringify({
+            text: `🤖 AI Case Summary (auto-generated):
 ${summaryData.text}`,
-                addedBy: "AI"
-              })
-            });
-          }
-        }
-      } catch (e) { console.error("Auto AI summary failed:", e); }
-
-      // Add to All Cases tracking sheet
-      try {
-        const { appendToAllCasesSheet } = await import("@/lib/google-drive");
-        await appendToAllCasesSheet({
-          caseId: created.id,
-          name: created.client,
-          phone: String(created.leadPhone || ""),
-          formType: created.formType,
-          permitExpiry: String((created as any).permitExpiryDate || ""),
-          uci: "",
-          isUrgent: created.isUrgent || false,
-          amountPaid: created.amountPaid || 0,
+            addedBy: "AI"
+          })
         });
-      } catch(e) { console.error("All Cases sheet failed:", e); }
+      }
+    }
+  } catch (e) { console.error("Auto AI summary failed:", (e as Error).message); }
 
-      // Auto-start WhatsApp intake if phone number exists
-      try {
-        const phone = String(created.leadPhone || "").replace(/\D/g, "");
-        const skipFormTypes = ["college change", "college transfer", "study permit extension"];
-        const shouldSkip = skipFormTypes.some(t => created.formType.toLowerCase().includes(t));
-        if (phone && !shouldSkip) {
-          await fetch(`${appUrl}/api/cases/${created.id}/wa-intake`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({})
-          });
-          console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id})`);
-        }
-      } catch (e) { console.error("Auto WA intake failed:", e); }
-    }, 3000);
-  } catch { /* non-fatal */ }
+  // Add to All Cases tracking sheet
+  try {
+    const { appendToAllCasesSheet } = await import("@/lib/google-drive");
+    await appendToAllCasesSheet({
+      caseId: created.id,
+      name: created.client,
+      phone: String(created.leadPhone || ""),
+      formType: created.formType,
+      permitExpiry: String((created as any).permitExpiryDate || ""),
+      uci: "",
+      isUrgent: created.isUrgent || false,
+      amountPaid: created.amountPaid || 0,
+    });
+  } catch(e) { console.error("All Cases sheet failed:", (e as Error).message); }
+
+  // Auto-start WhatsApp intake (in-process, not via HTTP fetch — fetching
+  // ourselves from inside a serverless function with setTimeout was unreliable).
+  try {
+    const phone = String(created.leadPhone || "").replace(/\D/g, "");
+    const skipFormTypes = ["college change", "college transfer", "study permit extension"];
+    const shouldSkip = skipFormTypes.some(t => created.formType.toLowerCase().includes(t));
+    if (phone && !shouldSkip) {
+      const { startIntakeSession } = await import("@/lib/whatsapp-ai-intake");
+      const result = await startIntakeSession({
+        caseId: created.id,
+        companyId: created.companyId,
+        phone,
+        clientName: created.client || "Client",
+        formType: created.formType || "PGWP",
+        existingIntake: ((created as any).pgwpIntake as Record<string, any>) || {},
+      });
+      if (result.success) {
+        console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id})`);
+      } else {
+        console.error(`Auto WA intake failed for ${created.id}: ${result.error}`);
+      }
+    } else if (!phone) {
+      console.log(`⏭️  Skipped WA intake for ${created.id}: no phone number`);
+    } else if (shouldSkip) {
+      console.log(`⏭️  Skipped WA intake for ${created.id}: formType "${created.formType}" is in manual-handling list`);
+    }
+  } catch (e) { console.error("Auto WA intake failed:", (e as Error).message); }
 
   return NextResponse.json({ case: created, drive }, { status: 201 });
 }
