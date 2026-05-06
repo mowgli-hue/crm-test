@@ -243,7 +243,12 @@ ${summaryData.text}`,
   // ourselves from inside a serverless function with setTimeout was unreliable).
   try {
     const phone = String(created.leadPhone || "").replace(/\D/g, "");
-    const skipFormTypes = ["college change", "college transfer", "study permit extension"];
+    // Skip auto-intake only for advisory/non-processing case types where
+    // Newton doesn't actually file an application (so the bot asking intake
+    // questions would be confusing for the client). Everything else —
+    // PGWP, work permits, study permit new/extension, TRV, visitor visas,
+    // sponsorship, etc. — runs auto-intake.
+    const skipFormTypes = ["college change", "college transfer"];
     const shouldSkip = skipFormTypes.some(t => created.formType.toLowerCase().includes(t));
     if (phone && !shouldSkip) {
       const { startIntakeSession } = await import("@/lib/whatsapp-ai-intake");
