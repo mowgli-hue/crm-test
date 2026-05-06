@@ -44,14 +44,27 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
   }
 
-  // For now, only PGWP is supported. Other case types should use existing form generation.
+  // Form-type gate: enable for any IMM5710-based application (PGWP, BOWP, SOWP,
+  // LMIA-based work permits, study permit extensions, etc.). The orchestrator's
+  // doc selection + IMM5476 generation work the same regardless of which subtype
+  // it is — they all need passport/photo/transcript/forms/etc.
   const formType = String(caseItem.formType || "").toLowerCase();
-  const isPgwp = formType.includes("pgwp") || formType.includes("post-graduation") || formType.includes("post graduation");
-  if (!isPgwp) {
+  const isImm5710Type =
+    formType.includes("pgwp") ||
+    formType.includes("post-graduation") ||
+    formType.includes("post graduation") ||
+    formType.includes("bowp") ||
+    formType.includes("sowp") ||
+    formType.includes("lmia") ||
+    formType.includes("work permit") ||
+    formType.includes("study permit") ||
+    formType.includes("imm5710") ||
+    formType.includes("imm 5710");
+  if (!isImm5710Type) {
     return NextResponse.json(
       {
         ok: false,
-        error: `Submission package automation is currently only available for PGWP cases. This case is "${caseItem.formType}".`,
+        error: `Submission package automation supports IMM5710-based applications (PGWP, BOWP, SOWP, work permits, study permit extensions). This case is "${caseItem.formType}".`,
       },
       { status: 400 }
     );

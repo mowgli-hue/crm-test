@@ -6924,7 +6924,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         
                         {/* ── PGWP Submission Package Assembly ── */}
 
-                                                {selectedCase.formType.toLowerCase().includes("pgwp") || selectedCase.formType.toLowerCase().includes("post-graduation") || selectedCase.formType.toLowerCase().includes("post graduation") ? (
+                                                {(() => {
+                          const ft = selectedCase.formType.toLowerCase();
+                          return ft.includes("pgwp") || ft.includes("post-graduation") || ft.includes("post graduation") || ft.includes("bowp") || ft.includes("sowp") || ft.includes("lmia") || ft.includes("work permit") || ft.includes("study permit") || ft.includes("imm5710") || ft.includes("imm 5710");
+                        })() ? (
 
                                                   <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 flex items-center justify-between gap-3 flex-wrap">
 

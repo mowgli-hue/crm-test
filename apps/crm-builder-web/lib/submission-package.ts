@@ -127,6 +127,7 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   submissionLetter?: CategorizedDoc;
   olderTranscripts: CategorizedDoc[];
   studyPermits: CategorizedDoc[];
+  workPermits: CategorizedDoc[];
   languageTests: CategorizedDoc[];
   loas: CategorizedDoc[];
 } {
@@ -153,13 +154,14 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const olderTranscripts = allTranscripts.slice(1);
 
   const studyPermits = byDateDesc.filter((d) => d.category === "study_permit");
+  const workPermits = byDateDesc.filter((d) => d.category === "work_permit");
   const languageTests = byDateDesc.filter((d) => d.category === "language_test");
   const loas = byDateDesc.filter((d) => d.category === "loa");
 
   return {
     passport, photo, transcript, completionLetter,
     imm5710, imm5476, submissionLetter,
-    olderTranscripts, studyPermits, languageTests, loas,
+    olderTranscripts, studyPermits, workPermits, languageTests, loas,
   };
 }
 
@@ -312,14 +314,16 @@ export async function assemblePgwpSubmissionPackage(
   const categorized = categorizeDocs(docs);
   const primary = selectPrimaryDocs(categorized);
 
-  // Step 2: validate required docs (Q3 = block on missing)
+  // Step 2: validate required docs (assemble what's available; surface missing
+  // ones as warnings rather than blocking — per scope revision: "create whatever
+  // is available", staff prefers a partial package they can review over an
+  // error message).
   const validation = validateRequired(primary);
+  const initialWarnings: string[] = [];
   if (!validation.ok) {
-    return {
-      ok: false,
-      missingRequired: validation.missing,
-      errors: ["Required documents are missing. Upload or generate them first."],
-    };
+    initialWarnings.push(
+      `Missing recommended docs (package generated anyway): ${validation.missing.join("; ")}`
+    );
   }
 
   // Step 3: resolve target Drive folder. We use the case's docsUploadLink folder
@@ -348,17 +352,19 @@ export async function assemblePgwpSubmissionPackage(
   }
 
   const filesAdded: SubmissionPackageResult["filesAdded"] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = [...initialWarnings];
 
-  // Step 4: copy top-level required docs with standardized names
-  const copyJobs: Array<{ doc: CategorizedDoc; template: string; ext?: string }> = [
-    { doc: primary.passport!,         template: "Passport_<First>_<Last>" },
-    { doc: primary.photo!,            template: "Photo_<First>_<Last>" },
-    { doc: primary.transcript!,       template: "Transcript_<First>_<Last>" },
-    { doc: primary.completionLetter!, template: "Completion_Letter_<First>_<Last>" },
-    { doc: primary.imm5710!,          template: "IMM5710e_<First>_<Last>" },
-    { doc: primary.submissionLetter!, template: "Representative_Submission_Letter_<First>_<Last>" },
-  ];
+  // Step 4: copy top-level docs with standardized names. Each entry is added
+  // to copyJobs only if the underlying doc exists on the case — missing docs
+  // are skipped silently (they're listed in initialWarnings already).
+  type CopyJob = { doc: CategorizedDoc; template: string; ext?: string };
+  const copyJobs: CopyJob[] = [];
+  if (primary.passport)         copyJobs.push({ doc: primary.passport,         template: "Passport_<First>_<Last>" });
+  if (primary.photo)            copyJobs.push({ doc: primary.photo,            template: "Photo_<First>_<Last>" });
+  if (primary.transcript)       copyJobs.push({ doc: primary.transcript,       template: "Transcript_<First>_<Last>" });
+  if (primary.completionLetter) copyJobs.push({ doc: primary.completionLetter, template: "Completion_Letter_<First>_<Last>" });
+  if (primary.imm5710)          copyJobs.push({ doc: primary.imm5710,          template: "IMM5710e_<First>_<Last>" });
+  if (primary.submissionLetter) copyJobs.push({ doc: primary.submissionLetter, template: "Representative_Submission_Letter_<First>_<Last>" });
 
   for (const job of copyJobs) {
     if (!job.doc.driveFileId) {
@@ -395,9 +401,11 @@ export async function assemblePgwpSubmissionPackage(
     errors.push(`IMM5476 generation failed: ${(e as Error).message}`);
   }
 
-  // Step 6: bundle Client_Info from study permits + language tests + older transcripts + loas
+  // Step 6: bundle Client_Info from study permits + work permits + language
+  // tests + older transcripts + loas
   const bundleSources: CategorizedDoc[] = [
     ...primary.studyPermits,
+    ...primary.workPermits,
     ...primary.languageTests,
     ...primary.olderTranscripts,
     ...primary.loas,

@@ -26,6 +26,7 @@ export type DocCategory =
   | "passport"
   | "photo"
   | "study_permit"
+  | "work_permit"
   | "language_test"
   | "transcript"
   | "completion_letter"
@@ -92,6 +93,13 @@ const CATEGORY_RULES: CategoryRule[] = [
     ],
   },
   {
+    category: "work_permit",
+    patterns: [
+      /work\s+permit/i,
+      /\bWP\b/i,
+    ],
+  },
+  {
     category: "study_permit",
     patterns: [
       /study\s+permit/i,
@@ -101,17 +109,18 @@ const CATEGORY_RULES: CategoryRule[] = [
     ],
   },
   {
-    category: "passport",
-    patterns: [/\bpassport\b/i, /travel\s+document/i],
-  },
-  {
     category: "photo",
     patterns: [
       /digital\s+(picture|photo)/i,
+      /passport\s+photo/i,
       /\bphoto\b/i,
       /\bpicture\b/i,
       /\bheadshot\b/i,
     ],
+  },
+  {
+    category: "passport",
+    patterns: [/\bpassport\b/i, /travel\s+document/i],
   },
   {
     category: "bank_statement",
@@ -145,6 +154,7 @@ export function categorizeDocumentByFilename(filename: string): DocCategory {
  */
 export const PGWP_CLIENT_INFO_BUNDLE_ORDER: DocCategory[] = [
   "study_permit",
+  "work_permit",
   "language_test",
   "transcript",
   "loa",
