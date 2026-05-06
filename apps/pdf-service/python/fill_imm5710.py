@@ -61,6 +61,8 @@ EMPTY_CLIENT = {
     # ── SECTION 2: Personal Information ─────────────────────────
     # CRM Question: "What is your UCI / Client ID?" (optional)
     "uci_client_id":                 "",
+    # "I want service in" — IRCC numeric: "01" = English (default), "02" = French
+    "service_in_language":           "01",
 
     # CRM Question: "What is your family (last) name?"
     "family_name":                   "",
@@ -376,6 +378,10 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
 
     # ── SECTION 2: Personal Information ──────────────────────────
     sv(data["uci_client_id"],       "Page1","PersonalDetails","ServiceIn","UCIClientID")
+    # "I want service in" — IRCC codes: 01 = English, 02 = French.
+    # Default to English which is what Newton's clients always pick. The
+    # mapper passes "01" via service_in_language; if missing, default here too.
+    sv(data.get("service_in_language") or "01", "Page1","PersonalDetails","ServiceIn","ServiceIn")
     sv(data["family_name"],         "Page1","PersonalDetails","Name","FamilyName")
     sv(data["given_name"],          "Page1","PersonalDetails","Name","GivenName")
     # Alias / "Have you ever used another name": always tick the indicator

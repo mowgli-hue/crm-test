@@ -389,8 +389,26 @@ function parseEmploymentBestEffort(raw: string): any[] {
     dec: "12", december: "12",
   };
 
+  // Match full YYYY-MM-DD first (most specific), then YYYY-MM, then word-month dates.
+  // ORDER MATTERS — the regex alternation is greedy so the longest match wins.
+  // Without YYYY-MM-DD as the first alternative, "2024-05-06" matches "2024-05"
+  // and leaves "-06" as a leftover token that pollutes occupation/city fields.
+  //
+  // For word-month, we ONLY accept actual month names (Jan, January, etc.) — not
+  // ANY word followed by a year. Otherwise " to 2022" matches as a date and
+  // pollutes the `to` field with a yearless date.
+  const MONTH_WORDS = "Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December";
+  const DATE_RE = new RegExp(
+    `(\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{4}[-/]\\d{1,2}|\\b\\d{0,2}\\s*(?:${MONTH_WORDS})\\s+\\d{4}|\\b(?:${MONTH_WORDS})\\s+\\d{4})`,
+    "gi"
+  );
+
   const parseMonthYear = (s: string): { year: string; month: string } => {
     const txt = s.trim();
+    // YYYY-MM-DD or YYYY/MM/DD — extract just YYYY and MM
+    const isoFull = txt.match(/(\d{4})[-/](\d{1,2})[-/]\d{1,2}/);
+    if (isoFull) return { year: isoFull[1], month: isoFull[2].padStart(2, "0") };
+    // YYYY-MM or YYYY/MM
     const iso = txt.match(/(\d{4})[-/](\d{1,2})/);
     if (iso) return { year: iso[1], month: iso[2].padStart(2, "0") };
     const wordMonth = txt.match(/(?:\d{1,2}\s*)?([A-Za-z]+)\s*(\d{4})/);
@@ -429,20 +447,34 @@ function parseEmploymentBestEffort(raw: string): any[] {
       current = isCurrent(fromMatch[2]);
       to = current ? { year: "", month: "" } : parseMonthYear(fromMatch[2]);
     } else {
-      const dates = [...block.matchAll(/(\d{4}[-/]\d{1,2}|\b\d{0,2}\s*[A-Za-z]+\s+\d{4}|\b[A-Za-z]+\s+\d{4})/g)].map((m) => m[1]);
+      const dates = [...block.matchAll(DATE_RE)].map((m) => m[1]);
       if (dates.length >= 1) from = parseMonthYear(dates[0]);
       if (dates.length >= 2) to = parseMonthYear(dates[1]);
       current = isCurrent(block);
       if (current) to = { year: "", month: "" };
     }
 
+    // Strip ALL date forms cleanly so they don't pollute the remaining text.
+    // Same regex as DATE_RE plus the "from X to Y" pattern. Also strip "to" when
+    // it appears between two dates (e.g., "2024-05-06 to 2026-05-06" → "").
+    const monthWords = "(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)";
     const noDates = block
       .replace(/[Ff]rom\s+[^,\n]+?\s+to\s+[^,\n]+?(?:[,\n]|$)/g, "")
+      .replace(/(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*(to|-)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})/g, "")
+      .replace(/(\d{4}[-/]\d{1,2})\s*(to|-)\s*(\d{4}[-/]\d{1,2})/g, "")
+      .replace(new RegExp(`(${monthWords}\\s+\\d{4})\\s*(to|-)\\s*(${monthWords}\\s+\\d{4})`, "gi"), "")
+      // Strip "<date> to <present-word>" patterns where one side is a "currently"-style word
+      .replace(/(\d{4}[-/]\d{1,2}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*(to|-)\s*(continuing|present|current|now|ongoing|to date|till date)/gi, "")
+      .replace(new RegExp(`(${monthWords}\\s+\\d{4})\\s*(to|-)\\s*(continuing|present|current|now|ongoing|to date|till date)`, "gi"), "")
+      .replace(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/g, "")
       .replace(/\d{4}[-/]\d{1,2}/g, "")
-      .replace(/\b\d{0,2}\s*[A-Za-z]+\s+\d{4}\b/g, "")
+      .replace(new RegExp(`\\b\\d{0,2}\\s*${monthWords}\\s+\\d{4}\\b`, "gi"), "")
       .replace(/\b(continuing|present|current|now|ongoing|to date|till date)\b/gi, "")
       .replace(/\bworked in\b/gi, "")
       .replace(/\bemployer[:\s]?/gi, "")
+      .replace(/^\s*[,\-—]\s*/g, "")
+      .replace(/\s*[,\-—]\s*$/g, "")
+      .replace(/\n+/g, ", ")
       .trim();
 
     const parts = noDates.split(",").map((p) => p.trim().replace(/\.$/, "")).filter(Boolean);
@@ -591,15 +623,24 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     "Study"; // PGWP applicants are almost always study-permit holders
   const purposeCode = textToVisitPurposeCode(purposeText);
 
-  // ─── Q10: Recent entry (only fill if YES) ───
+  // ─── Q10: Recent entry (only fill if YES or if a date is present) ───
+  // Older logic required isYes(recentRaw), which meant a client typing just
+  // "2025-12-31" (a clear positive answer with date) was ignored. Now we
+  // also treat any raw answer containing a date as a positive answer.
   const recentRaw = qN(10);
-  const hasRecentEntry = isYes(recentRaw);
+  const recentDateInRaw = recentRaw.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2})/);
+  const hasRecentEntry = isYes(recentRaw) || !!recentDateInRaw;
   const recentDetails = hasRecentEntry ? stripYesNoPrefix(recentRaw) : "";
   const recentParts = hasRecentEntry ? recentDetails.split(",").map((p) => p.trim()) : [];
   const datePattern = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/;
+  // Check first part as date, OR fall back to any date found anywhere in raw
   const recentDateCandidate = recentParts[0] || "";
-  const recentEntryDate = datePattern.test(recentDateCandidate) ? recentDateCandidate : "";
-  const recentEntryPlace = recentEntryDate ? (recentParts[1] || "") : (recentParts[0] || "");
+  const recentEntryDate = datePattern.test(recentDateCandidate)
+    ? recentDateCandidate
+    : (recentDateInRaw ? recentDateInRaw[1] : "");
+  const recentEntryPlace = recentEntryDate
+    ? (recentParts.slice(1).join(", ").trim() || "")
+    : (recentParts[0] || "");
 
   // ─── Q11/Q12/Q13: Background — DEFAULT NO ───
   const refusalRaw = qN(11);
@@ -701,7 +742,12 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   // Dates from study permit (start → expiry).
   const currentStatusCode = textToStatusCode("Student"); // "05"
   const currentStatusFrom = intake.studyPermitStartDate || originalEntryDate;
-  const currentStatusTo = intake.studyPermitExpiryDate || "";
+  // currentStatusTo: prefer studyPermitExpiryDate, fall back to workPermitExpiryDate.
+  // Critically, NEVER default to today's date — leaving this empty is much better
+  // than writing today's date as the permit expiry, which is wrong and confusing.
+  const currentStatusTo = intake.studyPermitExpiryDate
+    || intake.workPermitExpiryDate
+    || "";
 
   // ─── Review flags for staff to inspect before submitting ───
   const reviewFlags: string[] = [];
@@ -737,6 +783,9 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
 
     // UCI from study permit (staff fills this on the case if missing from intake)
     uci_client_id: stripPrefix(intake.uci || ""),
+    // "I want service in" — IRCC code "01" = English. Newton's clients always
+    // pick English. Setting it explicitly avoids the dropdown rendering blank.
+    service_in_language: "01",
 
     // ── Q1: Other names (alias) ──
     has_alias: hasAlias,
