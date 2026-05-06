@@ -25,8 +25,8 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
       { title: "🏠 Address & Contact", questions: [4, 5, 6] },
       { title: "🛬 Entry to Canada", questions: [7, 8, 9] },
-      { title: "💼 Work & Education", questions: [13, 14] },
-      { title: "🌐 Language & Background", questions: [10, 11, 12, 15, 16, 17] },
+      { title: "💼 Work & Education", questions: [13, 14, 15] },
+      { title: "🌐 Language & Background", questions: [10, 11, 12, 16, 17, 18] },
     ],
     prompts: [
       "Have you used any other name? (Yes/No — if Yes, provide full other name)",
@@ -44,9 +44,10 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
       "Employment details — list ALL jobs including foreign experience, most recent first. For each: From (YYYY-MM), To (YYYY-MM), Job Title, Employer Name, City, Country. Include any work done outside Canada. Reply NONE if no employment.",
       "Education after 12th grade (if any). For each: From (YYYY-MM), To (YYYY-MM), Field of Study, Name of Institute, City. Reply NONE if none.",
+      "Have you been at the same college/institution since you arrived in Canada? (Yes/No — if No, please share documents from your previous college(s) under Documents — completion letter, transcripts, LOA — so we can include them in your application)",
       "What is your native language?",
-      "Have you taken an English language proficiency test? (Yes/No — if Yes: test name, score, and date)",
-      "Do you plan to work in the medical field in Canada in the future? (Yes/No)"
+      "Have you taken an English language proficiency test? (Yes/No — if Yes: test name and date. We'll get the actual score from the result document you upload — no need to type it.)",
+      "Do you plan to work in the medical field in Canada in the future (e.g. nurse, healthcare worker, doctor, in a hospital or clinic)? (Yes/No — if Yes, you'll likely need an Immigration Medical Exam (IME) before submission. We'll guide you on booking it after your application is reviewed.)"
     ]
   },
 

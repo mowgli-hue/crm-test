@@ -724,17 +724,43 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   const eduYears = educationLooksValid ? (educationRaw.match(/(20\d{2})/g) || []) : [];
 
   // ─── Q16: Native language (NUMERIC code) ───
-  const q16Raw = qN(16);
-  const nativeLangText = looksLikeLanguage(q16Raw) ? q16Raw.split(/[,;]/)[0].trim() : "";
+  // ─── Smart Q-index resolution for PGWP ───
+  // OLD PGWP layout: q15=native_lang, q16=lang_test, q17=medical_field
+  // NEW PGWP layout (added 2026-05): q15=same_college (Yes/No), q16=native_lang,
+  //                                  q17=lang_test, q18=medical_field
+  //
+  // Detect by checking: does q15 look like a language? if yes → OLD layout.
+  // Does q16 look like a language? → NEW layout.
+  // This means new and old cases both work without hardcoding shifts everywhere.
+  const q15Maybe = qN(15);
+  const q16Maybe = qN(16);
+  const q17Maybe = qN(17);
+  const q18Maybe = qN(18);
+
+  // Detect layout
+  const newLayout = looksLikeLanguage(q16Maybe) && !looksLikeLanguage(q15Maybe);
+  const oldLayout = looksLikeLanguage(q15Maybe) && !looksLikeLanguage(q16Maybe);
+
+  // Same-college: only set if NEW layout AND q15 is Yes/No-shaped
+  const sameCollegeRaw = newLayout && (isYes(q15Maybe) || isNo(q15Maybe)) ? q15Maybe : "";
+  const sameCollegeAnswer = isYes(sameCollegeRaw) ? "Yes"
+                          : isNo(sameCollegeRaw) ? "No"
+                          : "";
+
+  // Native language — smart pick
+  const nativeLangRaw = newLayout ? q16Maybe : (oldLayout ? q15Maybe : (q16Maybe || q15Maybe));
+  const q16Raw = nativeLangRaw; // alias kept for downstream code
+  const nativeLangText = looksLikeLanguage(nativeLangRaw) ? nativeLangRaw.split(/[,;]/)[0].trim() : "";
   const nativeLangCode = textToLanguageCode(nativeLangText);
 
-  // ─── Q17: Language test — DEFAULT YES (PGWP requires it) ───
-  const langTestRaw = qN(17);
+  // ─── Language test — DEFAULT YES (PGWP requires it) ───
+  // NEW layout: q17. OLD layout: q16. Other (study perm ext, etc): q17.
+  const langTestRaw = newLayout ? q17Maybe : (oldLayout ? q16Maybe : q17Maybe);
   const langTest = !isNo(langTestRaw); // YES unless they explicitly said NO
   const langTestDetails = langTest ? detailsAfterYN(langTestRaw) : "";
 
-  // ─── Q18: Plan to work in medical field ───
-  const medicalFieldRaw = qN(18);
+  // ─── Plan to work in medical field ───
+  const medicalFieldRaw = newLayout ? q18Maybe : (oldLayout ? q17Maybe : q18Maybe);
   const planMedicalField = isYes(medicalFieldRaw);
 
   // ─── Work permit type (PGWP / SOWP / etc — text dropdown) ───
@@ -781,6 +807,12 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   }
   if (!intake.studyPermitExpiryDate) {
     reviewFlags.push(`Study permit expiry date missing — current status To-date will be empty`);
+  }
+  if (sameCollegeAnswer === "No") {
+    reviewFlags.push(`Client transferred from previous college — make sure old-college docs (completion letter, transcripts, LOA) are uploaded; they get bundled into Client_Info`);
+  }
+  if (planMedicalField) {
+    reviewFlags.push(`Client plans to work in medical field — Immigration Medical Exam (IME) likely required before submission`);
   }
 
   return {
