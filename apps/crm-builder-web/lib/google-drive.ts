@@ -590,43 +590,81 @@ export function extractDriveFileId(webViewLink: string | undefined | null): stri
 }
 
 /**
- * Delete all children of a Drive folder. Used for "overwrite existing folder"
- * regeneration semantics — we wipe the submission subfolder before re-populating.
+ * Delete any existing files in a Drive folder whose names exactly match any of
+ * the names provided. Used by the submission-package orchestrator for per-file
+ * dedup — before adding Passport_<First>_<Last>.pdf, we wipe any prior version.
  *
- * Note: this trashes files (Drive's default), not permanent delete. They go
- * to the service account's Drive trash where they can be recovered.
+ * Why this instead of bulk emptyDriveFolder():
+ *   - Bulk wipe loses unrelated files staff may have manually added
+ *   - Bulk wipe on permission errors leaves the folder partially-emptied,
+ *     creating duplicate sets when run again
+ *   - Per-file dedup is idempotent: each target name has exactly one copy
+ *
+ * Returns count of files removed (not counted: files that didn't exist).
  */
-export async function emptyDriveFolder(folderId: string): Promise<{ removed: number; errors: string[] }> {
-  if (!folderId) throw new Error("emptyDriveFolder: empty folderId");
-  const accessToken = await getDriveAccessToken();
-  const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed=false`)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
-  if (!listRes.ok) {
-    const text = await listRes.text();
-    throw new Error(`Drive list failed (${listRes.status}): ${text.slice(0, 200)}`);
-  }
-  const data = (await listRes.json()) as { files?: Array<{ id: string; name: string }> };
-  const children = data.files || [];
+export async function deleteFilesByNameInFolder(
+  folderId: string,
+  fileNames: string[]
+): Promise<{ removed: number; errors: string[] }> {
+  if (!folderId) throw new Error("deleteFilesByNameInFolder: empty folderId");
+  if (!fileNames.length) return { removed: 0, errors: [] };
 
+  const accessToken = await getDriveAccessToken();
   const errors: string[] = [];
   let removed = 0;
-  for (const child of children) {
-    const delRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(child.id)}?supportsAllDrives=true`,
-      {
-        method: "DELETE",
+
+  for (const targetName of fileNames) {
+    if (!targetName) continue;
+    // Drive query: find files in this folder with this exact name (not trashed)
+    const escapedName = String(targetName).replace(/'/g, "\\'");
+    const q = `'${folderId}' in parents and name='${escapedName}' and trashed=false`;
+    const listUrl =
+      "https://www.googleapis.com/drive/v3/files?" +
+      new URLSearchParams({
+        q,
+        fields: "files(id,name)",
+        pageSize: "10",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      }).toString();
+
+    let listJson: { files?: Array<{ id: string; name: string }> } = {};
+    try {
+      const listRes = await fetch(listUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      if (!listRes.ok) {
+        errors.push(`list "${targetName}" failed: ${listRes.status}`);
+        continue;
       }
-    );
-    if (delRes.ok || delRes.status === 204) {
-      removed++;
-    } else {
-      const text = await delRes.text();
-      errors.push(`${child.name}: ${delRes.status} ${text.slice(0, 100)}`);
+      listJson = await listRes.json();
+    } catch (e) {
+      errors.push(`list "${targetName}" exception: ${(e as Error).message}`);
+      continue;
+    }
+
+    const matches = listJson.files || [];
+    for (const m of matches) {
+      try {
+        const delRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(m.id)}?supportsAllDrives=true`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+        if (delRes.ok || delRes.status === 204) {
+          removed++;
+        } else {
+          const text = await delRes.text();
+          errors.push(`delete "${m.name}" (${m.id.slice(0, 12)}): ${delRes.status} ${text.slice(0, 60)}`);
+        }
+      } catch (e) {
+        errors.push(`delete "${m.name}" exception: ${(e as Error).message}`);
+      }
     }
   }
+
   return { removed, errors };
 }

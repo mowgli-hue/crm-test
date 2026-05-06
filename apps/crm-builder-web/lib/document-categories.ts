@@ -31,6 +31,7 @@ export type DocCategory =
   | "transcript"
   | "completion_letter"
   | "loa"
+  | "medical"
   | "bank_statement"
   | "imm_form"
   | "submission_letter"
@@ -123,6 +124,20 @@ const CATEGORY_RULES: CategoryRule[] = [
     patterns: [/\bpassport\b/i, /travel\s+document/i],
   },
   {
+    category: "medical",
+    patterns: [
+      /medical[\s_-]+exam/i,
+      /upfront[\s_-]+medical/i,
+      /immigration[\s_-]+medical/i,
+      /\bIME\b/,
+      /panel[\s_-]+physician/i,
+      /\beMedical\b/i,
+      // Bare "medical" only as a fallback if nothing more specific matched
+      // (placed last so terms like "medical exam" hit the specific rule first)
+      /(^|[\s_-])medical([\s_-]|\.|$)/i,
+    ],
+  },
+  {
     category: "bank_statement",
     patterns: [/bank\s+statement/i, /financial\s+statement/i, /proof\s+of\s+funds/i],
   },
@@ -152,12 +167,26 @@ export function categorizeDocumentByFilename(filename: string): DocCategory {
  * Within each category, docs are sorted by upload date (newest first), matching
  * the typical "current then historical" reading order.
  */
+/**
+ * Inclusion order for the Client_Info bundle. Order confirmed with Newton:
+ *   1. Current + previous study/work permits
+ *   2. English language test (IELTS / CELPIP)
+ *   3. Older transcripts (previous schools)
+ *   4. Older LOAs (previous schools)
+ *   5. Medical exam (if uploaded)
+ *
+ * "Other" docs are explicitly NOT bundled — staff handles them manually.
+ *
+ * Within each category, docs are sorted by upload date (newest first), matching
+ * the typical "current then historical" reading order.
+ */
 export const PGWP_CLIENT_INFO_BUNDLE_ORDER: DocCategory[] = [
   "study_permit",
   "work_permit",
   "language_test",
   "transcript",
   "loa",
+  "medical",
 ];
 
 /**

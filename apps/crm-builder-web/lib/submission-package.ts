@@ -42,7 +42,7 @@ import {
   downloadDriveFileBytes,
   extractDriveFileId,
   extractDriveFolderId,
-  emptyDriveFolder,
+  deleteFilesByNameInFolder,
 } from "@/lib/google-drive";
 import { categorizeDocumentByFilename, DocCategory } from "@/lib/document-categories";
 
@@ -130,6 +130,7 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   workPermits: CategorizedDoc[];
   languageTests: CategorizedDoc[];
   loas: CategorizedDoc[];
+  medicals: CategorizedDoc[];
 } {
   // Sort by uploadedAt descending so .find() picks the most recent
   const byDateDesc = [...categorized].sort((a, b) => {
@@ -157,11 +158,12 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const workPermits = byDateDesc.filter((d) => d.category === "work_permit");
   const languageTests = byDateDesc.filter((d) => d.category === "language_test");
   const loas = byDateDesc.filter((d) => d.category === "loa");
+  const medicals = byDateDesc.filter((d) => d.category === "medical");
 
   return {
     passport, photo, transcript, completionLetter,
     imm5710, imm5476, submissionLetter,
-    olderTranscripts, studyPermits, workPermits, languageTests, loas,
+    olderTranscripts, studyPermits, workPermits, languageTests, loas, medicals,
   };
 }
 
@@ -344,13 +346,7 @@ export async function assemblePgwpSubmissionPackage(
   const subfolder = await getOrCreateDriveSubfolder(caseFolderId, subfolderName);
   const submissionFolderId = subfolder.id;
 
-  // Q4 = "existing" → wipe before re-populating (idempotent regeneration)
-  const wipe = await emptyDriveFolder(submissionFolderId);
   const errors: string[] = [];
-  if (wipe.errors.length > 0) {
-    errors.push(`Folder cleanup partial: ${wipe.errors.length} files could not be removed`);
-  }
-
   const filesAdded: SubmissionPackageResult["filesAdded"] = [];
   const warnings: string[] = [...initialWarnings];
 
@@ -366,22 +362,66 @@ export async function assemblePgwpSubmissionPackage(
   if (primary.imm5710)          copyJobs.push({ doc: primary.imm5710,          template: "IMM5710e_<First>_<Last>" });
   if (primary.submissionLetter) copyJobs.push({ doc: primary.submissionLetter, template: "Representative_Submission_Letter_<First>_<Last>" });
 
-  for (const job of copyJobs) {
+  // Determine final filename + extension for each job. Images get converted to PDF
+  // for everything EXCEPT the digital photo (IRCC requires photo as image format).
+  const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"]);
+  const finalizedJobs = copyJobs.map((job) => {
+    const sourceExt = inferExtension(job.doc.name, "pdf");
+    const sourceIsImage = IMAGE_EXTENSIONS.has(sourceExt);
+    const isPhoto = job.template === "Photo_<First>_<Last>";
+    // Photo: keep image format. Everything else: PDF.
+    const finalExt = isPhoto ? sourceExt : (sourceIsImage ? "pdf" : sourceExt);
+    const newName = buildStandardName(job.template, first, last, finalExt);
+    const needsConversion = sourceIsImage && !isPhoto;
+    return { ...job, sourceExt, finalExt, newName, needsConversion };
+  });
+
+  // Per-file dedup: before writing each file, delete any existing copy with
+  // the same name in the submission folder. Idempotent across re-runs even
+  // when files persist from previous attempts.
+  const targetNames = finalizedJobs.map((j) => j.newName);
+  // Add IMM5476 + Client_Info names to dedup list (we generate those below)
+  targetNames.push(buildStandardName("IMM5476e_<First>_<Last>", first, last, "pdf"));
+  targetNames.push(buildStandardName("Client_Info_<First>_<Last>", first, last, "pdf"));
+  try {
+    const dedup = await deleteFilesByNameInFolder(submissionFolderId, targetNames);
+    if (dedup.errors.length > 0) {
+      warnings.push(`Pre-write dedup had ${dedup.errors.length} error(s) — see logs`);
+      console.warn("Submission dedup errors:", dedup.errors);
+    }
+  } catch (e) {
+    warnings.push(`Pre-write dedup failed (non-fatal): ${(e as Error).message}`);
+  }
+
+  // Step 4 execute: copy or convert each job into the submission folder
+  for (const job of finalizedJobs) {
     if (!job.doc.driveFileId) {
       errors.push(`${job.doc.name}: cannot copy (no Drive file ID)`);
       continue;
     }
-    const ext = job.ext || inferExtension(job.doc.name, "pdf");
-    const newName = buildStandardName(job.template, first, last, ext);
     try {
-      const copied = await copyDriveFileToFolder({
-        sourceFileId: job.doc.driveFileId,
-        newName,
-        targetFolderId: submissionFolderId,
-      });
-      filesAdded.push({ name: newName, link: copied.webViewLink, source: "copied" });
+      if (job.needsConversion) {
+        // Image → PDF: download original, send through bundler (which converts), upload result
+        const imgBytes = await downloadDriveFileBytes(job.doc.driveFileId);
+        const pdfBytes = await bundleClientInfo([{ filename: job.doc.name, bytes: imgBytes }]);
+        const uploaded = await uploadFileToDriveFolder({
+          folderId: submissionFolderId,
+          fileName: job.newName,
+          fileBuffer: pdfBytes,
+          mimeType: "application/pdf",
+        });
+        filesAdded.push({ name: job.newName, link: uploaded.webViewLink, source: "generated" });
+      } else {
+        // Same-format: server-side Drive copy (fast)
+        const copied = await copyDriveFileToFolder({
+          sourceFileId: job.doc.driveFileId,
+          newName: job.newName,
+          targetFolderId: submissionFolderId,
+        });
+        filesAdded.push({ name: job.newName, link: copied.webViewLink, source: "copied" });
+      }
     } catch (e) {
-      errors.push(`Copy failed for ${job.doc.name}: ${(e as Error).message}`);
+      errors.push(`Failed for ${job.doc.name}: ${(e as Error).message}`);
     }
   }
 
@@ -401,14 +441,22 @@ export async function assemblePgwpSubmissionPackage(
     errors.push(`IMM5476 generation failed: ${(e as Error).message}`);
   }
 
-  // Step 6: bundle Client_Info from study permits + work permits + language
-  // tests + older transcripts + loas
+  // Step 6: bundle Client_Info per Newton's spec — order:
+  //   1. Current + previous study/work permits
+  //   2. English language test (IELTS/CELPIP)
+  //   3. Older transcripts (previous schools)
+  //   4. Older LOAs (previous schools)
+  //   5. Medical exam (if uploaded)
+  // "other"-categorized docs are explicitly NOT bundled — staff handles them
+  // manually. Bank statements, employment contracts, pay stubs, etc. are NOT
+  // part of a PGWP-style submission.
   const bundleSources: CategorizedDoc[] = [
     ...primary.studyPermits,
     ...primary.workPermits,
     ...primary.languageTests,
     ...primary.olderTranscripts,
     ...primary.loas,
+    ...primary.medicals,
   ];
 
   if (bundleSources.length === 0) {
