@@ -231,7 +231,44 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
       }
     } catch (e) { console.error("Marketing doc link block failed (non-fatal):", (e as Error).message); }
 
-    return NextResponse.json({ ok: true, case: newCase, orphansLinked, marketingDocsLinked });
+    // ── Auto-start WhatsApp intake (mirrors cases POST handler) ──
+    //
+    // Without this, leads converted from marketing never got the intake
+    // bot's welcome message — the case was silently created and the client
+    // was left wondering why nothing happened after they paid. Same in-process
+    // call pattern as the cases route uses (NOT setTimeout, which doesn't
+    // survive serverless function teardown).
+    let intakeStarted = false;
+    try {
+      const phoneDigits = String(phone || "").replace(/\D/g, "");
+      const skipFormTypes = ["college change", "college transfer"];
+      const shouldSkip = skipFormTypes.some(t => formType.toLowerCase().includes(t));
+      if (phoneDigits && !shouldSkip) {
+        const { startIntakeSession } = await import("@/lib/whatsapp-ai-intake");
+        const result = await startIntakeSession({
+          caseId: newCase.id,
+          companyId,
+          phone: phoneDigits,
+          clientName: clientName || "Client",
+          formType: formType || "PGWP",
+          existingIntake: {},
+        });
+        if (result.success) {
+          intakeStarted = true;
+          console.log(`📱 Auto-started WhatsApp intake from marketing convert: ${clientName} (${newCase.id})`);
+        } else {
+          console.error(`Auto WA intake failed for ${newCase.id} (from marketing convert): ${result.error}`);
+        }
+      } else if (!phoneDigits) {
+        console.log(`⏭️  Skipped WA intake for ${newCase.id}: no phone number`);
+      } else if (shouldSkip) {
+        console.log(`⏭️  Skipped WA intake for ${newCase.id}: formType "${formType}" is in manual-handling list`);
+      }
+    } catch (e) {
+      console.error("Auto WA intake from marketing convert failed:", (e as Error).message);
+    }
+
+    return NextResponse.json({ ok: true, case: newCase, orphansLinked, marketingDocsLinked, intakeStarted });
   } catch (e) {
     console.error("Lead convert error:", (e as Error).message);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
