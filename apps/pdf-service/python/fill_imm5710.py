@@ -407,6 +407,12 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
     sv(data["current_status_other"],     "Page1","PersonalDetails","CurrentCOR","CurrentCOR","Row2","Other")
     sv(data["current_status_from_date"], "Page1","PersonalDetails","CurrentCOR","CurrentCOR","Row2","FromDate")
     sv(data["current_status_to_date"],   "Page1","PersonalDetails","CurrentCOR","CurrentCOR","Row2","ToDate")
+    # Q8 of form — "Have you lived in any country other than your country of
+    # citizenship or current residence for more than 6 months?" The Y/N indicator
+    # box must always be ticked, even when answer is No. Use literal "Y"/"N"
+    # like the alias indicator on Page 1 (verified against Paras's filed form).
+    sv("Y" if data.get("prev_country_indicator") else "N",
+       "Page1","PersonalDetails","PrevCOR","PCRIndicator")
     if data["prev_country_1"]:
         sv(data["prev_country_1"],       "Page1","PersonalDetails","PrevCOR","PreviousCOR","Row2","Country")
         sv(data["prev_status_1"],        "Page1","PersonalDetails","PrevCOR","PreviousCOR","Row2","Status")

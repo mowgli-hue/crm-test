@@ -672,9 +672,22 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   // After completion-letter date, applicant is NOT allowed to work until PGWP approved.
   // 1. Cap real jobs at completion-letter date (if known).
   // 2. Add an "Unemployed / N/A" entry from completion date to current.
-  // If completionLetterDate is missing, we add nothing (better than fabricating dates) —
-  // a review flag is set below so staff can fix it before submission.
-  const completionLetterDate = intake.completionLetterDate || "";
+  //
+  // Source priority for completion date:
+  //   1. Explicit intake.completionLetterDate (best — from completion letter doc)
+  //   2. Education end date from Q15 — if client typed "2024-05 to 2026-05",
+  //      use 2026-05 as proxy. Imperfect but correct in practice for PGWP cases
+  //      (program end ≈ completion letter date for most DLIs).
+  let completionLetterDate = intake.completionLetterDate || "";
+  if (!completionLetterDate && educationRaw && !isNo(educationRaw)) {
+    // Find a year-month range in the education answer; take the LATER date as program-end.
+    const eduDateRange = educationRaw.match(/(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?\s*(?:to|-)\s*(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?/);
+    if (eduDateRange) {
+      const endYear = eduDateRange[3];
+      const endMonth = eduDateRange[4].padStart(2, "0");
+      completionLetterDate = `${endYear}-${endMonth}-01`;
+    }
+  }
   const completionYear = completionLetterDate.slice(0, 4);
   const completionMonth = completionLetterDate.slice(5, 7);
 
@@ -827,7 +840,12 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     current_status_country: mailingCountryCode,  // "511" = Canada
     current_status_from_date: normalizeDate(currentStatusFrom),
     current_status_to_date: normalizeDate(currentStatusTo),
-    prev_country_indicator: false,
+    // Q8 of form: "Have you lived in any country other than your country of
+    // citizenship or current residence for more than 6 months in the past 5 years?"
+    // We default to NO ("N") when no prev_country_1 is set — this ticks the
+    // No box on the form. Previously the indicator was just `false` which
+    // didn't render any tick at all.
+    prev_country_indicator: !!intake.previousCountries && !isNo(intake.previousCountries),
 
     // ── Section 5: Languages — defaults ──
     native_language: nativeLangCode,             // numeric (e.g. 324 Punjabi, 321 Hindi)
@@ -836,7 +854,10 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
     prefer_service_language: "English",
     language_test_taken: langTest,               // DEFAULT YES (PGWP requirement)
     language_test_details: langTestDetails,
-    frequent_language: nativeLangText || "English",
+    // "Which language are you most at ease in" — IRCC form only accepts English
+    // or French. We always pick English regardless of native language. Previously
+    // this used nativeLangText which produced things like "Hindi" — invalid value.
+    frequent_language: "English",
 
     // ── Section 6: Documents — DEFAULT NO ──
     taiwan_passport: false,

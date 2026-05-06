@@ -39,6 +39,11 @@ export function classifyQuestion(questionText: string): string {
   if (/education\s+after|name\s+of\s+institute|field\s+of\s+study/i.test(q)) {
     return "education";
   }
+  // "Date and place you first entered Canada" / "recent entry...date and reason"
+  // — needs BOTH date and place. We bounce back if only one is given.
+  if (/(?:date\s+and\s+(?:place|reason)|first\s+entered|recent\s+entry).*(?:canada|place|airport|port)/i.test(q)) {
+    return "entry_to_canada";
+  }
   if (/native\s+language|first\s+language|mother\s+tongue/i.test(q)) {
     return "language";
   }
@@ -261,6 +266,46 @@ function validateDate(answer: string, kind: "dob" | "passport_expiry"): Validati
   return { ok: true };
 }
 
+// ─── Entry-to-Canada validator ──────────────────────────────────────
+//
+// Q8: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)"
+// Q10: "Any recent entry to Canada? (Yes/No — if Yes: provide date YYYY-MM-DD and reason)"
+//
+// IRCC requires BOTH date and place on Form 5710. If client gives only a date
+// (like "2022-09-01"), we push back asking for the place. If they answer NO
+// to recent entry, accept that.
+function validateEntryToCanada(answer: string): ValidationResult {
+  const v = (answer || "").trim();
+  if (!v) {
+    return { ok: false, hint: "Please provide both date AND place. Example: 2019-09-01, Toronto Pearson" };
+  }
+  // "no" or "outside" are valid for Q10 / non-applicable scenarios
+  if (/^\s*(no|n|none|n\/?a|outside|outside canada)\s*[.!]?\s*$/i.test(v)) {
+    return { ok: true };
+  }
+  // If answer has a date AND something else (place/airport name), accept
+  const hasDate = /\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(v);
+  if (!hasDate) {
+    return {
+      ok: false,
+      hint: "Please include the date in YYYY-MM-DD format. Example: 2019-09-01, Toronto Pearson",
+    };
+  }
+  // Strip the date part and see if there's anything else
+  const withoutDate = v.replace(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/g, "")
+    .replace(/[,;\s]+/g, " ")
+    .trim();
+  // If only 0-1 words after stripping date, push back for the place
+  const otherWords = withoutDate.split(/\s+/).filter(Boolean);
+  if (otherWords.length === 0) {
+    return {
+      ok: false,
+      hint: "Got the date — please also share the city/airport where you entered Canada. Example: Toronto Pearson, or Vancouver YVR.",
+    };
+  }
+  return { ok: true };
+}
+
 // ─── Master dispatcher ──────────────────────────────────────────────
 //
 // Given a question and an answer, return whether the answer is acceptable.
@@ -293,7 +338,9 @@ export function validateAnswer(
       return validateDate(answer, "dob");
     case "passport_expiry":
       return validateDate(answer, "passport_expiry");
-    // V1: only employment + dates. Other types pass through.
+    case "entry_to_canada":
+      return validateEntryToCanada(answer);
+    // V1: only employment + dates + entry. Other types pass through.
     default:
       return { ok: true };
   }
