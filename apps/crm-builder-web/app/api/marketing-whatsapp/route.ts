@@ -66,15 +66,16 @@ async function sendMarketingMessage(to: string, message: string) {
   return data;
 }
 
-async function saveMarketingMessage(phone: string, message: string, direction: string, name?: string) {
+async function saveMarketingMessage(phone: string, message: string, direction: string, name?: string, customId?: string) {
   try {
-    const id = `mkt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const id = customId || `mkt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await pool.query(
       `INSERT INTO marketing_inbox (id, phone, message, direction, contact_name, created_at)
        VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (id) DO NOTHING`,
       [id, phone, message, direction, name || null]
     );
-  } catch (e) { console.error("Marketing save error:", e); }
+    return id;
+  } catch (e) { console.error("Marketing save error:", e); return null; }
 }
 
 // Upsert lead row for every inbound message
@@ -603,10 +604,12 @@ export async function POST(request: NextRequest) {
       await handleMarketingMessage(from, text, contactName, referral);
     } else if (from && (msgType === "image" || msgType === "document" || msgType === "audio")) {
       // ── Inbound media on marketing number ──
-      // Save a placeholder row immediately so it shows up in the inbox.
-      // Then async: download from Meta → save to S3 → update placeholder
-      // with the full `[doc:...|s3=...]` format so the download button works.
-      // Same flow as the processing webhook handles inbound media.
+      // Save a placeholder row immediately with msgId AS the database id
+      // (previously the row id was random and the UPDATE below silently
+      // matched zero rows). Then process the media inline so S3 upload +
+      // DB update complete before the webhook returns. The previous
+      // fire-and-forget IIFE didn't survive serverless function teardown
+      // on Railway, leaving every image stuck on "Uploading…" forever.
       const msgId = `mkt-in-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const docKind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
       const docCaption = String(message[msgType]?.caption || message[msgType]?.filename || "").trim();
@@ -614,100 +617,82 @@ export async function POST(request: NextRequest) {
       const placeholder = `[doc:${msgId}|kind=${docKind}|pending=1${captionPart}]`;
 
       await ensureLead(from, contactName);
-      await saveMarketingMessage(from, placeholder, "inbound", contactName);
+      // Use msgId as the row id so the UPDATE below targets the right row
+      await saveMarketingMessage(from, placeholder, "inbound", contactName, msgId);
 
-      // ── Async: download + S3 upload + row update ──
-      // Don't await — webhook needs to return 200 to Meta within ~5s.
-      (async () => {
-        try {
-          const mediaObj = message[msgType];
-          if (!mediaObj?.id) return;
-
-          // Download from Meta. Two-step: get URL → fetch bytes.
+      // ── Inline: download from Meta + upload to S3 + update placeholder ──
+      // Meta webhook gives us ~5-10s before timing out; image/document
+      // download + S3 upload typically completes well within that. If the
+      // webhook does take a bit longer, Meta will retry — fine.
+      try {
+        const mediaObj = message[msgType];
+        if (!mediaObj?.id) {
+          console.warn(`Marketing inbound: no media id in ${msgType} from ${from}`);
+        } else {
           const urlRes = await fetch(`https://graph.facebook.com/v18.0/${mediaObj.id}`, {
             headers: { Authorization: `Bearer ${WA_TOKEN}` }
           });
           const urlData: any = await urlRes.json().catch(() => ({}));
-          if (!urlData?.url) return;
+          if (!urlData?.url) {
+            console.warn(`Marketing inbound: no download URL for ${mediaObj.id}`);
+          } else {
+            const fileRes = await fetch(urlData.url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+            const buffer = Buffer.from(await fileRes.arrayBuffer());
+            const mimeType: string = urlData.mime_type || "application/octet-stream";
 
-          const fileRes = await fetch(urlData.url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
-          const buffer = Buffer.from(await fileRes.arrayBuffer());
-          const mimeType: string = urlData.mime_type || "application/octet-stream";
+            const { putObjectToS3, isS3StorageEnabled, normalizeFilename } = await import("@/lib/object-storage");
+            if (!isS3StorageEnabled()) {
+              console.warn("Marketing inbound: S3 not configured, skipping upload");
+            } else {
+              const extMap: Record<string, string> = {
+                "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
+                "image/heic": "heic", "application/zip": "zip", "video/mp4": "mp4",
+                "audio/ogg": "ogg", "audio/mpeg": "mp3",
+              };
+              const ext = extMap[mimeType] || (mimeType.split("/")[1] || "bin").slice(0, 6);
+              const safeName = normalizeFilename(mediaObj.filename || `marketing-${from}-${Date.now()}.${ext}`);
+              const phoneFolder = String(from).replace(/\D/g, "") || "unknown";
+              const s3Key = `companies/newton/marketing-inbound/${phoneFolder}/${Date.now()}-${safeName}`;
 
-          const { putObjectToS3, isS3StorageEnabled, normalizeFilename } = await import("@/lib/object-storage");
-          if (!isS3StorageEnabled()) return;
+              await putObjectToS3({ key: s3Key, content: buffer, contentType: mimeType });
 
-          const extMap: Record<string, string> = {
-            "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
-            "image/heic": "heic", "application/zip": "zip", "video/mp4": "mp4",
-            "audio/ogg": "ogg", "audio/mpeg": "mp3",
-          };
-          const ext = extMap[mimeType] || (mimeType.split("/")[1] || "bin").slice(0, 6);
-          const safeName = normalizeFilename(mediaObj.filename || `marketing-${from}-${Date.now()}.${ext}`);
-          // Phone-based folder structure makes it easier to find a specific
-          // client's history later and keeps S3 organized.
-          // Format: companies/newton/marketing-inbound/{phone}/{ts}-{filename}
-          const phoneFolder = String(from).replace(/\D/g, "") || "unknown";
-          const s3Key = `companies/newton/marketing-inbound/${phoneFolder}/${Date.now()}-${safeName}`;
+              const finalName = (mediaObj.filename || safeName).replace(/\|/g, "");
+              const updatedPlaceholder = `[doc:${msgId}|kind=${docKind}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(mimeType)}|s3=${encodeURIComponent(s3Key)}${captionPart}]`;
 
-          await putObjectToS3({ key: s3Key, content: buffer, contentType: mimeType });
+              const updRes = await pool.query(
+                `UPDATE marketing_inbox SET message = $1 WHERE id = $2`,
+                [updatedPlaceholder, msgId]
+              );
+              console.log(`📎 Marketing media saved (${docKind}, ${updRes.rowCount} rows updated): ${finalName}`);
 
-          const finalName = (mediaObj.filename || safeName).replace(/\|/g, "");
-          const updatedPlaceholder = `[doc:${msgId}|kind=${docKind}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(mimeType)}|s3=${encodeURIComponent(s3Key)}${captionPart}]`;
-
-          await pool.query(
-            `UPDATE marketing_inbox SET message = $1 WHERE id = $2`,
-            [updatedPlaceholder, msgId]
-          );
-
-          // ── Drive backup (Stage 2) ──
-          //
-          // Upload the same file to a Google Drive folder so staff can browse
-          // marketing docs in their familiar Drive interface, organized per
-          // client. This is in addition to S3 — Drive is the user-facing
-          // browseable copy, S3 is the system-of-record backup.
-          //
-          // Folder structure inside MARKETING_DOCS_DRIVE_FOLDER_ID:
-          //   /MarketingDocs/
-          //     {client name or phone}/
-          //       {original filename}
-          //
-          // Failures here are non-fatal — the doc is already safe in S3 and
-          // visible in the CRM. Drive is best-effort.
-          const marketingDriveRoot = process.env.MARKETING_DOCS_DRIVE_FOLDER_ID || "";
-          if (marketingDriveRoot) {
-            try {
-              const { getOrCreateDriveSubfolder, uploadFileToDriveFolder } = await import("@/lib/google-drive");
-
-              // Resolve client folder name: prefer contact_name from this lead,
-              // fall back to phone if no name yet. Sanitize for Drive (no slashes).
-              const lead = await getLead(from).catch(() => null);
-              const clientLabel = (lead?.contact_name || contactName || "")
-                .replace(/[\/\\<>:"|?*]/g, " ")
-                .trim();
-              const clientFolderName = clientLabel
-                ? `${clientLabel} (${from})`
-                : from;
-
-              // Get or create per-client subfolder
-              const clientFolder = await getOrCreateDriveSubfolder(marketingDriveRoot, clientFolderName);
-
-              // Upload the file to that subfolder
-              await uploadFileToDriveFolder({
-                folderId: clientFolder.id,
-                fileName: finalName,
-                fileBuffer: buffer,
-                mimeType,
-              });
-              console.log(`☁️  Marketing doc uploaded to Drive: ${clientFolderName}/${finalName}`);
-            } catch (e) {
-              console.error("Marketing Drive upload failed (non-fatal):", (e as Error).message);
+              // ── Drive backup (Stage 2) — non-fatal best-effort ──
+              const marketingDriveRoot = process.env.MARKETING_DOCS_DRIVE_FOLDER_ID || "";
+              if (marketingDriveRoot) {
+                try {
+                  const { getOrCreateDriveSubfolder, uploadFileToDriveFolder } = await import("@/lib/google-drive");
+                  const lead = await getLead(from).catch(() => null);
+                  const clientLabel = (lead?.contact_name || contactName || "")
+                    .replace(/[\/\\<>:"|?*]/g, " ")
+                    .trim();
+                  const clientFolderName = clientLabel ? `${clientLabel} (${from})` : from;
+                  const clientFolder = await getOrCreateDriveSubfolder(marketingDriveRoot, clientFolderName);
+                  await uploadFileToDriveFolder({
+                    folderId: clientFolder.id,
+                    fileName: finalName,
+                    fileBuffer: buffer,
+                    mimeType,
+                  });
+                  console.log(`☁️  Marketing doc uploaded to Drive: ${clientFolderName}/${finalName}`);
+                } catch (e) {
+                  console.error("Marketing Drive upload failed (non-fatal):", (e as Error).message);
+                }
+              }
             }
           }
-        } catch (e) {
-          console.error("Marketing inbound media S3 save failed:", (e as Error).message);
         }
-      })();
+      } catch (e) {
+        console.error("Marketing inbound media save failed:", (e as Error).message);
+      }
     }
 
     return NextResponse.json({ status: "ok" });
