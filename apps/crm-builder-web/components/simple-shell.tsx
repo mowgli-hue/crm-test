@@ -6853,6 +6853,45 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </button>
                         </div>
 
+                        {/* ── Scan Documents to Autofill Intake ── */}
+                        {["post-graduation work permit","pgwp","sowp","spousal open work permit","bowp","bridging open work permit","open work permit","lmia","visitor record","visitor visa","trv","study permit","restoration"].some(k => selectedCase.formType.toLowerCase().includes(k)) && (
+                          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 flex items-center justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="text-xs font-bold text-cyan-900">🔍 Scan Documents → Autofill Intake</p>
+                              <p className="text-[10px] text-cyan-700 mt-0.5">
+                                Reads passport, study permit, etc. from Drive folder. Extracts name, DOB, passport number, UCI, expiry dates, place of birth — fills any blank intake fields.
+                              </p>
+                            </div>
+                            <button onClick={async () => {
+                              setCaseActionStatus("🔍 Scanning documents with AI vision...");
+                              const res = await apiFetch(`/cases/${selectedCase.id}/scan-docs`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: "{}",
+                              }).catch(() => null);
+                              const d = await res?.json().catch(() => ({}));
+                              if (res?.ok) {
+                                if (d.fieldsAdded > 0) {
+                                  setCaseActionStatus(`✅ Scanned ${d.filesScanned} doc(s), filled ${d.fieldsAdded} intake field(s). Re-fetch case to see changes.`);
+                                  // Refresh case data so the form generator picks up the new fields
+                                  try {
+                                    const caseRes = await apiFetch(`/cases/${selectedCase.id}`);
+                                    const cd = await caseRes.json().catch(() => ({}));
+                                    if (cd && cd.id) setSelectedCase(cd);
+                                  } catch (e) { /* non-fatal */ }
+                                } else {
+                                  setCaseActionStatus(`ℹ️ Scanned ${d.filesScanned || 0} doc(s) — no new fields extracted (intake may already be complete)`);
+                                }
+                              } else {
+                                setCaseActionStatus(d?.error || "❌ Scan failed");
+                              }
+                              setTimeout(() => setCaseActionStatus(""), 6000);
+                            }} className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-700 shrink-0">
+                              🔍 Scan Now
+                            </button>
+                          </div>
+                        )}
+
                         {/* ── Generate IRCC Forms ── */}
                         {["post-graduation work permit","pgwp","sowp","spousal open work permit","bowp","bridging open work permit","open work permit","lmia","visitor record","visitor visa","trv","study permit","restoration"].some(k => selectedCase.formType.toLowerCase().includes(k)) && (
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 flex items-center justify-between gap-3 flex-wrap">

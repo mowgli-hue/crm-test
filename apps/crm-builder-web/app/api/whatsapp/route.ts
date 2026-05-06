@@ -481,78 +481,29 @@ export async function POST(req: NextRequest) {
               } catch(e) { console.error("S3 save failed:", e); }
 
               // ── STEP 2: AI CLASSIFY & EXTRACT DATA ──────────────────────
+              // Uses the shared doc-ocr module (same logic as the staff-triggered
+              // /scan-docs endpoint, so behavior is identical regardless of upload path).
               let docCategory = "client";
               let properFileName = `${clientNameClean} - Document.${ext}`;
-              const isImage = media.mimeType.includes("image");
-              const isPdf = media.mimeType.includes("pdf");
-              
               try {
-                const scanContent: any[] = [];
-                if (isImage) {
-                  // Images go as image type
-                  const safeType = media.mimeType.includes("png") ? "image/png" : media.mimeType.includes("gif") ? "image/gif" : media.mimeType.includes("webp") ? "image/webp" : "image/jpeg";
-                  scanContent.push({ type: "image", source: { type: "base64", media_type: safeType, data: media.buffer.toString("base64") } });
-                } else if (isPdf) {
-                  // PDFs go as document type
-                  scanContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: media.buffer.toString("base64") } });
-                }
-                scanContent.push({ type: "text", text: `Scan this immigration document for client ${matched.client} (${matched.formType}).
-Reply ONLY with JSON: {
-  "category": "passport|study_permit|work_permit|completion_letter|transcripts|language_test|photo|bank_statement|job_offer|medical|police_clearance|ielts|lmia|eap|copr|other",
-  "label": "Short label e.g. Passport, Study Permit, Completion Letter",
-  "expiryDate": "YYYY-MM-DD or empty",
-  "documentNumber": "number or empty",
-  "firstName": "or empty",
-  "lastName": "or empty",
-  "dateOfBirth": "YYYY-MM-DD or empty",
-  "gender": "Male/Female or empty",
-  "issuingCountry": "or empty",
-  "issueDate": "YYYY-MM-DD or empty",
-  "programOrField": "or empty",
-  "institutionOrEmployer": "or empty"
-}` });
+                const { extractDocumentFields, mapExtractedToIntake } = await import("@/lib/doc-ocr");
+                const extracted = await extractDocumentFields(media.buffer, media.mimeType, matched.client);
+                if (extracted) {
+                  if (extracted.category) docCategory = extracted.category;
 
-                const classRes = await fetch("https://api.anthropic.com/v1/messages", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY || "", "anthropic-version": "2023-06-01" },
-                  body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 400, messages: [{ role: "user", content: scanContent }] })
-                });
-
-                if (classRes.ok) {
-                  const classData = await classRes.json() as any;
-                  const parsed = JSON.parse(classData.content?.[0]?.text?.replace(/```json|```/g,"").trim() || "{}");
-                  
-                  if (parsed.category) docCategory = parsed.category;
-                  
                   // Build proper filename: ClientName - DocumentType (exp DATE).ext
-                  if (parsed.label) {
-                    const expiryPart = parsed.expiryDate ? ` (exp ${parsed.expiryDate})` : "";
-                    properFileName = `${clientNameClean} - ${parsed.label}${expiryPart}.${ext}`;
+                  if (extracted.label) {
+                    const expiryPart = extracted.expiryDate ? ` (exp ${extracted.expiryDate})` : "";
+                    properFileName = `${clientNameClean} - ${extracted.label}${expiryPart}.${ext}`;
                   }
 
-                  // Save extracted fields to pgwpIntake
-                  const fields: Record<string, string> = {};
-                  if (parsed.firstName) fields.firstName = parsed.firstName;
-                  if (parsed.lastName) fields.lastName = parsed.lastName;
-                  if (parsed.dateOfBirth) fields.dateOfBirth = parsed.dateOfBirth;
-                  if (parsed.gender) fields.sex = parsed.gender;
-                  if (parsed.issuingCountry) fields.citizenship = parsed.issuingCountry;
-                  if (parsed.documentNumber) {
-                    if (parsed.category === "passport") fields.passportNumber = parsed.documentNumber;
-                    else fields.permitDetails = parsed.documentNumber;
-                  }
-                  if (parsed.expiryDate) {
-                    if (parsed.category === "passport") fields.passportExpiryDate = parsed.expiryDate;
-                    else if (parsed.category === "study_permit") fields.studyPermitExpiryDate = parsed.expiryDate;
-                    else if (parsed.category === "work_permit") fields.workPermitExpiryDate = parsed.expiryDate;
-                  }
-                  if (parsed.issueDate && parsed.category === "passport") fields.passportIssueDate = parsed.issueDate;
-                  if (parsed.programOrField) fields.programOfStudy = parsed.programOrField;
-                  if (parsed.institutionOrEmployer) fields.institutionName = parsed.institutionOrEmployer;
+                  // Map to intake fields, only filling blanks
+                  const existingIntake = (matched.pgwpIntake as Record<string, any>) || {};
+                  const fields = mapExtractedToIntake(extracted, existingIntake);
 
                   if (Object.keys(fields).length > 0) {
                     await updateCasePgwpIntake(COMPANY_ID, matched.id, fields as any);
-                    console.log(`📋 Extracted ${Object.keys(fields).length} fields from ${parsed.label} for ${matched.client}`);
+                    console.log(`📋 Extracted ${Object.keys(fields).length} fields from ${extracted.label || extracted.category} for ${matched.client}`);
                   }
                 }
               } catch(e) { console.error("AI scan failed (non-fatal):", e); }

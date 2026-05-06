@@ -668,3 +668,54 @@ export async function deleteFilesByNameInFolder(
 
   return { removed, errors };
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// listFilesInFolder
+//
+// List all (non-trashed) files inside a Drive folder. Returns id, name,
+// and mimeType for each. Does NOT recurse into subfolders.
+//
+// Used by the doc-scan endpoint to enumerate uploaded client docs and
+// run OCR on each.
+// ────────────────────────────────────────────────────────────────────────
+export async function listFilesInFolder(
+  folderId: string,
+): Promise<Array<{ id: string; name: string; mimeType: string }>> {
+  if (!folderId) throw new Error("listFilesInFolder: empty folderId");
+  const accessToken = await getDriveAccessToken();
+
+  const out: Array<{ id: string; name: string; mimeType: string }> = [];
+  let pageToken: string | undefined = undefined;
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: "nextPageToken, files(id,name,mimeType)",
+      pageSize: "100",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const url = "https://www.googleapis.com/drive/v3/files?" + params.toString();
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`listFilesInFolder failed: ${res.status} ${text.slice(0, 200)}`);
+    }
+    const json = await res.json() as {
+      nextPageToken?: string;
+      files?: Array<{ id: string; name: string; mimeType: string }>;
+    };
+    if (Array.isArray(json.files)) {
+      for (const f of json.files) {
+        // Skip subfolders — only list actual files
+        if (f.mimeType === "application/vnd.google-apps.folder") continue;
+        out.push({ id: f.id, name: f.name, mimeType: f.mimeType });
+      }
+    }
+    pageToken = json.nextPageToken;
+  } while (pageToken);
+  return out;
+}
