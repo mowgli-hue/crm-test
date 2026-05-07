@@ -684,16 +684,19 @@ export async function deleteFilesByNameInFolder(
 // ────────────────────────────────────────────────────────────────────────
 export async function listFilesInFolder(
   folderId: string,
-): Promise<Array<{ id: string; name: string; mimeType: string }>> {
+): Promise<Array<{ id: string; name: string; mimeType: string; modifiedTime?: string; size?: number }>> {
   if (!folderId) throw new Error("listFilesInFolder: empty folderId");
   const accessToken = await getDriveAccessToken();
 
-  const out: Array<{ id: string; name: string; mimeType: string }> = [];
+  const out: Array<{ id: string; name: string; mimeType: string; modifiedTime?: string; size?: number }> = [];
   let pageToken: string | undefined = undefined;
   do {
     const params = new URLSearchParams({
       q: `'${folderId}' in parents and trashed=false`,
-      fields: "nextPageToken, files(id,name,mimeType)",
+      // modifiedTime + size let callers pick the newest/biggest dupe — needed
+      // when staff regenerates IMM forms (newest version is the complete one)
+      // or uploads multiple copies of the same passport.
+      fields: "nextPageToken, files(id,name,mimeType,modifiedTime,size)",
       pageSize: "100",
       supportsAllDrives: "true",
       includeItemsFromAllDrives: "true",
@@ -710,13 +713,19 @@ export async function listFilesInFolder(
     }
     const json = await res.json() as {
       nextPageToken?: string;
-      files?: Array<{ id: string; name: string; mimeType: string }>;
+      files?: Array<{ id: string; name: string; mimeType: string; modifiedTime?: string; size?: string }>;
     };
     if (Array.isArray(json.files)) {
       for (const f of json.files) {
         // Skip subfolders — only list actual files
         if (f.mimeType === "application/vnd.google-apps.folder") continue;
-        out.push({ id: f.id, name: f.name, mimeType: f.mimeType });
+        out.push({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType,
+          modifiedTime: f.modifiedTime,
+          size: f.size ? parseInt(f.size, 10) : undefined,
+        });
       }
     }
     pageToken = json.nextPageToken;

@@ -301,11 +301,23 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   taxNotices: CategorizedDoc[];     // ALL tax notices for citizenship
   policeCertificates: CategorizedDoc[]; // citizenship police clearances
 } {
-  // Sort by uploadedAt descending so .find() picks the most recent
+  // Sort by Drive modifiedTime descending (newest first) so .find() picks the
+  // most recently modified file. Falls back to createdAt if modifiedTime isn't
+  // set. Tie-breaker: prefer the LARGER file (a filled IMM5710 PDF is bigger
+  // than a blank one, so size is a decent signal when modified-times are equal,
+  // e.g. when staff bulk-uploaded multiple copies in the same upload session).
+  // This is critical when there are duplicates (e.g. staff regenerating
+  // IMM5710 — the latest one has the complete data).
   const byDateDesc = [...categorized].sort((a, b) => {
-    const aT = a.uploadedAt ? Date.parse(a.uploadedAt) : 0;
-    const bT = b.uploadedAt ? Date.parse(b.uploadedAt) : 0;
-    return bT - aT;
+    const aT = (a as any).modifiedTime ? Date.parse((a as any).modifiedTime)
+             : a.createdAt ? Date.parse(a.createdAt) : 0;
+    const bT = (b as any).modifiedTime ? Date.parse((b as any).modifiedTime)
+             : b.createdAt ? Date.parse(b.createdAt) : 0;
+    if (bT !== aT) return bT - aT;
+    // Tie on time → prefer larger file
+    const aS = (a as any).size || 0;
+    const bS = (b as any).size || 0;
+    return bS - aS;
   });
 
   const passport = byDateDesc.find((d) => d.category === "passport");
@@ -321,6 +333,15 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const imm5257 = immForms.find((d) => /5257[a-z]?(?![\d])/i.test(d.name));
   const imm5476 = immForms.find((d) => /5476[a-z]?(?![\d])/i.test(d.name));
   const imm5709 = immForms.find((d) => /5709[a-z]?(?![\d])/i.test(d.name));
+  // Diagnostic: when there are duplicate IMM5710 files (real Newton case —
+  // staff regenerates and the old version stays in Drive), log how many we
+  // saw and which one we picked so we can verify the sort works.
+  const imm5710Dupes = immForms.filter((d) => /5710[a-z]?(?![\d])/i.test(d.name));
+  if (imm5710Dupes.length > 1 && imm5710) {
+    const pickedSize = (imm5710 as any).size ? `${Math.round((imm5710 as any).size / 1024)}KB` : "?KB";
+    const pickedTime = (imm5710 as any).modifiedTime || imm5710.createdAt || "?";
+    console.log(`[IMM5710 picker] ${imm5710Dupes.length} dupes found, picked "${imm5710.name}" (modified=${pickedTime}, size=${pickedSize})`);
+  }
   // CIT-0002 / CIT 0002 — adult citizenship application form
   const imm0002 = byDateDesc.find((d) => /\bCIT[\s_-]?0002\b/i.test(d.name));
 
@@ -702,10 +723,17 @@ export async function assemblePgwpSubmissionPackage(
   // documents table only had 8 entries, package missed 4 important docs.
   const docsFromTable = await listDocuments(companyId, caseId);
   let docs = docsFromTable;
+  // Map of driveFileId → { modifiedTime, size } from Drive — used later
+  // for tie-breaking when picking among duplicate IMM forms / passports.
+  const driveMeta = new Map<string, { modifiedTime?: string; size?: number }>();
   try {
     const caseDriveId = getCaseDriveFolderId(caseItem);
     if (caseDriveId) {
       const driveFiles = await listFilesInFolder(caseDriveId);
+      // Index every Drive file's modified time so we can sort by it.
+      for (const f of driveFiles) {
+        driveMeta.set(f.id, { modifiedTime: f.modifiedTime, size: f.size });
+      }
       // De-dupe: existing docsFromTable wins (it has a stable id + status +
       // version info). Anything in Drive but NOT in the table is added as a
       // synthetic DocumentItem with the Drive file id encoded as a viewLink.
@@ -724,7 +752,8 @@ export async function assemblePgwpSubmissionPackage(
           fileType: f.mimeType,
           status: "received" as const,
           link: `https://drive.google.com/file/d/${f.id}/view`,
-          createdAt: new Date().toISOString(),
+          // Use Drive's modifiedTime as createdAt so sort-by-recency works
+          createdAt: f.modifiedTime || new Date().toISOString(),
         }));
       if (newDriveOnly.length > 0) {
         console.log(`[submission ${caseId}] step 1: +${newDriveOnly.length} files found in Drive but NOT in documents table — including them`);
@@ -736,6 +765,17 @@ export async function assemblePgwpSubmissionPackage(
     console.warn(`[submission ${caseId}] Drive scan failed (continuing with table only): ${(e as Error).message.slice(0, 100)}`);
   }
   const categorized = await categorizeDocs(docs, ocr);
+  // Augment categorized docs with Drive modifiedTime so primary-doc selection
+  // can pick the most recently regenerated version when there are duplicates
+  // (real bug from CASE-1401: 5 copies of IMM5710E in folder, picker grabbed
+  // an old blank one because we had no modifiedTime to sort by).
+  for (const doc of categorized) {
+    if (doc.driveFileId && driveMeta.has(doc.driveFileId)) {
+      const meta = driveMeta.get(doc.driveFileId)!;
+      (doc as any).modifiedTime = meta.modifiedTime;
+      (doc as any).size = meta.size;
+    }
+  }
   const primary = selectPrimaryDocs(categorized);
 
   // Pick form profile based on case formType. PGWP/SOWP/work permit/study
