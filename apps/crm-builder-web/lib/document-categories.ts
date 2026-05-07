@@ -31,6 +31,8 @@ export type DocCategory =
   | "transcript"
   | "completion_letter"
   | "loa"
+  | "pal"
+  | "proof_of_funds"
   | "medical"
   | "bank_statement"
   | "imm_form"
@@ -69,12 +71,32 @@ const CATEGORY_RULES: CategoryRule[] = [
     patterns: [/completion\s+letter/i, /\bcompletion\b/i, /program\s+complet/i],
   },
   {
+    // PAL must match BEFORE loa — PAL filenames sometimes contain "letter" or
+    // "attestation letter" which could otherwise be picked up by the LOA rule.
+    category: "pal",
+    patterns: [
+      /\bpal\b/i,
+      /provincial\s+attestation/i,
+      /attestation\s+letter/i,
+      /\bpta\b/i,                          // some provinces issue PTA / Provincial Territorial Attestation
+    ],
+  },
+  {
     category: "loa",
     patterns: [
       /letter\s+of\s+acceptance/i,
       /\bloa\b/i,
       /\boffer\s+letter/i,
       /admission\s+letter/i,
+    ],
+  },
+  {
+    category: "proof_of_funds",
+    patterns: [
+      /proof\s+of\s+funds?/i,
+      /\bgic\b/i,
+      /sponsor(ship)?\s+letter/i,
+      /financial\s+statement/i,
     ],
   },
   {

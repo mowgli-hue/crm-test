@@ -31,6 +31,24 @@ export interface ExtractedFields {
   uci?: string;                     // 11-2216-2829
   programOrField?: string;
   institutionOrEmployer?: string;
+  // ── LOA-specific fields (Letter of Acceptance from school) ──
+  // Used by study permit applications to fill IMM5709 / IMM1294.
+  schoolName?: string;              // "University Canada West"
+  schoolAddress?: string;           // Full street address
+  schoolCity?: string;              // "Vancouver"
+  schoolProvince?: string;          // 2-letter code "BC"
+  dliNumber?: string;               // Designated Learning Institution # — "O19395389734"
+  studentId?: string;               // School-issued student number
+  studyLevel?: string;              // Free-text from LOA: "Bachelor of Computer Science"
+  studyField?: string;              // Free-text from LOA: "Computer Science"
+  studyFromDate?: string;           // YYYY-MM-DD program start
+  studyToDate?: string;             // YYYY-MM-DD program end
+  tuitionCost?: string;             // CAD amount, digits only
+  // ── PAL fields (Provincial Attestation Letter) ──
+  // Mandatory for most undergrad study permit applications since 2024.
+  // Graduate students (Master's / PhD), K-12, exchange students are exempt.
+  palDocNumber?: string;
+  palExpiryDate?: string;           // YYYY-MM-DD
 }
 
 /**
@@ -83,8 +101,8 @@ export async function extractDocumentFields(
 
 Return ONLY a JSON object with these fields (use empty string "" if unknown — never null):
 {
-  "category": "passport|study_permit|work_permit|visa|completion_letter|transcripts|language_test|photo|bank_statement|job_offer|medical|police_clearance|ielts|lmia|eap|copr|other",
-  "label": "Short human label e.g. Passport, Study Permit, Completion Letter",
+  "category": "passport|study_permit|work_permit|visa|completion_letter|transcripts|language_test|photo|bank_statement|job_offer|medical|police_clearance|ielts|lmia|eap|copr|loa|pal|other",
+  "label": "Short human label e.g. Passport, Study Permit, Letter of Acceptance, PAL",
   "expiryDate": "YYYY-MM-DD",
   "issueDate": "YYYY-MM-DD",
   "documentNumber": "Passport number or permit number (digits/letters only, no spaces)",
@@ -97,12 +115,30 @@ Return ONLY a JSON object with these fields (use empty string "" if unknown — 
   "placeOfBirthCity": "City and/or state of birth (e.g. 'Surendranagar, Gujarat'). Found on passport's 'Place of Birth' field. Empty for non-passport docs.",
   "uci": "UCI / IUC number — usually 8-10 digits with dashes (e.g. 11-2216-2829). Found on study permits, work permits, COPR. Empty for passports.",
   "programOrField": "Field of study or job role",
-  "institutionOrEmployer": "School name or employer name"
+  "institutionOrEmployer": "School name or employer name",
+
+  "schoolName": "(LOA only) Full official school name e.g. 'University Canada West'",
+  "schoolAddress": "(LOA only) Full street address of the school",
+  "schoolCity": "(LOA only) City where school is located e.g. 'Vancouver'",
+  "schoolProvince": "(LOA only) 2-letter province code: BC, ON, AB, QC, MB, SK, NS, NB, NL, PE, YT, NT, NU",
+  "dliNumber": "(LOA only) Designated Learning Institution number, format O followed by 11 digits e.g. 'O19395389734'",
+  "studentId": "(LOA only) School-issued student ID number",
+  "studyLevel": "(LOA only) Verbatim level from the doc e.g. 'Bachelor of Computer Science', 'Master of Business Administration', 'College Diploma'",
+  "studyField": "(LOA only) Verbatim field from the doc e.g. 'Computer Science', 'Business Administration', 'Hospitality Management'",
+  "studyFromDate": "(LOA only) Program start date YYYY-MM-DD",
+  "studyToDate": "(LOA only) Program end date YYYY-MM-DD",
+  "tuitionCost": "(LOA only) Tuition cost in CAD, digits only e.g. '24500'",
+
+  "palDocNumber": "(PAL only) PAL document number — usually starts with PAL- followed by digits, or province-specific format",
+  "palExpiryDate": "(PAL only) PAL expiry date YYYY-MM-DD"
 }
 
 IMPORTANT:
 - For passports, set countryOfBirth from the 'Place of Birth' field's country (look at MRZ if needed). Do NOT default to 'Canada' or 'India' — only use what's actually on the document.
 - For study permits, the UCI is critical — extract it precisely with dashes.
+- For LOA: extract DLI number carefully. It usually appears as 'DLI #', 'Designated Learning Institution Number', or just 'O' followed by 11 digits. Common variations exist.
+- For LOA tuition: if multiple amounts shown (semester vs yearly), use the YEARLY amount. Strip $ and commas — pure digits only.
+- For PAL: only fill palDocNumber and palExpiryDate when category is "pal". Otherwise leave them empty.
 - Reply with ONLY the JSON, no other text.`
   });
 
@@ -116,7 +152,7 @@ IMPORTANT:
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 600,
+        max_tokens: 1000,
         messages: [{ role: "user", content: scanContent }],
       }),
     });
@@ -201,6 +237,25 @@ export function mapExtractedToIntake(
     // Visa stamps in passport — issue/expiry, no UCI typically
     if (!existingIntake.visaIssueDate && extracted.issueDate) fields.visaIssueDate = extracted.issueDate;
     if (!existingIntake.visaExpiryDate && extracted.expiryDate) fields.visaExpiryDate = extracted.expiryDate;
+  } else if (extracted.category === "loa") {
+    // Letter of Acceptance — primary source of school + program details for
+    // study permit applications. Fills the IMM5709 / IMM1294 study section.
+    setIfMissing("loaSchoolName", extracted.schoolName || extracted.institutionOrEmployer);
+    setIfMissing("loaSchoolAddress", extracted.schoolAddress);
+    setIfMissing("loaSchoolCity", extracted.schoolCity);
+    setIfMissing("loaSchoolProvince", extracted.schoolProvince);
+    setIfMissing("loaDliNumber", extracted.dliNumber);
+    setIfMissing("loaStudentId", extracted.studentId);
+    setIfMissing("loaStudyLevel", extracted.studyLevel);
+    setIfMissing("loaStudyField", extracted.studyField || extracted.programOrField);
+    setIfMissing("loaStudyFromDate", extracted.studyFromDate);
+    setIfMissing("loaStudyToDate", extracted.studyToDate);
+    setIfMissing("loaTuitionCost", extracted.tuitionCost);
+  } else if (extracted.category === "pal") {
+    // Provincial Attestation Letter — required for most undergrad SP applications
+    // since 2024. Graduate students, K-12, and exchange students are exempt.
+    setIfMissing("palDocNumber", extracted.palDocNumber || extracted.documentNumber);
+    setIfMissing("palExpiryDate", extracted.palExpiryDate || extracted.expiryDate);
   }
 
   return fields;

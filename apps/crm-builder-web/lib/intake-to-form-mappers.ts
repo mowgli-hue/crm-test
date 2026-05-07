@@ -972,27 +972,182 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
 // MAPPER 2: Study Permit Extension → IMM5709E
 // ─────────────────────────────────────────────────────────────────────────
 //
-// Question flow ('study_permit_extension' — 14 questions):
-//   Q1  Have you used any other name?
-//   Q2  Marital status
-//   Q3  Mailing address (NB: NO spouse Q here, unlike PGWP!)
-//   Q4  Phone
-//   Q5  Current study permit number and expiry
-//   Q6  Current institution name and city
-//   Q7  Current program of study and expected completion
-//   Q8  Are you changing colleges?
-//   Q9  Are you changing your program?
+// ─────────────────────────────────────────────────────────────────────────
+// MAPPER 2: Study Permit Extension → IMM5709E
+// ─────────────────────────────────────────────────────────────────────────
+//
+// LEAN flow ('study_permit_extension' — 22 questions, qN 1-indexed):
+//   Q1  Upload-prompt acknowledgment ("done" / "ok")
+//   Q2  Alias (Yes/No + name)
+//   Q3  Marital status
+//   Q4  Spouse details + spouse-in-Canada status (only if married)
+//   Q5  Previously married (Yes/No + details)
+//   Q6  Mailing address in Canada
+//   Q7  Phone + email
+//   Q8  Same college since last permit? (drives PAL exemption)
+//   Q9  If changed college: Canada history explanation
 //   Q10 Reason for extension
-//   Q11 Have you maintained full-time enrollment?
-//   Q12 Have you ever been refused a visa or permit?
-//   Q13 Medical history
-//   Q14 Criminal history
+//   Q11 Graduate program (Master's/PhD)? (drives PAL exemption)
+//   Q12 Funds: total + source + room/board + other costs
+//   Q13 Co-op or open work permit alongside study?
+//   Q14 First entry to Canada (date, place, purpose)
+//   Q15 Past education before current Canada studies
+//   Q16 Employment history
+//   Q17 Travel history last 5 years
+//   Q18 Maintained full-time enrollment?
+//   Q19 Refusals
+//   Q20 Criminal/medical
+//   Q21 Background (military / govt / ill treatment)
+//   Q22 Native language
+//
+// OLD flow (14 questions) is also supported via layout detection — old cases
+// with name/passport in qN(1)..qN(7) still parse correctly.
+//
+// Identity fields (name, DOB, passport, UCI, school, PAL etc.) come from
+// intake.* fields populated by OCR — NOT from typed questions in LEAN flow.
+
+// Map free-text study level from LOA to IRCC dropdown options.
+// IMM5709 enum: Primary School | Secondary School | PTC/TCST/DVS/AVS |
+// CEGEP - Pre-university | CEGEP - Technical | College - Certificate |
+// College - Diploma | College - Applied degree |
+// University - Bachelor's Deg. | University - Master's Deg. | University - Doctorate |
+// University - Other Studies | ESL/FSL | ESL/FSL and College | ESL/FSL and University
+function normalizeStudyLevel(raw: string): string {
+  if (!raw) return "";
+  const v = raw.toLowerCase();
+  if (/master|\bmba\b|\bmsc\b|\bma\b\s*$|m\.\s*sc/i.test(raw)) return "University - Master's Deg.";
+  if (/phd|doctorate|doctoral|ph\.\s*d/i.test(raw)) return "University - Doctorate";
+  if (/bachelor|undergrad|associate|\bbsc\b|\bba\b\s*$|b\.\s*sc/i.test(raw)) return "University - Bachelor's Deg.";
+  if (/post.?graduate.{0,10}(certificate|diploma)|\bpg\b/i.test(raw)) return "College - Certificate";
+  if (/diploma/i.test(v)) return "College - Diploma";
+  if (/certificate/i.test(v)) return "College - Certificate";
+  if (/cegep.*pre.*university/i.test(v)) return "CEGEP - Pre-university";
+  if (/cegep.*technical/i.test(v)) return "CEGEP - Technical";
+  if (/esl|fsl|english.{0,5}second.{0,5}language|french.{0,5}second.{0,5}language/i.test(v)) return "ESL/FSL";
+  if (/secondary|high\s*school/i.test(v)) return "Secondary School";
+  if (/primary|elementary/i.test(v)) return "Primary School";
+  if (/university/i.test(v)) return "University - Other Studies";
+  return ""; // unmapped — review flag will surface
+}
+
+// Map free-text study field from LOA to IRCC dropdown options.
+// IMM5709 enum: Arts/Humanities/Social Science | Arts, Fine/Visual/Performing |
+// Business/Commerce | Computing/IT | ESL/FSL | Flight Training | Hospitality/Tourism |
+// Law | Medicine | Science, Applied | Sciences, General | Sciences, Health |
+// Trades/Vocational | Theology/Religious Studies | Other
+function normalizeStudyField(raw: string): string {
+  if (!raw) return "";
+  const v = raw.toLowerCase();
+  // Order matters — more specific matches first.
+  if (/hospitality|tourism|culinary|hotel/i.test(v)) return "Hospitality/Tourism";
+  if (/comput|software|\bit\b|information\s+tech|programming|data\s+sci|cybersec/i.test(v)) return "Computing/IT";
+  if (/nurs|medic|pharm|health|dent|veterin/i.test(v)) return "Sciences, Health";
+  if (/engin/i.test(v)) return "Science, Applied";
+  if (/law|legal|paralegal/i.test(v)) return "Law";
+  if (/trade|vocation|welding|plumb|electric|construct|automotive|hvac|mechanic/i.test(v)) return "Trades/Vocational";
+  if (/flight|aviation|pilot/i.test(v)) return "Flight Training";
+  if (/art|design|media|film|theatre|music|visual|fine/i.test(v)) return "Arts, Fine/Visual/Performing";
+  if (/theology|religion|divinity/i.test(v)) return "Theology/Religious Studies";
+  if (/business|commerce|\bmba\b|finance|account|management|marketing|economics|admin/i.test(v)) return "Business/Commerce";
+  if (/social|sociology|psychology|history|political|humanit/i.test(v)) return "Arts/Humanities/Social Science";
+  if (/science/i.test(v)) return "Sciences, General";
+  if (/esl|fsl/i.test(v)) return "ESL/FSL";
+  return "Other";
+}
 
 function mapForStudyPermitExtension(intake: Record<string, any>, formType: string): Record<string, any> {
   const { qN } = buildLookup(intake);
 
-  // Q2: Marital
-  const maritalRaw = stripPrefix(qN(2) || intake.maritalStatus || "Single");
+  // ─── Smart layout detection (2 generations) ───
+  // OLD (14 Q): qN(1)=alias YES/NO, qN(2)=marital, qN(3)=address, qN(4)=phone,
+  //   qN(5)=permit#+expiry, qN(6)=institution, qN(7)=program, qN(8)=changing-college,
+  //   qN(9)=changing-program, qN(10)=reason, qN(11)=full-time, qN(12)=refusal,
+  //   qN(13)=medical, qN(14)=criminal
+  // LEAN (22 Q): qN(1)=upload-ack, qN(2)=alias, qN(3)=marital, qN(4)=spouse,
+  //   qN(5)=prev-married, qN(6)=address, qN(7)=phone+email, qN(8)=same-college,
+  //   qN(9)=changed-school-explanation, qN(10)=reason, qN(11)=graduate?, qN(12)=funds,
+  //   qN(13)=coop-wp, qN(14)=entry, qN(15)=past-edu, qN(16)=employment,
+  //   qN(17)=travel-history, qN(18)=full-time, qN(19)=refusal,
+  //   qN(20)=criminal+medical, qN(21)=background, qN(22)=native-lang
+  const q1 = qN(1);
+  const q1Trimmed = q1.trim().toLowerCase();
+  // Upload ack: must be a SHORT standalone confirmation. If it's "yes - <details>"
+  // or "yes, <name>" then it's an alias answer (OLD layout), not an upload ack.
+  const q1LooksLikeUploadAck = q1Trimmed.length > 0 && q1Trimmed.length <= 20 &&
+    /^(done|ok|okay|yes|uploaded|sent|finished|complete|all done|all uploaded)$/.test(q1Trimmed);
+  const intakeHasIdentity = !!(intake.firstName || intake.lastName || intake.passportNumber);
+
+  let layout: "OLD" | "LEAN";
+  if (q1LooksLikeUploadAck) {
+    layout = "LEAN";
+  } else if (!q1Trimmed && intakeHasIdentity) {
+    layout = "LEAN";
+  } else if (intakeHasIdentity && qN(2) && /^(yes|no)\b/i.test(qN(2).trim()) && qN(3) && /single|married|common|divorced|widowed|separated/i.test(qN(3))) {
+    // intake has OCR identity + q2 looks like alias YES/NO + q3 looks like marital status → LEAN
+    layout = "LEAN";
+  } else {
+    layout = "OLD";
+  }
+
+  // Position-aware Q getter — returns "" for any field not asked in the layout
+  const Q = layout === "LEAN" ? {
+    alias:        qN(2),
+    marital:      qN(3),
+    spouse:       qN(4),
+    prevMarriage: qN(5),
+    address:      qN(6),
+    phoneEmail:   qN(7),
+    sameCollege:  qN(8),
+    canadaHistory: qN(9),
+    extReason:    qN(10),
+    graduate:     qN(11),
+    funds:        qN(12),
+    coopWp:       qN(13),
+    entry:        qN(14),
+    pastEdu:      qN(15),
+    employment:   qN(16),
+    travelHist:   qN(17),
+    fullTime:     qN(18),
+    refusal:      qN(19),
+    crimMed:      qN(20),
+    background:   qN(21),
+    nativeLang:   qN(22),
+  } : { // OLD
+    alias:        qN(1),
+    marital:      qN(2),
+    spouse:       "",
+    prevMarriage: "",
+    address:      qN(3),
+    phoneEmail:   qN(4),
+    sameCollege:  qN(8) ? (isYes(qN(8)) ? "No" : "Yes") : "Yes", // Q8 = "are you CHANGING colleges?" — invert
+    canadaHistory: qN(8),
+    extReason:    qN(10),
+    graduate:     "",
+    funds:        "",
+    coopWp:       "",
+    entry:        "",
+    pastEdu:      "",
+    employment:   "",
+    travelHist:   "",
+    fullTime:     qN(11),
+    refusal:      qN(12),
+    crimMed:      qN(13) + " " + qN(14),
+    background:   "",
+    nativeLang:   "",
+  };
+
+  // ─── Identity (LEAN: from OCR'd intake; OLD: same fallback) ───
+  const familyName = (intake.lastName || "").toUpperCase();
+  const givenName = (intake.firstName || "").toUpperCase();
+
+  // ─── Alias ───
+  const hasAlias = isYes(Q.alias);
+  const aliasDetails = hasAlias ? detailsAfterYN(Q.alias) : "";
+  const aliasFirstName = aliasDetails.split(/[\s,]/)[0] || "";
+  const aliasLastName = aliasDetails.split(/[\s,]/).slice(1).join(" ") || "";
+
+  // ─── Marital + spouse + prev marriage ───
+  const maritalRaw = stripPrefix(Q.marital || intake.maritalStatus || "Single");
   const marital = (() => {
     const v = maritalRaw.toLowerCase();
     if (v.startsWith("mar")) return "Married";
@@ -1002,149 +1157,367 @@ function mapForStudyPermitExtension(intake: Record<string, any>, formType: strin
     if (v.startsWith("sep")) return "Separated";
     return "Single";
   })();
+  const isMarried = marital === "Married" || marital === "Common-Law";
+  // Spouse parts: name, DOB, citizenship, marriage date, spouse-in-Canada(Yes/No), spouse-status
+  const spouseParts = isMarried && !isNo(Q.spouse) ? Q.spouse.split(",").map((p) => p.trim()) : [];
+  const previouslyMarried = isYes(Q.prevMarriage);
+  const prevMarriageDetails = previouslyMarried ? detailsAfterYN(Q.prevMarriage) : "";
+  const prevSpouseParts = prevMarriageDetails.split(",").map((p) => p.trim());
 
-  // Q3: Mailing address (no separate residential question — assume same)
-  const mailing = parseAddress(qN(3));
+  // Spouse in Canada — find the part containing "yes/no" or status keywords
+  const spouseInCanada = (() => {
+    if (!isMarried || spouseParts.length === 0) return "";
+    // Try to find a part that says Yes/No about being in Canada
+    for (const p of spouseParts) {
+      if (/canada/i.test(p)) return /yes|in\s+canada/i.test(p) ? "Yes" : "No";
+    }
+    return "";
+  })();
 
-  // Q4: Phone
-  const phone = parsePhone(qN(4));
+  // ─── Address + phone + email ───
+  const mailing = parseAddress(Q.address);
+  const phoneEmailRaw = Q.phoneEmail;
+  const emailMatch = phoneEmailRaw.match(/[\w.-]+@[\w.-]+\.\w+/);
+  const emailFromQ = emailMatch ? emailMatch[0] : "";
+  const phoneStr = emailFromQ ? phoneEmailRaw.replace(emailFromQ, "").trim() : phoneEmailRaw;
+  const phone = parsePhone(phoneStr);
 
-  // Q5: Current study permit "ABC123, 2025-09-01"
-  const permitParts = qN(5).split(",").map((p) => p.trim());
-  const permitNum = permitParts[0] || "";
-  const permitExpiry = permitParts[1] || "";
+  // ─── Same college continuity (drives PAL exemption) ───
+  const sameCollege = isYes(Q.sameCollege);
+  const isGraduateProgram = isYes(Q.graduate);
 
-  // Q6: Current institution "Capilano University, North Vancouver"
-  const instParts = qN(6).split(",").map((p) => p.trim());
-  const schoolName = instParts[0] || "";
-  const schoolCity = instParts[1] || "";
+  // ─── Funds parser ───
+  // Format: "Total: 25000 CAD; Source: Self; Room/board: 12000; Other: 3000"
+  const fundsRaw = Q.funds;
+  const fundsAmount = (fundsRaw.match(/\b(\d[\d,]*)\b/g) || [])[0]?.replace(/,/g, "") || "";
+  // Source — find token like Self/Parents/Sponsor/Scholarship/GIC/Other
+  const fundsSource = (() => {
+    const m = fundsRaw.toLowerCase();
+    if (m.includes("scholar")) return "Scholarship";
+    if (m.includes("sponsor")) return "Sponsor";
+    if (m.includes("parent")) return "Parents";
+    if (m.includes("gic")) return "GIC";
+    if (m.includes("self")) return "Myself";
+    if (m.includes("other")) return "Other";
+    return "Myself";
+  })();
+  // Room/board cost
+  const roomBoardMatch = fundsRaw.match(/room.{0,15}\b(\d[\d,]*)/i);
+  const roomBoardCost = roomBoardMatch ? roomBoardMatch[1].replace(/,/g, "") : "";
+  const otherCostsMatch = fundsRaw.match(/other.{0,15}\b(\d[\d,]*)/i);
+  const otherCosts = otherCostsMatch ? otherCostsMatch[1].replace(/,/g, "") : "";
 
-  // Q7: Program "Associate of Arts, 2025-12-31"
-  const progParts = qN(7).split(",").map((p) => p.trim());
-  const programName = progParts[0] || "";
-  const programEnd = progParts[1] || "";
+  // ─── Co-op work permit ───
+  const applyingForWp = isYes(Q.coopWp);
+  const wpType = (() => {
+    if (!applyingForWp) return "";
+    const v = Q.coopWp.toLowerCase();
+    if (v.includes("co-op") || v.includes("coop")) return "Co-op Work Permit";
+    if (v.includes("post grad") || v.includes("pgwp")) return "Post Graduation Work Permit";
+    return "Open Work Permit";
+  })();
 
-  // Q11: Full-time enrollment maintained
-  const enrollmentRaw = qN(11);
-  const maintainedFT = !isNo(enrollmentRaw); // default to yes unless explicit no
+  // ─── Entry to Canada ───
+  // Format: "2023-09-01, Toronto Pearson, Study"
+  const entryParts = Q.entry.split(",").map((p) => p.trim());
+  const originalEntryDate = entryParts[0] || "";
+  const originalEntryPlace = entryParts[1] || "";
+  const originalEntryPurpose = (() => {
+    const v = (entryParts[2] || "Study").toLowerCase();
+    if (v.startsWith("stud")) return "Study";
+    if (v.startsWith("work")) return "Work";
+    if (v.startsWith("vis") || v.startsWith("tour")) return "Tourism";
+    if (v.startsWith("fam")) return "Family Visit";
+    return "Study";
+  })();
 
-  // Q12: Refusal history
-  const refusalRaw = qN(12);
+  // ─── Past education (1 row) ───
+  // Format: "2018-09, 2022-06, Computer Science, Surat University, Surat, India"
+  const pastEduRaw = Q.pastEdu;
+  const hasPastEdu = pastEduRaw && !isNo(pastEduRaw);
+  const eduParts = hasPastEdu ? pastEduRaw.split(",").map((p) => p.trim()) : [];
+  const eduFromYM = eduParts[0] || "";
+  const eduToYM = eduParts[1] || "";
+  const eduField = eduParts[2] || "";
+  const eduSchool = eduParts[3] || "";
+  const eduCity = eduParts[4] || "";
+  const eduCountry = eduParts[5] || "";
+
+  // ─── Employment ───
+  // Use existing parser if available (parseEmploymentBestEffort)
+  let employmentArr: any[] = [];
+  try {
+    employmentArr = (typeof parseEmploymentBestEffort === "function")
+      ? parseEmploymentBestEffort(Q.employment).slice(0, 3)
+      : [];
+  } catch { employmentArr = []; }
+
+  // ─── Background block ───
+  const refusalRaw = Q.refusal;
   const hasRefusal = isYes(refusalRaw);
+  const crimMedRaw = Q.crimMed;
+  const hasCriminal = /criminal/i.test(crimMedRaw) && isYes(crimMedRaw);
+  const hasMedical = /medical/i.test(crimMedRaw) && isYes(crimMedRaw);
 
-  // Q13: Medical
-  const medicalRaw = qN(13);
-  const hasMedical = isYes(medicalRaw);
+  const bgRaw = Q.background;
+  const allNoBg = /^\s*(no|none|n\/a|na)\s*$/i.test(bgRaw.trim());
+  const hasMilitary = !allNoBg && /(military|militia|armed|army|forces|served)/i.test(bgRaw) && isYes(bgRaw);
+  const heldGovt = !allNoBg && /(government|political|public office|civil service|police officer|judge)/i.test(bgRaw) && isYes(bgRaw);
+  const witnessedIll = !allNoBg && /(witness|ill\s*treat|war|genocide|atrocit|abuse)/i.test(bgRaw) && isYes(bgRaw);
 
-  // Q14: Criminal
-  const criminalRaw = qN(14);
-  const hasCriminal = isYes(criminalRaw);
+  const enrollmentRaw = Q.fullTime;
+  const maintainedFT = !isNo(enrollmentRaw); // default Yes unless explicit No
+
+  // ─── Native language ───
+  const langParts = Q.nativeLang.split(",").map((p) => p.trim());
+  const nativeLang = langParts[0] || "";
+  const commLang = (langParts[1] || "English").toLowerCase().includes("french")
+    ? "French"
+    : langParts[1]?.toLowerCase().includes("both")
+    ? "Both"
+    : langParts[1]?.toLowerCase().includes("neither")
+    ? "Neither"
+    : "English";
+  const langTestTaken = /test|ielts|celpip|tef|tcf/i.test(Q.nativeLang) && isYes(Q.nativeLang);
+
+  // ─── PAL exemption logic ───
+  // PAL EXEMPT cases (per IRCC): same-DLI extension, Master's/PhD, K-12, exchange,
+  // family of foreign worker/student/diplomat. We check the two we can determine:
+  //   1. Same college (= same DLI extension)
+  //   2. Graduate program (Master's/PhD)
+  // Other exemptions surface as a review flag for staff to confirm.
+  const palExempt = sameCollege || isGraduateProgram;
+  const hasPalUploaded = !!(intake.palDocNumber);
+
+  // ─── Review flags — surface anything that needs human attention ───
+  const reviewFlags: string[] = [];
+  if (!hasPalUploaded && !palExempt) {
+    reviewFlags.push(`PAL likely required — client is at a new college and not in graduate program. Request PAL document.`);
+  }
+  if (!intake.loaSchoolName) {
+    reviewFlags.push(`No LOA uploaded yet — school details (DLI, program, dates, tuition) will be empty on form.`);
+  }
+  if (intake.loaStudyLevel && !normalizeStudyLevel(intake.loaStudyLevel)) {
+    reviewFlags.push(`Could not auto-categorize study level "${intake.loaStudyLevel}" — staff please verify Section 8b on form.`);
+  }
+  if (!sameCollege && !Q.canadaHistory) {
+    reviewFlags.push(`Client changed college but did not provide Canada-history explanation — Section 3 may be incomplete.`);
+  }
+
+  // ─── School details (LOA-OCR'd) ───
+  const schoolName = stripPrefix(intake.loaSchoolName || "");
+  const schoolAddress = stripPrefix(intake.loaSchoolAddress || "");
+  const schoolCity = stripPrefix(intake.loaSchoolCity || "");
+  const schoolProvince = stripPrefix(intake.loaSchoolProvince || "");
+  const dliNumber = stripPrefix(intake.loaDliNumber || "");
+  const studentId = stripPrefix(intake.loaStudentId || "");
+  const studyLevel = normalizeStudyLevel(stripPrefix(intake.loaStudyLevel || ""));
+  const studyField = normalizeStudyField(stripPrefix(intake.loaStudyField || intake.loaStudyLevel || ""));
+  const studyFromDate = stripPrefix(intake.loaStudyFromDate || "");
+  const studyToDate = stripPrefix(intake.loaStudyToDate || "");
+  const tuitionCost = stripPrefix(intake.loaTuitionCost || "");
+
+  // ─── Permit details (current study permit OCR'd) ───
+  const permitNum = stripPrefix(intake.permitDetails || "");
+  const permitIssue = stripPrefix(intake.studyPermitIssueDate || "");
+  const permitExpiry = stripPrefix(intake.studyPermitExpiryDate || "");
+
+  // ─── Passport details (OCR'd) ───
+  const passportIssue = parseDate(intake.passportIssueDate || "");
+  const passportExpiry = parseDate(intake.passportExpiryDate || "");
+  const dob = parseDate(intake.dateOfBirth || "");
 
   return {
-    ...buildIdentitySection(intake),
-    // Section 1: Application type — extending study permit
-    applying_restore_status: false,
-    applying_extend_stay: true,
+    // Section 1: Application type
+    applying_restore_status: /restore/i.test(formType || ""),
+    applying_extend_stay: !/restore/i.test(formType || ""),
     applying_trp: false,
 
-    // UCI
+    // Section 2: Personal (all OCR'd from passport)
     uci_client_id: stripPrefix(intake.uci || ""),
+    family_name: familyName,
+    given_name: givenName,
+    has_alias: hasAlias,
+    alias_family_name: aliasLastName,
+    alias_given_name: aliasFirstName,
+    sex: (() => {
+      const s = String(intake.sex || "").toLowerCase();
+      if (s.startsWith("f")) return "F Female";
+      if (s.startsWith("m")) return "M Male";
+      return "";
+    })(),
+    dob_year: dob.year,
+    dob_month: dob.month,
+    dob_day: dob.day,
+    place_birth_city: stripPrefix(intake.placeOfBirthCity || intake.cityOfBirth || ""),
+    place_birth_country: stripPrefix(intake.countryOfBirth || ""),
+    citizenship_country: stripPrefix(intake.citizenship || intake.countryOfBirth || ""),
 
-    // Q1: Aliases
-    has_alias: isYes(qN(1)),
-    alias_family_name: "",
-    alias_given_name: "",
+    // Section 3: Status (currently a student, dates from current permit OCR)
+    current_status: "Student",
+    current_status_other: "",
+    current_status_from_date: permitIssue,
+    current_status_to_date: permitExpiry,
+    prev_country_1: "",
+    prev_status_1: "",
+    prev_status_other_1: "",
+    prev_from_date_1: "",
+    prev_to_date_1: "",
+    prev_country_2: "",
+    prev_status_2: "",
+    prev_status_other_2: "",
+    prev_from_date_2: "",
+    prev_to_date_2: "",
 
-    // Q2: Marital — no spouse questions in this flow
+    // Section 4: Marital
     marital_status: marital,
-    spouse_family_name: "",
-    spouse_given_name: "",
-    date_of_marriage: "",
-    spouse_status_in_canada: "",
-    previously_married: false,
-    prev_spouse_family_name: "",
-    prev_spouse_given_name: "",
-    prev_relationship_type: "",
-    prev_marriage_from: "",
-    prev_marriage_to: "",
+    spouse_family_name: spouseParts[0]?.split(" ").slice(-1)[0] || "",
+    spouse_given_name: spouseParts[0]?.split(" ").slice(0, -1).join(" ") || "",
+    date_of_marriage: spouseParts[3] || "",
+    spouse_status_in_canada: spouseInCanada,
+    previously_married: previouslyMarried,
+    prev_spouse_family_name: prevSpouseParts[0]?.split(" ").slice(-1)[0] || "",
+    prev_spouse_given_name: prevSpouseParts[0]?.split(" ").slice(0, -1).join(" ") || "",
+    prev_relationship_type: previouslyMarried ? (prevSpouseParts[2] || "Married") : "",
+    prev_marriage_from: prevSpouseParts[3] || "",
+    prev_marriage_to: prevSpouseParts[4] || "",
+    prev_spouse_dob_year: "",
+    prev_spouse_dob_month: "",
+    prev_spouse_dob_day: "",
 
-    // Q3-Q4: Address & phone
+    // Section 5: Languages
+    native_language: nativeLang || stripPrefix(intake.nativeLanguage || ""),
+    communicate_language: commLang,
+    language_test_taken: langTestTaken,
+    frequent_language: nativeLang || "English",
+
+    // Section 6: Travel docs (passport OCR'd)
+    passport_number: stripPrefix(intake.passportNumber || ""),
+    passport_country: stripPrefix(intake.citizenship || intake.countryOfBirth || ""),
+    passport_issue_year: passportIssue.year,
+    passport_issue_month: passportIssue.month,
+    passport_issue_day: passportIssue.day,
+    passport_expiry_year: passportExpiry.year,
+    passport_expiry_month: passportExpiry.month,
+    passport_expiry_day: passportExpiry.day,
+    has_national_id: false,
+    national_id_number: "",
+    national_id_country: "",
+    national_id_issue_date: "",
+    national_id_expiry_date: "",
+    has_us_card: false,
+    us_card_number: "",
+    us_card_expiry_date: "",
+
+    // Section 7: Contact
+    mailing_po_box: "",
     mailing_apt_unit: mailing.apt_unit,
     mailing_street_num: mailing.street_num,
     mailing_street_name: mailing.street_name,
     mailing_city: mailing.city,
     mailing_province: mailing.province,
     mailing_postal_code: mailing.postal_code,
-    mailing_country: "Canada",
+    mailing_country: "Canada",  // SP ext is in-Canada by definition
+    mailing_district: "",
     residential_same_as_mailing: true,
     residential_apt_unit: "",
     residential_street_num: "",
     residential_street_name: "",
     residential_city: "",
     residential_province: "",
+    residential_country: "",
     phone_type: "Canada/US",
     phone_number_type: "Mobile",
     phone_area_code: phone.area_code,
     phone_first_three: phone.first_three,
     phone_last_five: phone.last_five,
-    email: stripPrefix(intake.email || ""),
+    phone_extension: "",
+    phone_intl_number: "",
+    alt_phone_area_code: "",
+    alt_phone_first_three: "",
+    alt_phone_last_five: "",
+    alt_phone_extension: "",
+    email: emailFromQ || stripPrefix(intake.email || ""),
 
-    // Status: currently a student in Canada
-    current_status: "Student",
-    current_status_from_date: "",
-    current_status_to_date: permitExpiry,
-
-    // Languages — use defaults for now (form has no explicit Qs in this flow)
-    native_language: stripPrefix(intake.nativeLanguage || ""),
-    communicate_language: "English",
-    language_test_taken: false,
-    frequent_language: "English",
-
-    // Q5: Original entry — use earliest study permit start as fallback
-    original_entry_date: stripPrefix(intake.firstEntryDate || ""),
-    original_entry_place: stripPrefix(intake.firstEntryPlace || ""),
-    original_entry_purpose: "Study",
+    // Section 8: Entry to Canada
+    original_entry_date: originalEntryDate,
+    original_entry_place: originalEntryPlace,
+    original_entry_purpose: originalEntryPurpose,
+    original_entry_purpose_other: "",
     recent_entry_date: stripPrefix(intake.recentEntryDate || ""),
     recent_entry_place: stripPrefix(intake.recentEntryPlace || ""),
     previous_doc_number: permitNum,
 
-    // Q6/Q7: Study details
-    has_education: true,
-    edu_school_name: schoolName,
-    edu_field_of_study: programName,
-    edu_city: schoolCity,
-    edu_country: "Canada",
-    edu_from_year: "",
-    edu_from_month: "09",
-    edu_to_year: programEnd ? programEnd.split("-")[0] : "",
-    edu_to_month: programEnd ? programEnd.split("-")[1] || "06" : "06",
+    // Section 8b: Study Permit details (LOA OCR'd, with field/level normalization)
+    school_name: schoolName,
+    study_field: studyField,
+    study_level: studyLevel,
+    school_province: schoolProvince,
+    school_city: schoolCity,
+    school_address: schoolAddress,
+    school_dli_number: dliNumber,
+    student_id: studentId,
+    study_from_date: studyFromDate,
+    study_to_date: studyToDate,
+    tuition_cost: tuitionCost,
+    room_board_cost: roomBoardCost,
+    other_costs: otherCosts,
+    funds_available: fundsAmount,
+    expenses_paid_by: fundsSource,
+    expenses_paid_by_other: fundsSource === "Other" ? "" : "",
 
-    // Study-specific fields (IMM5709 has these in Section 8)
-    study_school_name: schoolName,
-    study_program_name: programName,
-    study_program_end_date: programEnd,
-    study_changing_school: isYes(qN(8)),
-    study_change_school_details: isYes(qN(8)) ? detailsAfterYN(qN(8)) : "",
-    study_changing_program: isYes(qN(9)),
-    study_change_program_details: isYes(qN(9)) ? detailsAfterYN(qN(9)) : "",
-    study_extension_reason: stripPrefix(qN(10)),
-    study_maintained_full_time: maintainedFT,
-    study_full_time_explanation: maintainedFT ? "" : detailsAfterYN(enrollmentRaw),
+    // Section 8c: Work permit alongside study
+    applying_for_work_permit: applyingForWp,
+    work_permit_type: wpType,
 
-    // Employment
-    employment: [],
+    // Section 8d: CAQ (Quebec only — leave blank, staff fills if needed)
+    caq_cert_number: "",
+    caq_cert_expiry: "",
 
-    // Q12-Q14: Background
+    // Section 8e: PAL (OCR'd from PAL doc)
+    pal_doc_number: stripPrefix(intake.palDocNumber || ""),
+    pal_doc_expiry: stripPrefix(intake.palExpiryDate || ""),
+
+    // Section 9: Past education (one row before current Canada studies)
+    has_education: !!hasPastEdu,
+    edu_from_year: eduFromYM.split("-")[0] || "",
+    edu_from_month: eduFromYM.split("-")[1] || "",
+    edu_field_of_study: eduField,
+    edu_school_name: eduSchool,
+    edu_to_year: eduToYM.split("-")[0] || "",
+    edu_to_month: eduToYM.split("-")[1] || "",
+    edu_city: eduCity,
+    edu_country: eduCountry,
+    edu_province: "",
+
+    // Section 10: Employment
+    employment: employmentArr,
+
+    // Section 11: Background
     has_medical_condition: hasMedical,
-    medical_details: hasMedical ? detailsAfterYN(medicalRaw) : "",
+    medical_details: hasMedical ? crimMedRaw : "",
     prev_application_refused: hasRefusal,
-    prev_refused_to_canada: hasRefusal && refusalRaw.toLowerCase().includes("canada"),
+    prev_refused_to_canada: hasRefusal && /canada/i.test(refusalRaw),
     prev_refused_details: hasRefusal ? detailsAfterYN(refusalRaw) : "",
     has_criminal_record: hasCriminal,
-    criminal_details: hasCriminal ? detailsAfterYN(criminalRaw) : "",
-    has_military_service: false,
-    held_government_position: false,
-    witnessed_ill_treatment: false,
+    criminal_details: hasCriminal ? crimMedRaw : "",
+    has_military_service: hasMilitary,
+    military_details: hasMilitary ? detailsAfterYN(bgRaw) : "",
+    held_government_position: heldGovt,
+    witnessed_ill_treatment: witnessedIll,
+
+    // Newton-specific helper fields (not on form, used by submission package / UI)
+    same_college: sameCollege,
+    is_graduate_program: isGraduateProgram,
+    pal_exempt: palExempt,
+    canada_history: !sameCollege ? Q.canadaHistory : "",
+    extension_reason: stripPrefix(Q.extReason),
+    full_time_maintained: maintainedFT,
+    full_time_explanation: maintainedFT ? "" : detailsAfterYN(enrollmentRaw),
+
+    // Layout marker for downstream debugging
+    _layout: layout,
+    _review_flags: reviewFlags,
   };
 }
 
@@ -1197,7 +1570,7 @@ function mapForVisitorVisa(intake: Record<string, any>, formType: string): Recor
   const q1Trimmed = q1.trim().toLowerCase();
   const q1LooksLikeName = (q1.includes(",") || q1.split(/\s+/).filter(Boolean).length >= 2) && q1.length >= 4;
   const q1LooksLikeUploadAck = q1Trimmed.length > 0 && q1Trimmed.length <= 15 &&
-    /^(done|ok|okay|yes|uploaded|sent|finished|complete|all done|all uploaded)\b/.test(q1Trimmed);
+    /^(done|ok|okay|yes|uploaded|sent|finished|complete|all done|all uploaded)$/.test(q1Trimmed);
   const q2LooksLikeDate = /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(q2) ||
                           /^\s*\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(q2);
 

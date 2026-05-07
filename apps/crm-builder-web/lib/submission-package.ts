@@ -153,6 +153,8 @@ async function categorizeDocs(documents: DocumentItem[]): Promise<CategorizedDoc
           ielts: "language_test",
           medical: "medical",
           loa: "loa",
+          pal: "pal",
+          proof_of_funds: "proof_of_funds",
           bank_statement: "bank_statement",
         };
         const mapped = categoryMap[ocrCat];
@@ -189,14 +191,20 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   imm5710?: CategorizedDoc;
   imm5257?: CategorizedDoc;
   imm5476?: CategorizedDoc;
+  imm5709?: CategorizedDoc;
   submissionLetter?: CategorizedDoc;
+  loa?: CategorizedDoc;          // current LOA — top-level for study permit applications
+  pal?: CategorizedDoc;          // PAL — top-level for study permit applications
+  proofOfFunds?: CategorizedDoc; // top-level for study permit applications
   olderTranscripts: CategorizedDoc[];
   studyPermits: CategorizedDoc[];
   workPermits: CategorizedDoc[];
   languageTests: CategorizedDoc[];
-  loas: CategorizedDoc[];
+  loas: CategorizedDoc[];        // ALL LOAs (current + older school) — for PGWP bundle
+  olderLoas: CategorizedDoc[];   // older LOAs only — for SP ext bundle (when changed school)
   medicals: CategorizedDoc[];
   bankStatements: CategorizedDoc[];
+  proofsOfFunds: CategorizedDoc[];  // ALL proof-of-funds — older copies go in bundle
 } {
   // Sort by uploadedAt descending so .find() picks the most recent
   const byDateDesc = [...categorized].sort((a, b) => {
@@ -215,24 +223,38 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const imm5710 = immForms.find((d) => /\b5710/i.test(d.name));
   const imm5257 = immForms.find((d) => /\b5257/i.test(d.name));
   const imm5476 = immForms.find((d) => /\b5476/i.test(d.name));
+  const imm5709 = immForms.find((d) => /\b5709/i.test(d.name));
 
   // Transcripts: newest = current; older = into bundle
   const allTranscripts = byDateDesc.filter((d) => d.category === "transcript");
   const transcript = allTranscripts[0];
   const olderTranscripts = allTranscripts.slice(1);
 
+  // LOAs: newest = current school's LOA (top-level for SP); older = bundled
+  const allLoas = byDateDesc.filter((d) => d.category === "loa");
+  const loa = allLoas[0];
+  const olderLoas = allLoas.slice(1);
+
+  // PAL: pick the most recent
+  const pal = byDateDesc.find((d) => d.category === "pal");
+
+  // Proof of funds: most recent for top-level, older copies into bundle
+  const proofsOfFunds = byDateDesc.filter((d) => d.category === "proof_of_funds");
+  const proofOfFunds = proofsOfFunds[0];
+
   const studyPermits = byDateDesc.filter((d) => d.category === "study_permit");
   const workPermits = byDateDesc.filter((d) => d.category === "work_permit");
   const languageTests = byDateDesc.filter((d) => d.category === "language_test");
-  const loas = byDateDesc.filter((d) => d.category === "loa");
+  const loas = allLoas;            // PGWP bundle wants ALL LOAs
   const medicals = byDateDesc.filter((d) => d.category === "medical");
   const bankStatements = byDateDesc.filter((d) => d.category === "bank_statement");
 
   return {
     passport, photo, transcript, completionLetter,
-    imm5710, imm5257, imm5476, submissionLetter,
-    olderTranscripts, studyPermits, workPermits, languageTests, loas, medicals,
-    bankStatements,
+    imm5710, imm5257, imm5476, imm5709, submissionLetter,
+    loa, pal, proofOfFunds,
+    olderTranscripts, studyPermits, workPermits, languageTests,
+    loas, olderLoas, medicals, bankStatements, proofsOfFunds,
   };
 }
 
@@ -429,6 +451,36 @@ const PROFILE_PGWP: FormProfile = {
   ],
 };
 
+const PROFILE_STUDY_PERMIT_EXTENSION: FormProfile = {
+  name: "Study Permit Extension",
+  topLevel: [
+    // Passport, photo, generated forms — same as other profiles
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
+    { sourceKey: "imm5709",          template: "IMM5709e_<First>_<Last>" },
+    // SP-specific top-level extras (matches Newton's Sneha Gupta reference layout):
+    { sourceKey: "loa",              template: "LOA_<First>_<Last>" },
+    { sourceKey: "pal",              template: "PAL_<First>_<Last>" },
+    { sourceKey: "proofOfFunds",     template: "Proof_of_Funds_<First>_<Last>" },
+    { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
+    // 5476 generated inline below
+  ],
+  bundleCategories: [
+    // Per Newton SOP: their permit + old school docs (transcripts of same college,
+    // supporting docs) basically goes inside Client_Info.
+    "studyPermits",     // current + previous permits
+    "olderTranscripts", // transcripts (old school if changed; or current school's prior years)
+    "olderLoas",        // older LOAs only (current LOA is top-level)
+  ],
+  recommended: [
+    "Passport", "Digital photo", "IMM5709 (use 'Generate Forms')",
+    "Letter of Acceptance (LOA) from school",
+    "Provincial Attestation Letter (PAL) — required for most undergrads",
+    "Proof of funds (bank letter / GIC / sponsorship)",
+    "Representative Submission Letter (use letter generator)",
+  ],
+};
+
 const PROFILE_TRV: FormProfile = {
   name: "TRV",
   topLevel: [
@@ -448,12 +500,16 @@ const PROFILE_TRV: FormProfile = {
   ],
 };
 
-// Future profiles: PROFILE_STUDY_PERMIT, PROFILE_WORK_PERMIT_LMIA, etc.
+// Future profiles: PROFILE_WORK_PERMIT_LMIA, etc.
 
 function pickProfile(formType: string): FormProfile {
   const ft = (formType || "").toLowerCase();
   if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
     return PROFILE_TRV;
+  }
+  // Study permit extension OR new study permit (inside Canada uses 5709)
+  if (ft.includes("study permit") || ft.includes("study permit extension") || ft.includes("study extension")) {
+    return PROFILE_STUDY_PERMIT_EXTENSION;
   }
   // Default: PGWP / SOWP / BOWP / VOWP / LMIA / generic work permit
   return PROFILE_PGWP;
