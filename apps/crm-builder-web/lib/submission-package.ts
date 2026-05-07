@@ -697,6 +697,7 @@ export async function assemblePgwpSubmissionPackage(
   // TRV profile (smaller scope: passport, photo, 5257, 5476, current permit).
   const profile = pickProfile(caseItem.formType || "");
   console.log(`📦 Submission package using ${profile.name} profile for case ${caseId} (formType: "${caseItem.formType}")`);
+  console.log(`[submission ${caseId}] step 1: ${docs.length} docs in Drive folder, ${categorized.length} categorized, ${Object.keys(primary).filter(k => (primary as any)[k]).length} primary slots filled`);
 
   // Step 2: validate required docs (assemble what's available; surface missing
   // ones as warnings rather than blocking — per scope revision: "create whatever
@@ -708,17 +709,20 @@ export async function assemblePgwpSubmissionPackage(
     initialWarnings.push(
       `Missing recommended docs (package generated anyway): ${validation.missing.join("; ")}`
     );
+    console.log(`[submission ${caseId}] step 2: missing recommended docs: ${validation.missing.join(", ")}`);
   }
 
   // Step 3: resolve target Drive folder. We use the case's docsUploadLink folder
   // as the parent and create/reuse a "Submission_<First>_<Last>" subfolder inside.
   const caseFolderId = getCaseDriveFolderId(caseItem);
   if (!caseFolderId) {
+    console.log(`[submission ${caseId}] ABORT — no Drive folder set for case`);
     return {
       ok: false,
       errors: ["No Drive folder set for this case. Generate Forms first to set up Drive folders."],
     };
   }
+  console.log(`[submission ${caseId}] step 3: resolving target Drive folder ${caseFolderId.slice(0, 12)}...`);
 
   const { first, last } = splitClientName(caseItem.client || "Client");
   const subfolderName = buildStandardName("Submission_<First>_<Last>", first, last, "")
@@ -727,6 +731,7 @@ export async function assemblePgwpSubmissionPackage(
 
   const subfolder = await getOrCreateDriveSubfolder(caseFolderId, subfolderName);
   const submissionFolderId = subfolder.id;
+  console.log(`[submission ${caseId}] step 3 done: subfolder "${subfolderName}" id=${submissionFolderId.slice(0, 12)}...`);
 
   const errors: string[] = [];
   const filesAdded: SubmissionPackageResult["filesAdded"] = [];
@@ -1043,6 +1048,7 @@ export async function assemblePgwpSubmissionPackage(
     }
   }
 
+  console.log(`[submission ${caseId}] ✅ DONE — ${filesAdded.length} files added, ${errors.length} errors, ${warnings.length} warnings`);
   return {
     ok: true,
     folderLink: subfolder.webViewLink,
