@@ -102,7 +102,95 @@ function inferExtension(filename: string, fallback = "pdf"): string {
   return m ? m[1].toLowerCase() : fallback;
 }
 
-async function categorizeDocs(documents: DocumentItem[]): Promise<CategorizedDoc[]> {
+// ─────────────────────────────────────────────────────────────────────
+// Shared OCR cache + throttle for the submission package run.
+//
+// Background: this file calls Claude vision OCR from THREE places:
+//   1. Categorization fallback for "other"-named files
+//   2. Wrong-client filter on top-level docs
+//   3. Wrong-client filter on bundled docs
+//
+// Without coordination, the same doc gets OCR'd up to 3 times, and a
+// case with 8 docs can fire 24+ vision calls in <30s. That blows
+// past the 50K input-tokens-per-minute org rate limit (50K / ~10K per
+// vision call ≈ 5 calls/min sustainable).
+//
+// This helper centralizes:
+//   - Cache by driveFileId so each doc is OCR'd at most once per run.
+//   - Throttle to keep us safely under the org rate limit.
+//   - Hard budget cap so a 30-doc folder doesn't spiral.
+//
+// All three call sites should use `ocrOnce(doc, ...)` instead of calling
+// extractDocumentFields directly.
+// ─────────────────────────────────────────────────────────────────────
+type OcrResult = Awaited<ReturnType<typeof import("@/lib/doc-ocr").extractDocumentFields>>;
+class OcrThrottle {
+  private cache = new Map<string, OcrResult>();
+  private callCount = 0;
+  private lastCallAt = 0;
+  // Conservative: ~6 vision calls/min keeps us comfortably under 50K
+  // input-tokens/min (large passport scans push 8-12K tokens per call).
+  private static readonly MIN_INTERVAL_MS = 11_000; // ≈5.5 calls/min
+  private static readonly HARD_BUDGET = 6;
+
+  has(driveFileId: string): boolean {
+    return this.cache.has(driveFileId);
+  }
+
+  get(driveFileId: string): OcrResult | undefined {
+    return this.cache.get(driveFileId);
+  }
+
+  budgetRemaining(): number {
+    return Math.max(0, OcrThrottle.HARD_BUDGET - this.callCount);
+  }
+
+  // Run OCR on the given bytes, caching the result by driveFileId.
+  // Returns null if budget is exhausted (caller should treat as
+  // "filter check skipped" — doc is included by default).
+  async run(
+    driveFileId: string,
+    bytes: Buffer,
+    mimeType: string,
+    clientName: string,
+  ): Promise<OcrResult | null> {
+    if (this.cache.has(driveFileId)) return this.cache.get(driveFileId)!;
+    if (this.callCount >= OcrThrottle.HARD_BUDGET) {
+      console.warn(`OCR budget exhausted (${OcrThrottle.HARD_BUDGET} calls used) — skipping further OCR for this package run`);
+      return null;
+    }
+    // Throttle: wait until enough time has passed since the last call
+    const now = Date.now();
+    const sinceLast = now - this.lastCallAt;
+    if (this.lastCallAt > 0 && sinceLast < OcrThrottle.MIN_INTERVAL_MS) {
+      const waitMs = OcrThrottle.MIN_INTERVAL_MS - sinceLast;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    this.lastCallAt = Date.now();
+    this.callCount++;
+    try {
+      const { extractDocumentFields } = await import("@/lib/doc-ocr");
+      const result = await extractDocumentFields(bytes, mimeType, clientName);
+      this.cache.set(driveFileId, result);
+      return result;
+    } catch (e) {
+      // On 429 or any failure, cache null to avoid retrying the same doc
+      this.cache.set(driveFileId, null as any);
+      console.warn(`OCR failed for ${driveFileId.slice(0, 12)}: ${(e as Error).message.slice(0, 100)}`);
+      return null;
+    }
+  }
+}
+
+// Quick helper: does this filename clearly belong to the case client?
+// If yes, we can skip the OCR-based wrong-client check entirely.
+function filenameMatchesClient(filename: string, caseNameTokens: string[]): boolean {
+  if (caseNameTokens.length === 0) return false;
+  const fn = filename.toLowerCase();
+  return caseNameTokens.some((t) => t.length >= 4 && fn.includes(t));
+}
+
+async function categorizeDocs(documents: DocumentItem[], ocr: OcrThrottle): Promise<CategorizedDoc[]> {
   // Pass 1: filename-based categorization (cheap, fast, deterministic)
   const initial: CategorizedDoc[] = documents.map((d) => ({
     ...d,
@@ -115,15 +203,13 @@ async function categorizeDocs(documents: DocumentItem[]): Promise<CategorizedDoc
   // that the regex categorizer can't recognize. Vision OCR reads the actual
   // content and categorizes properly.
   //
-  // We only OCR docs marked "other" (the unknowns), and we cap at 8 OCR
-  // calls per package run to keep latency bounded. If you have 30+ unknown
-  // files, the rest stay as "other" and get reviewed manually by staff.
-  const OCR_BUDGET = 8;
-  let ocrUsed = 0;
+  // Uses the shared OcrThrottle so we don't blow the rate limit. The
+  // results are cached so the wrong-client filter (later in this run)
+  // can reuse them for free.
   const result: CategorizedDoc[] = [];
 
   for (const doc of initial) {
-    if (doc.category !== "other" || !doc.driveFileId || ocrUsed >= OCR_BUDGET) {
+    if (doc.category !== "other" || !doc.driveFileId || ocr.budgetRemaining() === 0) {
       result.push(doc);
       continue;
     }
@@ -136,9 +222,7 @@ async function categorizeDocs(documents: DocumentItem[]): Promise<CategorizedDoc
       const mimeType = doc.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
         doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
         "application/pdf";
-      const { extractDocumentFields } = await import("@/lib/doc-ocr");
-      const extracted = await extractDocumentFields(bytes, mimeType, "Client");
-      ocrUsed++;
+      const extracted = await ocr.run(doc.driveFileId, bytes, mimeType, "Client");
       if (extracted && extracted.category) {
         // Map OCR category strings to our CategorizedDoc category type
         const ocrCat = extracted.category.toLowerCase();
@@ -522,9 +606,15 @@ export async function assemblePgwpSubmissionPackage(
   const caseItem = await getCase(companyId, caseId);
   if (!caseItem) return { ok: false, errors: [`Case ${caseId} not found`] };
 
+  // Shared OCR throttle: cache + budget + rate-limit avoidance for ALL
+  // OCR calls during this package run (categorization fallback + 2 wrong-
+  // client filters). Without this, the ~50K-tokens/min org limit gets hit
+  // when a case has 6+ docs.
+  const ocr = new OcrThrottle();
+
   // Step 1: load + categorize documents
   const docs = await listDocuments(companyId, caseId);
-  const categorized = await categorizeDocs(docs);
+  const categorized = await categorizeDocs(docs, ocr);
   const primary = selectPrimaryDocs(categorized);
 
   // Pick form profile based on case formType. PGWP/SOWP/work permit/study
@@ -616,7 +706,6 @@ export async function assemblePgwpSubmissionPackage(
     .filter((t) => t.length >= 3 && !["newton", "file", "client", "test"].includes(t));
 
   if (caseNameTokensTop.length >= 1) {
-    const { extractDocumentFields: extractTop } = await import("@/lib/doc-ocr");
     const filteredJobs: CopyJob[] = [];
     for (const job of copyJobs) {
       // Skip OCR check for generated outputs (IMM forms have field overlays
@@ -631,6 +720,13 @@ export async function assemblePgwpSubmissionPackage(
         filteredJobs.push(job);
         continue;
       }
+      // Fast-path: if filename already contains the client's name, skip OCR.
+      // Saves a vision call per matching doc — most PGWP cases hit this path
+      // because client uploads are auto-renamed "<Client> - Document.ext".
+      if (filenameMatchesClient(job.doc.name, caseNameTokensTop)) {
+        filteredJobs.push(job);
+        continue;
+      }
       try {
         const bytes = await downloadDriveFileBytes(job.doc.driveFileId);
         if (bytes.length >= 10 * 1024 * 1024) {
@@ -640,7 +736,7 @@ export async function assemblePgwpSubmissionPackage(
         const mimeType = job.doc.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
           job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
           "application/pdf";
-        const extracted = await extractTop(bytes, mimeType, caseItem.client || "Client");
+        const extracted = await ocr.run(job.doc.driveFileId, bytes, mimeType, caseItem.client || "Client");
         if (extracted) {
           const docFirstName = String(extracted.firstName || "").toLowerCase();
           const docLastName = String(extracted.lastName || "").toLowerCase();
@@ -798,8 +894,6 @@ export async function assemblePgwpSubmissionPackage(
       // skipping all the client's own docs).
       const caseNameTokens = caseNameTokensTop; // same tokens as top-level filter
 
-      const { extractDocumentFields } = await import("@/lib/doc-ocr");
-
       for (const src of bundleSources) {
         if (!src.driveFileId) {
           warnings.push(`Skipped from bundle (no Drive ID): ${src.name}`);
@@ -811,12 +905,17 @@ export async function assemblePgwpSubmissionPackage(
           // Only run vision check if we have a usable name reference for the case.
           // If caseNameTokens is empty, skip the filter — better to bundle a wrong-
           // client doc (caught at staff review) than to skip the client's own docs.
-          if (caseNameTokens.length >= 1 && bytes.length < 10 * 1024 * 1024) {
+          //
+          // Fast-path: if filename already contains the client's name, skip OCR.
+          // Most uploads from the WhatsApp pipeline are auto-renamed to include
+          // the client name, so this avoids spending OCR budget on obvious matches.
+          const filenameOk = filenameMatchesClient(src.name, caseNameTokens);
+          if (!filenameOk && caseNameTokens.length >= 1 && bytes.length < 10 * 1024 * 1024) {
             try {
               const mimeType = src.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
                 src.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${src.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
                 "application/pdf";
-              const extracted = await extractDocumentFields(bytes, mimeType, caseItem.client || "Client");
+              const extracted = await ocr.run(src.driveFileId, bytes, mimeType, caseItem.client || "Client");
               if (extracted) {
                 const docFirstName = String(extracted.firstName || "").toLowerCase();
                 const docLastName = String(extracted.lastName || "").toLowerCase();
