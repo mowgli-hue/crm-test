@@ -27,6 +27,7 @@ export function resolveApplicationChecklistKey(formType: string):
   | "express_entry_pr"
   | "family_sponsorship"
   | "citizenship_prcard"
+  | "pr_card_renewal"
   | "us_b1b2"
   | "uk_visitor"
   | "refugee"
@@ -57,7 +58,21 @@ export function resolveApplicationChecklistKey(formType: string):
   if (ft.includes("express entry") || ft.includes("pnp")) return "express_entry";
   if (ft.includes("pr application")) return "express_entry_pr";
   if (ft.includes("spousal sponsorship") || ft.includes("parents") || ft.includes("grandparents sponsorship") || ft.includes("family sponsorship")) return "family_sponsorship";
-  if (ft.includes("citizenship") || ft.includes("pr card renewal") || ft.includes("pr card replacement")) return "citizenship_prcard";
+  // PR card renewal is DIFFERENT from citizenship — must route separately.
+  // PR card: 730 days, $50 fee, IMM 5444 — 14 questions.
+  // Citizenship: 1095 days, $630 fee, CIT 0002 — 21 questions.
+  // Old code mapped both to citizenship_prcard (wrong — bot asked citizenship questions
+  // for PR card renewal cases). Branch order matters: check PR card first so a form type
+  // like "PR card renewal" doesn't accidentally hit the citizenship branch.
+  if (
+    ft.includes("pr card renewal") ||
+    ft.includes("pr card replacement") ||
+    ft.includes("permanent resident card") ||
+    ft.includes("imm5444") ||
+    ft.includes("imm 5444") ||
+    (ft.includes("pr card") && !ft.includes("citizenship"))
+  ) return "pr_card_renewal";
+  if (ft.includes("citizenship")) return "citizenship_prcard";
   if (ft.includes("ds 160") || ft.includes("b1") || ft.includes("b2") || ft.includes("usa")) return "us_b1b2";
   if (ft.includes("uk visa") || ft.includes("uk visitor")) return "uk_visitor";
   if (ft.includes("refugee")) return "refugee";
@@ -193,6 +208,25 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "tax_filings", label: "Tax filings — declared 3+ of last 5 years on form (verified with CRA)", required: true, keywords: ["tax", "noa", "notice of assessment", "option c"] },
     { key: "police_certs", label: "Police certificates (if 183+ days in any country in last 4 years)", required: false, keywords: ["police certificate", "police clearance", "criminal record"] },
     { key: "fee_receipt", label: "Fee receipt — CA$530 adult / CA$100 minor + CA$100 right-of-citizenship", required: true, keywords: ["fee", "receipt", "payment"] },
+    { key: "rep_letter", label: "Use of Representative form (IMM 5476)", required: true, keywords: ["5476", "representative"] },
+    { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter", "representative letter"] },
+    { key: "translations", label: "Certified translations (for any non-English/French docs)", required: false, keywords: ["translation"] }
+  ],
+  pr_card_renewal: [
+    // PR Card Renewal — IMM 5444 + IMM 5644. Distinct from citizenship:
+    // 730 days (not 1095), $50 fee (not $630), no language test, no
+    // police certs requirement.
+    { key: "passport_current", label: "Current passport (bio + all stamped pages, last 5 yrs)", required: true, keywords: ["passport"] },
+    { key: "passport_old", label: "Expired passports from last 5 years (if any)", required: false, keywords: ["old passport", "expired"] },
+    { key: "pr_card", label: "Current/expiring PR card — FRONT and BACK", required: true, keywords: ["pr card", "permanent resident"] },
+    { key: "pr_landing", label: "PR landing document (IMM 1000 / 5292 / 5688 / COPR)", required: true, keywords: ["imm 1000", "imm 5292", "imm 5688", "record of landing", "copr"] },
+    { key: "secondary_id", label: "Secondary government ID (driver's licence / health card)", required: true, keywords: ["driver", "health card", "provincial id"] },
+    { key: "photos", label: "2 PR-card-format photos (50mm × 70mm — NOT work permit specs)", required: true, keywords: ["photo", "pr card photo"] },
+    { key: "tax_noa", label: "CRA Notices of Assessment (last 3 years)", required: true, keywords: ["noa", "notice of assessment", "cra", "tax"] },
+    { key: "tax_t4", label: "T4 slips (last 3-5 years)", required: false, keywords: ["t4", "income"] },
+    { key: "address_proof", label: "Address proof (utility bills / lease / bank statements — 5-yr coverage)", required: true, keywords: ["utility", "lease", "rental", "bank statement", "address"] },
+    { key: "name_change_doc", label: "Name change document (if applicable)", required: false, keywords: ["marriage", "divorce", "name change"] },
+    { key: "fee_receipt", label: "Fee receipt — CA$50 PR card renewal", required: true, keywords: ["fee", "receipt", "payment"] },
     { key: "rep_letter", label: "Use of Representative form (IMM 5476)", required: true, keywords: ["5476", "representative"] },
     { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter", "representative letter"] },
     { key: "translations", label: "Certified translations (for any non-English/French docs)", required: false, keywords: ["translation"] }

@@ -278,6 +278,8 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   imm5476?: CategorizedDoc;
   imm5709?: CategorizedDoc;
   imm0002?: CategorizedDoc;       // CIT-0002 citizenship application
+  imm5444?: CategorizedDoc;       // PR card application
+  imm5644?: CategorizedDoc;       // PR card document checklist
   submissionLetter?: CategorizedDoc;
   loa?: CategorizedDoc;          // current LOA — top-level for study permit applications
   pal?: CategorizedDoc;          // PAL — top-level for study permit applications
@@ -333,6 +335,9 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const imm5257 = immForms.find((d) => /5257[a-z]?(?![\d])/i.test(d.name));
   const imm5476 = immForms.find((d) => /5476[a-z]?(?![\d])/i.test(d.name));
   const imm5709 = immForms.find((d) => /5709[a-z]?(?![\d])/i.test(d.name));
+  // PR card forms — IMM 5444 (application) + IMM 5644 (doc checklist)
+  const imm5444 = immForms.find((d) => /5444[a-z]?(?![\d])/i.test(d.name));
+  const imm5644 = immForms.find((d) => /5644[a-z]?(?![\d])/i.test(d.name));
   // Diagnostic: when there are duplicate IMM5710 files (real Newton case —
   // staff regenerates and the old version stays in Drive), log how many we
   // saw and which one we picked so we can verify the sort works.
@@ -387,7 +392,7 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
 
   return {
     passport, photo, transcript, completionLetter,
-    imm5710, imm5257, imm5476, imm5709, imm0002, submissionLetter,
+    imm5710, imm5257, imm5476, imm5709, imm0002, imm5444, imm5644, submissionLetter,
     loa, pal, proofOfFunds,
     prCard, prLanding, physicalPresenceCalc, secondaryId,
     languageTest, taxNotice,
@@ -677,6 +682,50 @@ const PROFILE_CITIZENSHIP: FormProfile = {
   ],
 };
 
+// PR Card Renewal — IMM 5444 + IMM 5644. Smaller scope than citizenship:
+// no language proof, no CIT-0002, but adds NOAs/T4s/address proofs as
+// residency evidence (for the 730-day obligation). Photo specs are
+// PR-CARD-specific (50mm × 70mm) — different from work-permit photos.
+const PROFILE_PR_CARD: FormProfile = {
+  name: "PR Card Renewal",
+  topLevel: [
+    // Photo + IDs first (what IRCC sees on opening the package)
+    { sourceKey: "photo",            template: "PR_Card_Photo_<First>_<Last>" },
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "prCard",           template: "Current_PR_Card_<First>_<Last>" },
+    { sourceKey: "prLanding",        template: "PR_Landing_Document_<First>_<Last>" },
+    { sourceKey: "secondaryId",      template: "Secondary_ID_<First>_<Last>" },
+    // PR-card-specific generated forms
+    { sourceKey: "imm5444",          template: "IMM5444e_<First>_<Last>" },
+    { sourceKey: "imm5644",          template: "IMM5644e_Document_Checklist_<First>_<Last>" },
+    { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
+    // 5476 generated inline below — same as other profiles
+  ],
+  bundleCategories: [
+    // Older passports for 5-year travel-history verification
+    "oldPassports",
+    // CRA Notices of Assessment — primary residency-day evidence
+    "taxNotices",
+    // Address proofs (utility bills, lease, bank statements) bundle
+    // No separate "addressProofs" array exists in CategorizedDoc yet — falls into "others"
+    // until we add it. For now staff drops these into the case folder and the Drive scan
+    // augment picks them up; they'll appear in the misc bundle.
+  ],
+  recommended: [
+    "Current/expiring PR card (FRONT and BACK)",
+    "Current passport (bio + all stamped pages)",
+    "Old passports from last 5 years (with stamps)",
+    "PR landing document (IMM 1000 / 5292 / 5688 / COPR)",
+    "Secondary government ID (driver's licence / health card)",
+    "2 PR-card-format photos (50mm × 70mm — NOT work permit specs)",
+    "CRA Notices of Assessment (last 3 years)",
+    "Address proof (utility bills / lease / bank statements)",
+    "IMM 5444 Application (validated, signed)",
+    "IMM 5644 Document Checklist",
+    "Representative Submission Letter (use letter generator)",
+  ],
+};
+
 // Future profiles: PROFILE_WORK_PERMIT_LMIA, etc.
 
 function pickProfile(formType: string): FormProfile {
@@ -684,10 +733,21 @@ function pickProfile(formType: string): FormProfile {
   if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
     return PROFILE_TRV;
   }
-  // Citizenship application — adult grant or PR-card-related
-  // Note: PR card renewal also routes here for now since they share a lot of
-  // the same docs (PR card, ID, photos, passport). Future work: split.
-  if (ft.includes("citizenship") || ft.includes("pr card")) {
+  // PR card renewal — must come BEFORE citizenship branch because both
+  // include "pr card" patterns. PR card is its own profile (730-day
+  // obligation, $50 fee, IMM 5444) — different from citizenship.
+  if (
+    ft.includes("pr card renewal") ||
+    ft.includes("pr card replacement") ||
+    ft.includes("permanent resident card") ||
+    ft.includes("imm5444") ||
+    ft.includes("imm 5444") ||
+    (ft.includes("pr card") && !ft.includes("citizenship"))
+  ) {
+    return PROFILE_PR_CARD;
+  }
+  // Citizenship application — adult grant
+  if (ft.includes("citizenship")) {
     return PROFILE_CITIZENSHIP;
   }
   // Study permit extension OR new study permit (inside Canada uses 5709)

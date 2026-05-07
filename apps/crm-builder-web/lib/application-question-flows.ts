@@ -490,6 +490,67 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
     ]
   },
 
+  // PR Card Renewal — distinct from citizenship.
+  // 730-day residency obligation (NOT 1095), $50 fee (NOT $630), IMM 5444 form.
+  // 14 questions in 5 batches. No language test, no police certs, no tax-filing
+  // 3-of-5-years question — those are citizenship-specific.
+  pr_card_renewal: {
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "employmentHistory"],
+    batches: [
+      { title: "📤 Upload Documents", questions: [0] },
+      { title: "👤 Personal Info", questions: [1, 2, 3, 4] },
+      { title: "🇨🇦 PR Status & Card", questions: [5, 6, 7, 8] },
+      { title: "✈️ Travel History (last 5 years)", questions: [9] },
+      { title: "💼 Work in Canada (last 5 years)", questions: [10, 11] },
+      { title: "📋 Final Details", questions: [12, 13] },
+    ],
+    prompts: [
+      // Q0 — Upload prompt. Heavy on docs because PR card renewal is
+      // 90% about residency proof — bot needs every doc that establishes
+      // physical presence.
+      "📎 *Please upload these documents first* (one by one is fine):\n\n• Current passport (bio page + every page with stamps/visas)\n• Any expired passports from last 5 years (with stamps)\n• Current/expiring PR card — *FRONT and BACK*\n• PR landing document — IMM 1000, IMM 5292, IMM 5688, or COPR\n• Last 3 years' CRA Notice of Assessment (NOA)\n• T4 slips (last 3-5 years if available)\n• Address proofs — utility bills, lease, bank statements (covering last 5 years)\n\nReply *DONE* once you've sent them. We'll extract your name, DOB, UCI, PR card #, and PR start date from the docs.",
+
+      // Q1 — Full legal name (must match landing doc exactly)
+      "Your *full legal name* — exactly as it appears on your PR landing document (IMM 1000 / 5292 / 5688 / COPR). If your current legal name is different (after marriage etc.), give BOTH names: 'Landing doc name' and 'Current legal name'.",
+
+      // Q2 — DOB
+      "Your date of birth (YYYY-MM-DD).",
+
+      // Q3 — Current address in Canada
+      "Your current address in Canada (street, city, province, postal code) and the date you moved in (YYYY-MM-DD).",
+
+      // Q4 — Marital status (needed for IMM 5444 family info section)
+      "Current marital status (Single / Married / Common-Law / Divorced / Widowed / Separated). If Married or Common-Law: spouse's full name + date of marriage / start of cohabitation YYYY-MM-DD.",
+
+      // Q5 — INSIDE CANADA check (CRITICAL — wrong path = refusal)
+      "Are you currently *physically inside Canada*? (Yes / No)\n\nIMPORTANT: PR card renewal can ONLY be filed from inside Canada. If you're outside, you need a Permanent Resident Travel Document (PRTD) to come back first. Please confirm.",
+
+      // Q6 — UCI / Client ID
+      "Your UCI / Client ID (8-10 digits — found on your PR landing document and PR card). If you can't find it, reply 'not sure' — we'll extract it from your documents.",
+
+      // Q7 — Date became PR
+      "The date you *became a Permanent Resident* (date on your PR landing document, YYYY-MM-DD).",
+
+      // Q8 — Current PR card details
+      "Your current PR card number + expiry date (YYYY-MM-DD). Found on the back of your PR card.",
+
+      // Q9 — Travel history (the BIG one — 730-day check basis)
+      "*Every trip OUTSIDE Canada in the last 5 years.* For each trip:\n• Date you LEFT Canada (YYYY-MM-DD)\n• Date you RETURNED to Canada (YYYY-MM-DD)\n• Country/countries visited\n• Reason (vacation, family visit, work, etc.)\n\nList ALL trips — IRCC cross-checks with CBSA records. Even short trips (a weekend in the US) count. Missing or wrong dates = misrepresentation = 5-year ban. If you have many trips, reply 'will email' and we'll send a spreadsheet to fill out. If you never left Canada, reply 'no trips'.",
+
+      // Q10 — Employment in Canada
+      "Your employment in Canada in the last 5 years (each job: employer name, your position, start date, end date YYYY-MM-DD, city). Include any unemployment / study periods / stay-at-home / retired periods — any gap MUST be accounted for. Reply 'will email' if extensive.",
+
+      // Q11 — Education in Canada
+      "Education in Canada in the last 5 years (each: school name, program, start–end dates YYYY-MM-DD, city). Reply NA if none.",
+
+      // Q12 — Name / appearance changes since last PR card
+      "Has your *legal name, gender marker, or appearance* changed since your last PR card was issued? (Yes / No — if Yes, briefly explain. We'll need supporting documents like marriage certificate or court order.)",
+
+      // Q13 — Inadmissibility / removal / criminal
+      "In the last 5 years, have you:\n• Been refused entry to Canada or any country?\n• Been under any IRCC removal order or criminal investigation?\n• Had any arrests, charges, or convictions anywhere in the world?\n\n(Yes / No — if Yes, briefly describe each: country, year, what happened, outcome)",
+    ]
+  },
+
   us_b1b2: {
     requiredFields: ["fullName", "phone", "address", "maritalStatus", "employmentHistory", "education", "criminalHistory", "medicalHistory"],
     batches: [
