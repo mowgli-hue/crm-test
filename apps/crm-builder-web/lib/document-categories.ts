@@ -37,6 +37,12 @@ export type DocCategory =
   | "bank_statement"
   | "imm_form"
   | "submission_letter"
+  | "pr_card"
+  | "pr_landing"             // IMM 1000, IMM 5292, IMM 5688 — PR landing record
+  | "physical_presence_calc" // IRCC physical presence calculator printout (CIT-0407)
+  | "secondary_id"           // driver's licence, provincial ID, health card
+  | "tax_notice"             // CRA Notice of Assessment / Option C printout
+  | "police_certificate"     // foreign police certificate for citizenship
   | "other";
 
 interface CategoryRule {
@@ -64,6 +70,71 @@ const CATEGORY_RULES: CategoryRule[] = [
       // Alt generator produces: "<Client>_Rep_Letter.docx" — \b doesn't work
       // around underscores, so match either separator explicitly.
       /(^|[\s_-])rep[\s_-]+letter([\s_-]|\.|$)/i,
+    ],
+  },
+  {
+    // PR card — match BEFORE passport (some PR card scans say "Permanent Resident
+    // Card" which doesn't have "passport" but we want it categorized cleanly).
+    category: "pr_card",
+    patterns: [
+      /\bpr\s*card\b/i,
+      /permanent\s+resident\s+card/i,
+      /\bprc\b/i,
+    ],
+  },
+  {
+    // PR landing document — IMM 1000 (Record of Landing), IMM 5292 / IMM 5688 (CoPR)
+    category: "pr_landing",
+    patterns: [
+      /\bIMM\s*1000\b/i,
+      /\bIMM\s*5292\b/i,
+      /\bIMM\s*5688\b/i,
+      /record\s+of\s+landing/i,
+      /confirmation\s+of\s+permanent\s+resident/i,
+      /\bcopr\b/i,
+    ],
+  },
+  {
+    // Physical Presence Calculator printout (citizenship)
+    category: "physical_presence_calc",
+    patterns: [
+      /physical\s+presence/i,
+      /presence\s+calculat/i,
+      /\bCIT[\s_-]?0407\b/i,
+      /residency\s+calculat/i,
+    ],
+  },
+  {
+    // Secondary ID for citizenship — driver's licence, provincial ID, health card
+    category: "secondary_id",
+    patterns: [
+      /driver(?:'?s)?\s+licen[cs]e/i,
+      /\bDL\b/,
+      /provincial\s+id/i,
+      /health\s+card/i,
+      /\bbcid\b/i,
+      /\bsecondary\s+id\b/i,
+    ],
+  },
+  {
+    // CRA tax docs for citizenship verification
+    category: "tax_notice",
+    patterns: [
+      /notice\s+of\s+assessment/i,
+      /\bNOA\b/,
+      /option\s+c\s+printout/i,
+      /proof\s+of\s+income\s+statement/i,
+      /\bT4\b/,
+    ],
+  },
+  {
+    // Police certificate (citizenship needs one for any country present 183+ days)
+    category: "police_certificate",
+    patterns: [
+      /police\s+certificate/i,
+      /police\s+clearance/i,
+      /good\s+conduct\s+certificate/i,
+      /criminal\s+record\s+check/i,
     ],
   },
   {

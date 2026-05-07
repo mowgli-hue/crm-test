@@ -412,13 +412,81 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
   },
 
   citizenship_prcard: {
-    requiredFields: ["fullName", "phone", "address", "nativeLanguage"],
+    requiredFields: ["fullName", "phone", "address", "nativeLanguage", "maritalStatus"],
     batches: [
-      { title: "📋 Details", questions: [0, 1] },
+      { title: "📤 Upload Documents", questions: [0] },
+      { title: "👤 Personal Info", questions: [1, 2, 3] },
+      { title: "🏠 Address History (last 5 years)", questions: [4, 5] },
+      { title: "💼 Work & Education (last 5 years)", questions: [6, 7] },
+      { title: "✈️ Travel & Absences from Canada", questions: [8, 9] },
+      { title: "💰 Taxes & Language Proof", questions: [10, 11, 12] },
+      { title: "🌍 Other Citizenship & Police Records", questions: [13, 14, 15] },
+      { title: "📋 Background", questions: [16, 17, 18] },
+      { title: "✅ Consents", questions: [19, 20] },
     ],
     prompts: [
-      "Address history and travel history summary",
-      "Current status and prior travel documents/passports"
+      // Q0 — upload prompt (OCR extracts name, DOB, citizenship, PR card #, UCI from these)
+      "📎 *Please upload these documents first* (one by one is fine):\n\n• Current passport (bio page)\n• Any expired passports from the last 5 years\n• PR card (BOTH sides)\n• PR landing document — IMM 1000, IMM 5292, or IMM 5688\n\nReply *DONE* once you've sent them. We'll extract your name, DOB, UCI, PR card number from the PR card and passport.",
+
+      // Q1 — alias / other names
+      "Have you used any other name (maiden name, nickname, alias)? (Yes/No — if Yes, provide full other name(s) and dates used)",
+
+      // Q2 — current marital status + spouse details
+      "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)\n\nIf Married or Common-Law: spouse's full name, DOB (YYYY-MM-DD), citizenship, date of marriage/start of cohabitation, and is your spouse a Canadian citizen or PR? Reply NA for the spouse fields if Single/Divorced/Widowed.",
+
+      // Q3 — children / dependents
+      "Do you have any children? (Yes/No — if Yes: each child's full name, DOB YYYY-MM-DD, and are they Canadian citizens? If too many to type, reply 'will email')",
+
+      // Q4 — current home address
+      "Your current home address in Canada (street, city, province, postal code), and the date you moved in (YYYY-MM-DD).",
+
+      // Q5 — past addresses (last 5 years)
+      "Past addresses in the last 5 years (each: full address + move-in date + move-out date YYYY-MM-DD). List ALL — Canada and abroad. Reply 'only current' if you've lived at the same place for 5+ years.",
+
+      // Q6 — employment history (last 5 years)
+      "Employment / occupations in the last 5 years (each: employer name, your job title, start date, end date YYYY-MM-DD, city/country). Include unemployment, study periods, retired, stay-at-home — any gap MUST be accounted for. Reply 'will email' if extensive.",
+
+      // Q7 — education history (last 5 years)
+      "Education in the last 5 years (each: institution name, program / degree, start–end dates YYYY-MM-DD, city/country). Reply NA if none.",
+
+      // Q8 — physical presence in Canada (residency calculator data)
+      "Approximately how many days have you been *physically present in Canada* in the last 5 years? (We need 1,095 days minimum.) If you've used the IRCC Physical Presence Calculator, send the printout — otherwise just give your best estimate.",
+
+      // Q9 — absences from Canada
+      "List ALL trips OUTSIDE Canada in the last 5 years — each trip: country visited, date left Canada (YYYY-MM-DD), date returned, reason for trip. Reply 'no trips' if you never left Canada. If too many, reply 'will email'.",
+
+      // Q10 — tax filing
+      "Have you filed Canadian taxes for *at least 3 of the last 5 years*? (Yes/No — if Yes: list which tax years you filed, e.g. 2021, 2022, 2023). IRCC verifies this with CRA — please be accurate.",
+
+      // Q11 — language proof status
+      "Language proof for citizenship (CLB 4+ required if 18-54 years old):\n• If you took IELTS / CELPIP-G / TEF / TCF — which test, when, and your scores?\n• If you completed *secondary or post-secondary education in English/French* (in Canada or abroad) — name of school + degree (we'll use the diploma/transcript as proof)\n• If you took a government-funded class (LINC / CLIC) — name of program\n• If you're 55+ and exempt — reply *exempt — age 55+*",
+
+      // Q12 — second piece of ID
+      "Two pieces of valid ID required (one with photo). One can be your PR card. For the SECOND ID, what is it? (e.g. driver's licence / provincial ID / health card / foreign passport — give type + number + expiry date YYYY-MM-DD)",
+
+      // Q13 — other citizenships / status in last 5 years
+      "Do you currently hold OR have you held immigration status / citizenship in any country other than Canada in the last 5 years? (Yes/No — if Yes: country, type of status, dates)",
+
+      // Q14 — countries lived 183+ days (police certs)
+      "In the last 4 years, were you physically present in any country *outside Canada* for 183 or more consecutive days? (Yes/No — if Yes: list each country and approx dates. We'll need a police certificate from each.)",
+
+      // Q15 — refusals
+      "Have you ever been refused a visa, permit, or status by Canada or any other country? Have you ever been deported, removed, or asked to leave any country? (Yes/No — if Yes, give details: country, year, type of refusal)",
+
+      // Q16 — criminal history
+      "Any criminal charges, convictions, or arrests anywhere in the world (including Canada)? (Yes/No — if Yes, give country, year, charge, and outcome)",
+
+      // Q17 — security / military
+      "Have you ever served in any military, intelligence, or security organization, OR been involved in any armed conflict, OR a member of any organization involved in violence? (Yes/No — if Yes, brief details)",
+
+      // Q18 — medical condition affecting oath/language (waiver)
+      "Do you have any medical or cognitive condition that prevents you from taking the citizenship oath or meeting the language requirement? (Yes/No — if Yes, you may apply for a waiver with a doctor's letter. We'll guide you.)",
+
+      // Q19 — MP letter consent
+      "Would you like IRCC to send your name and address to your federal Member of Parliament so they can mail you a letter of congratulations after you become a citizen? (Yes/No)",
+
+      // Q20 — Elections Canada consent
+      "Would you like IRCC to share your info with Elections Canada to add you to the voter register automatically after you become a citizen? (Yes/No — if No, you can still vote, you'd just register yourself later)",
     ]
   },
 

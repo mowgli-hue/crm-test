@@ -190,7 +190,52 @@ export type IntakeSession = {
   // Audit trail of validation flags — answers that passed validation but
   // looked borderline. Surfaced to staff via the form mapper's _review_flags.
   validationFlags?: Array<{ qIndex: number; reason: string }>;
+  // ISO timestamp of last "take your time" delay-ack we sent. Used to
+  // throttle so we don't reply with the same "no rush" message every time
+  // the client says "still working on it" several times in a row.
+  ackedDelayAt?: string;
 };
+
+// Check if `text` is a "delay phrase" — client saying they'll reply later.
+// We do NOT advance the session state when this fires, just acknowledge so
+// they don't feel ignored. Examples: "working on it", "give me 5 min",
+// "will reply soon", "later", "in a bit", "tomorrow morning", etc.
+//
+// Important: this must NOT match real answers. "I'll send the docs later" is
+// a delay; "I will be in Canada later this year" is NOT (it answers a date
+// question). To handle this we require the message to be SHORT (<= 15 words)
+// and not contain a digit or question-style content.
+function isDelayPhrase(text: string): boolean {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return false;
+  // Reject if too long — delays are short. Real answers can be long.
+  const wordCount = t.split(/\s+/).filter(Boolean).length;
+  if (wordCount > 15) return false;
+  // Reject if contains 4+ digits (years, IDs, dates) — likely a real answer
+  if (/\d{4,}/.test(t)) return false;
+  // Reject if contains common form values — likely an answer to a question.
+  // Use word boundaries on both sides so "not" doesn't match "no".
+  if (/\b(yes|no|n\/a|single|married|common-law|widow|separated)\b/i.test(t) && wordCount <= 5) {
+    return false;
+  }
+
+  // Patterns matching "I'll reply later" style. Each line is one phrase
+  // family, kept loose to catch typos and variants.
+  const patterns: RegExp[] = [
+    /\b(working|workin)\s+on\s+(it|this)\b/,           // "working on it"
+    /\bwill\s+(text|reply|send|do|get|update|come)\b/, // "will text you", "will reply soon"
+    /\b(give\s+me|gimme)\s+(\d+\s+|some\s+|a\s+)?(time|min|minute|hour|sec|moment)/, // "give me 5 min" / "gimme 10 minutes"
+    /\bin\s+(a\s+)?(bit|min|minute|sec|moment|while)\b/, // "in a bit", "in a min"
+    /\b(text|reply|message|msg|send|update)\s+(you\s+)?(later|soon|in\s+a\s+bit|tomorrow|tmrw|tmr|in\s+\d+|shortly)/, // "text you later"
+    /\b(later|soon|tomorrow|tmrw|tmr|tonight|shortly|asap)\b\s*(today|morn|morning|after|afternoon|even|evening|night|please)?\s*[!?.\s]*$/, // "later", "tomorrow morning"
+    /\b(busy|on\s+the\s+way|driving|at\s+work|in\s+a\s+meeting|one\s+min|hold\s+on|wait|moment)/, // "busy", "in a meeting"
+    /\b(checking|finding|looking|getting)\s+(it|this|the|my|info|details|docs?)/, // "checking my docs"
+    /\bnot\s+now\b/,                                   // "not now"
+    /\b(will|gonna|going\s+to)\s+(check|look|find|get|gather|fill)/, // "will check", "going to gather"
+    /\b(give\s+me\s+a\s+sec|one\s+sec|hold\s+on)/,     // "one sec"
+  ];
+  return patterns.some((re) => re.test(t));
+}
 
 // Session store in case DB
 export async function getActiveSession(phone: string, companyId?: string) {
@@ -779,24 +824,224 @@ export async function handleIncomingReply(params: {
     const currentQuestion = session.questions[qIndex];
     const firstName = session.clientName.split(" ")[0];
 
+    // ── Delay-phrase short-circuit ──
+    //
+    // Real bug from RUBEN (Citizenship): client replied "Working on it, will
+    // text you in a bit" and the bot treated that as the answer to Q1 then
+    // re-asked the rest of the batch. Felt robotic and lost his actual answer.
+    //
+    // If the client is just saying "I'll get back to you soon", we
+    // acknowledge politely and DO NOT advance the session state. They'll
+    // reply with the real answer later, and the bot picks up where it was.
+    //
+    // We throttle the ack to once per 30 minutes per session so a client
+    // saying "still working on it" three times doesn't get the same canned
+    // reply three times.
+    if (isDelayPhrase(text)) {
+      const lastAck = session.ackedDelayAt ? new Date(session.ackedDelayAt).getTime() : 0;
+      const minutesSince = (Date.now() - lastAck) / 60000;
+      if (minutesSince > 30) {
+        session.ackedDelayAt = new Date().toISOString();
+        await setSession(phone, session);
+        const reply = [
+          `Take your time ${firstName}! 🙏`,
+          ``,
+          `Whenever you're ready, just reply with the numbered answers and I'll continue.`,
+        ].join("\n");
+        await sendAndSave(phone, reply, session.caseId, session.clientName);
+      } else {
+        // Already acked recently — just stay quiet so we don't pester them
+        console.log(`[delay-phrase] Skipping repeat ack for ${phone} (last ack ${minutesSince.toFixed(1)} min ago)`);
+      }
+      return;
+    }
+
+    // ── Smart intent detection — handle non-answer replies gracefully ──
+    //
+    // Real bug from RUBEN's intake: he said "Working on it, will text you in
+    // a bit" and the bot stored that as his Q1 answer (Address history) and
+    // pestered him for Q2. Same problem for questions like "what do you mean?"
+    // or "can I get back to you tomorrow?" — none of those are answers.
+    //
+    // Detect three categories of non-answer replies:
+    //   1. DELAY  — "I'll send later", "working on it", "give me a min"
+    //   2. ASK    — "what do you mean?", "can you explain?"
+    //   3. EMOJI/STICKER-only — "👍", "ok ok"
+    //
+    // For all three: don't consume the question, send a friendly response,
+    // wait for an actual answer.
+    if (text && text.length < 200) {
+      const lower = text.toLowerCase().trim();
+
+      // Single-emoji or super-short ack replies — friendly nudge, don't consume Q
+      const emojiOnly = /^[\p{Emoji}\s]+$/u.test(text) && text.replace(/[\p{Emoji}\s]/gu, "").length === 0;
+      const isShortAck = /^(ok|okay|k|kk|sure|alright|yes|yeah|👍|👌|🙏)\s*[!.]*$/i.test(lower);
+
+      // Delay/postpone phrases
+      const delayPatterns = [
+        /\b(working on it|i.{0,3}ll (text|send|reply|get back|do it)|give me (a )?(min|minute|sec|moment|hour|day))\b/i,
+        /\b(later|tomorrow|tonight|in a bit|in a (min|minute|sec|moment|while)|after work|bit busy)\b/i,
+        /\b(can.{0,3}t now|busy|not now|hold on|one (sec|moment|minute))\b/i,
+        /\b(will (do|send|reply|get back to you))\b/i,
+        /\b(getting (it|them|these)|gathering|collecting|finding)\b/i,
+        // Punjabi/Hindi delay phrases (romanized)
+        /\b(thoda time|thoda samay|baad mein|kal|abhi nahi)\b/i,
+      ];
+      const isDelay = delayPatterns.some(re => re.test(lower)) && !/[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(text);
+
+      // Question/clarification asking (ends with ?, or starts with "what/why/how/when/where/can you/could you")
+      const isQuestion = /\?\s*$/.test(text.trim()) ||
+        /^(what|why|how|when|where|can you|could you|do you|does this|is this|i don.{0,3}t (understand|get))/i.test(lower);
+
+      if (emojiOnly || isShortAck || isDelay) {
+        // Don't consume a question — acknowledge and wait.
+        const reply = isDelay
+          ? `No problem ${firstName}! 🙏 Take your time. Whenever you're ready, just send your answers numbered (1. answer, 2. answer...). I'll be here.`
+          : `👍 Whenever you're ready, please send your answers numbered (1. answer, 2. answer...) 🙏`;
+        await sendAndSave(phone, reply, session.caseId, session.clientName);
+        return;
+      }
+
+      if (isQuestion && !/[0-9]\s*[.)]/.test(text)) {
+        // Client is asking US something instead of answering — let Claude write
+        // a brief helpful reply, but don't store anything as their Q answer.
+        try {
+          const apiKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
+          if (apiKey) {
+            const sys = [
+              `You are a friendly immigration intake assistant at Newton Immigration helping ${firstName} with their ${session.formType} application.`,
+              `The client just asked you a question instead of answering the questions you sent them.`,
+              `Currently they need to answer this question: "${currentQuestion}"`,
+              ``,
+              `Rules for your reply:`,
+              `1. Briefly answer their question if you can (1-2 short sentences).`,
+              `2. NEVER quote fees, dates, or processing times.`,
+              `3. NEVER promise outcomes.`,
+              `4. After your brief answer, gently re-share what you need from them.`,
+              `5. Keep total reply under 60 words.`,
+              `6. Match their language (English / Hindi / Punjabi).`,
+              `7. Return ONLY the reply text — no labels.`,
+            ].join("\n");
+            const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+              },
+              body: JSON.stringify({
+                model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+                max_tokens: 150,
+                system: sys,
+                messages: [{ role: "user", content: text }],
+              }),
+            });
+            if (aiRes.ok) {
+              const data: any = await aiRes.json();
+              const out = String(data?.content?.[0]?.text || "").trim();
+              if (out && out.length < 600) {
+                // Filter for forbidden content (fees, timing promises)
+                const banned = [/\$\s*\d/, /\bcad\b\s*\d/i, /\b\d{1,3}\s*(days?|weeks?|months?)\b/i, /\b(approved|guaranteed|will be)\b/i];
+                if (!banned.some(re => re.test(out))) {
+                  await sendAndSave(phone, out, session.caseId, session.clientName);
+                  return;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // Fall through to default response
+        }
+        // Fallback if AI failed
+        await sendAndSave(
+          phone,
+          `Good question ${firstName}! For your *${session.formType}* application, I just need: ${currentQuestion}\n\nIf you're unsure how to answer, give your best understanding or reply "skip" to come back to it later.`,
+          session.caseId,
+          session.clientName
+        );
+        return;
+      }
+    }
+
     // ── Smart batch detection ──
     // The question prompt explicitly asks the client to "reply with all answers numbered (1. answer, 2. answer...)"
     // so we must honor that format. Detect numbered answers in the reply and assign each to the
-    // corresponding question. Handles separators "1.", "1)", "1.)", "1:" with or without spaces,
-    // and answers separated by either newlines or just spaces.
+    // corresponding question.
+    //
+    // Two marker shapes accepted:
+    //   (A) Punctuated:    "1." / "1)" / "1.)" / "1:"  with or without trailing space
+    //   (B) Space-only:    "1 yes 2 no 3 NA"           (no punctuation, just digit + space)
+    //
+    // Real bug from Harwinder (CASE-1394): she replied
+    //     "1 no 2 Separated buy not officially we have filed our taxes Separated for 2025 4 no"
+    // The OLD regex (\d{1,2})[.)\:]+ required at least one of . ) : after the digit, so it
+    // matched ZERO markers and dumped her entire reply as a single answer to Q1, then re-asked
+    // the whole batch. With permissive markers we now correctly extract Q1=no, Q2="Separated...",
+    // (Q3 missing → handled separately), Q4=no.
+    //
+    // Year-filter: a digit like "2025" inside answer text must NOT be treated as marker 2.
+    // We protect against this by:
+    //   (i)  Numbers ≤ 20 only (we never ask >20 Qs in a single batch)
+    //   (ii) Digit must NOT be preceded OR followed by another digit (so "2025" is one chunk
+    //        that the regex skips)
+    //   (iii) Marker followed by a SPACE must lead with a non-digit answer character.
     let answersCaptured = 0;
     if (text) {
-      // Find all positions of number markers like "1.", "2)", "3.)", "4:" — at start OR after whitespace
-      const markerRegex = /(?:^|\s)(\d{1,2})[.)\:]+\s*/g;
       const positions: Array<{ num: number; start: number; end: number }> = [];
+
+      // Pattern A — punctuated: keep the original behavior, this is unambiguous.
+      const punctuatedRegex = /(?:^|\s)(\d{1,2})[.)\:]+\s*/g;
       let m: RegExpExecArray | null;
-      while ((m = markerRegex.exec(text)) !== null) {
-        // Capture position right after the marker so we can extract the answer text
-        positions.push({
-          num: parseInt(m[1], 10),
-          start: m.index + (m[0].length - m[0].trimStart().length),
-          end: markerRegex.lastIndex,
-        });
+      while ((m = punctuatedRegex.exec(text)) !== null) {
+        const num = parseInt(m[1], 10);
+        if (num >= 1 && num <= 20) {
+          positions.push({
+            num,
+            start: m.index + (m[0].length - m[0].trimStart().length),
+            end: punctuatedRegex.lastIndex,
+          });
+        }
+      }
+
+      // Pattern B — space-only: "1 no 2 yes 3 NA". Only fire if Pattern A found
+      // fewer than 2 markers (i.e. client likely didn't use punctuation at all).
+      // This avoids double-matching when the client did use "1." style.
+      if (positions.length < 2) {
+        // Match: (start of text OR whitespace) + 1-2 digit number + whitespace + non-digit char
+        // The lookahead `(?=\s+[^\d\s])` ensures the next thing after the digit is whitespace
+        // followed by an actual answer character (not another digit, not just more whitespace).
+        // The lookbehind `(?<![\d.])` ensures we're not in the middle of a longer number like
+        // "2025" or "1.5" — important to avoid false matches inside answer text.
+        const spaceOnlyRegex = /(?:^|\s)(?<![\d.])(\d{1,2})(?=\s+[^\d\s])/g;
+        positions.length = 0; // reset — use space-only path exclusively
+        while ((m = spaceOnlyRegex.exec(text)) !== null) {
+          const num = parseInt(m[1], 10);
+          if (num < 1 || num > 20) continue;
+          // The marker END is right after the digit; whitespace+answer follows
+          const matchEnd = m.index + m[0].length;
+          // Skip past the whitespace to where the answer text actually begins
+          let answerStart = matchEnd;
+          while (answerStart < text.length && /\s/.test(text[answerStart])) answerStart++;
+          positions.push({
+            num,
+            start: m.index + (m[0].length - m[0].trimStart().length),
+            end: answerStart,
+          });
+        }
+
+        // Sanity check on space-only matches: the captured numbers should be roughly
+        // sequential (1, 2, 3, 4 — possibly skipping). If we got [1, 4, 7, 19] that's
+        // probably noise; if we got [1, 2, 4] that's legitimate (client skipped Q3).
+        // Keep only if first marker is small (≤3) and numbers are mostly increasing.
+        if (positions.length >= 2) {
+          const sortedAsc = positions.slice().sort((a, b) => a.start - b.start);
+          const numsInOrder = sortedAsc.map(p => p.num);
+          const looksOrdered = numsInOrder.every((n, i) => i === 0 || n > numsInOrder[i - 1]);
+          if (!looksOrdered || numsInOrder[0] > 3) {
+            // Doesn't look like clean numbered answers — probably noise. Drop them.
+            positions.length = 0;
+          }
+        }
       }
 
       // Need at least 2 markers to qualify as a multi-answer reply

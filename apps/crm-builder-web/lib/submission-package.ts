@@ -276,10 +276,17 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   imm5257?: CategorizedDoc;
   imm5476?: CategorizedDoc;
   imm5709?: CategorizedDoc;
+  imm0002?: CategorizedDoc;       // CIT-0002 citizenship application
   submissionLetter?: CategorizedDoc;
   loa?: CategorizedDoc;          // current LOA — top-level for study permit applications
   pal?: CategorizedDoc;          // PAL — top-level for study permit applications
   proofOfFunds?: CategorizedDoc; // top-level for study permit applications
+  prCard?: CategorizedDoc;             // PR card (citizenship)
+  prLanding?: CategorizedDoc;          // IMM 1000 / 5292 / 5688 (citizenship)
+  physicalPresenceCalc?: CategorizedDoc; // CIT-0407 (citizenship)
+  secondaryId?: CategorizedDoc;        // driver's licence etc (citizenship)
+  languageTest?: CategorizedDoc;       // most recent language test (citizenship)
+  taxNotice?: CategorizedDoc;          // most recent tax NOA (citizenship — optional)
   olderTranscripts: CategorizedDoc[];
   studyPermits: CategorizedDoc[];
   workPermits: CategorizedDoc[];
@@ -289,6 +296,9 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   medicals: CategorizedDoc[];
   bankStatements: CategorizedDoc[];
   proofsOfFunds: CategorizedDoc[];  // ALL proof-of-funds — older copies go in bundle
+  oldPassports: CategorizedDoc[];   // older passports for citizenship bundle (5-yr coverage)
+  taxNotices: CategorizedDoc[];     // ALL tax notices for citizenship
+  policeCertificates: CategorizedDoc[]; // citizenship police clearances
 } {
   // Sort by uploadedAt descending so .find() picks the most recent
   const byDateDesc = [...categorized].sort((a, b) => {
@@ -308,6 +318,8 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const imm5257 = immForms.find((d) => /\b5257/i.test(d.name));
   const imm5476 = immForms.find((d) => /\b5476/i.test(d.name));
   const imm5709 = immForms.find((d) => /\b5709/i.test(d.name));
+  // CIT-0002 / CIT 0002 — adult citizenship application form
+  const imm0002 = byDateDesc.find((d) => /\bCIT[\s_-]?0002\b/i.test(d.name));
 
   // Transcripts: newest = current; older = into bundle
   const allTranscripts = byDateDesc.filter((d) => d.category === "transcript");
@@ -328,17 +340,36 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
 
   const studyPermits = byDateDesc.filter((d) => d.category === "study_permit");
   const workPermits = byDateDesc.filter((d) => d.category === "work_permit");
-  const languageTests = byDateDesc.filter((d) => d.category === "language_test");
+  const languageTestsAll = byDateDesc.filter((d) => d.category === "language_test");
+  const languageTest = languageTestsAll[0];   // most recent for citizenship top-level
+  const languageTests = languageTestsAll;     // ALL — for bundles
   const loas = allLoas;            // PGWP bundle wants ALL LOAs
   const medicals = byDateDesc.filter((d) => d.category === "medical");
   const bankStatements = byDateDesc.filter((d) => d.category === "bank_statement");
 
+  // Citizenship-specific docs
+  const prCard = byDateDesc.find((d) => d.category === "pr_card");
+  const prLanding = byDateDesc.find((d) => d.category === "pr_landing");
+  const physicalPresenceCalc = byDateDesc.find((d) => d.category === "physical_presence_calc");
+  const secondaryId = byDateDesc.find((d) => d.category === "secondary_id");
+  const taxNotices = byDateDesc.filter((d) => d.category === "tax_notice");
+  const taxNotice = taxNotices[0];
+  const policeCertificates = byDateDesc.filter((d) => d.category === "police_certificate");
+
+  // Older passports: any passport scan that isn't the most recent. For citizenship
+  // we need 5 years of passport coverage so older ones go in the bundle.
+  const allPassports = byDateDesc.filter((d) => d.category === "passport");
+  const oldPassports = allPassports.slice(1);
+
   return {
     passport, photo, transcript, completionLetter,
-    imm5710, imm5257, imm5476, imm5709, submissionLetter,
+    imm5710, imm5257, imm5476, imm5709, imm0002, submissionLetter,
     loa, pal, proofOfFunds,
+    prCard, prLanding, physicalPresenceCalc, secondaryId,
+    languageTest, taxNotice,
     olderTranscripts, studyPermits, workPermits, languageTests,
     loas, olderLoas, medicals, bankStatements, proofsOfFunds,
+    oldPassports, taxNotices, policeCertificates,
   };
 }
 
@@ -584,12 +615,56 @@ const PROFILE_TRV: FormProfile = {
   ],
 };
 
+const PROFILE_CITIZENSHIP: FormProfile = {
+  name: "Citizenship",
+  topLevel: [
+    // Photo + IDs go up top — what IRCC sees first when staff opens the package
+    { sourceKey: "photo",                template: "Citizenship_Photo_<First>_<Last>" },
+    { sourceKey: "passport",             template: "Passport_<First>_<Last>" },
+    { sourceKey: "prCard",               template: "PR_Card_<First>_<Last>" },
+    { sourceKey: "prLanding",            template: "PR_Landing_Document_<First>_<Last>" },
+    { sourceKey: "secondaryId",          template: "Secondary_ID_<First>_<Last>" },
+    // Citizenship-specific top-level
+    { sourceKey: "imm0002",              template: "CIT0002_Application_<First>_<Last>" },
+    { sourceKey: "physicalPresenceCalc", template: "Physical_Presence_Calculator_<First>_<Last>" },
+    { sourceKey: "languageTest",         template: "Language_Proof_<First>_<Last>" },
+    { sourceKey: "submissionLetter",     template: "Representative_Submission_Letter_<First>_<Last>" },
+    // 5476 generated inline below — same as other profiles
+  ],
+  bundleCategories: [
+    // Older passports for the 5-year coverage requirement
+    "oldPassports",
+    // Tax filing supporting docs (NOAs, Option C printouts) — optional but speeds processing
+    "taxNotices",
+    // Foreign police certificates if any country had 183+ day residence
+    "policeCertificates",
+    // Any other supporting docs uploaded
+  ],
+  recommended: [
+    "Current passport (bio + all stamped pages)",
+    "PR card (both sides — must be valid)",
+    "PR landing document (IMM 1000 / 5292 / 5688)",
+    "Secondary photo ID (driver's licence / health card / provincial ID)",
+    "Two citizenship-format photos",
+    "CIT-0002 Application form (validated, signed)",
+    "Physical Presence Calculator printout (CIT-0407)",
+    "Language proof — IELTS / CELPIP-G / TEF / TCF results, OR English/French diploma",
+    "Representative Submission Letter (use letter generator)",
+  ],
+};
+
 // Future profiles: PROFILE_WORK_PERMIT_LMIA, etc.
 
 function pickProfile(formType: string): FormProfile {
   const ft = (formType || "").toLowerCase();
   if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
     return PROFILE_TRV;
+  }
+  // Citizenship application — adult grant or PR-card-related
+  // Note: PR card renewal also routes here for now since they share a lot of
+  // the same docs (PR card, ID, photos, passport). Future work: split.
+  if (ft.includes("citizenship") || ft.includes("pr card")) {
+    return PROFILE_CITIZENSHIP;
   }
   // Study permit extension OR new study permit (inside Canada uses 5709)
   if (ft.includes("study permit") || ft.includes("study permit extension") || ft.includes("study extension")) {

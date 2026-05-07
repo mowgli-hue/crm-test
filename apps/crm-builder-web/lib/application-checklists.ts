@@ -182,10 +182,20 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "contact_proof", label: "Proof of Contact (text messages, emails, WhatsApp chats, airline tickets, boarding passes)", required: true, keywords: ["text message", "email", "whatsapp chat", "airline ticket", "boarding pass"] }
   ],
   citizenship_prcard: [
-    { key: "id_docs", label: "Current ID + Existing PR card/Passport", required: true, keywords: ["id", "pr card", "passport"] },
-    { key: "travel_history", label: "Travel/Address history details", required: true, keywords: ["travel history", "address history"] },
-    { key: "photos", label: "Required photos", required: true, keywords: ["photo"] },
-    { key: "supporting", label: "Supporting documents (if requested)", required: false, keywords: ["supporting", "explanation"] }
+    { key: "passport_current", label: "Current passport (all pages with stamps + bio page)", required: true, keywords: ["passport"] },
+    { key: "passport_old", label: "Expired passports (last 5 years)", required: false, keywords: ["old passport", "expired"] },
+    { key: "pr_card", label: "PR card — both sides (must be valid)", required: true, keywords: ["pr card", "permanent resident"] },
+    { key: "pr_landing", label: "PR landing document (IMM 1000 / IMM 5292 / IMM 5688)", required: true, keywords: ["imm 1000", "imm 5292", "imm 5688", "record of landing", "copr"] },
+    { key: "secondary_id", label: "Secondary photo ID (driver's licence / health card / provincial ID)", required: true, keywords: ["driver", "health card", "provincial id"] },
+    { key: "photos", label: "Two citizenship-format photos (with photographer info on back)", required: true, keywords: ["photo", "citizenship photo"] },
+    { key: "physical_presence", label: "Physical Presence Calculator printout (CIT-0407, 1095+ days)", required: true, keywords: ["physical presence", "calculator", "cit 0407", "residency"] },
+    { key: "language_proof", label: "Language proof — IELTS / CELPIP-G / TEF / TCF results, OR English/French diploma (if 18-54)", required: true, keywords: ["ielts", "celpip", "tef", "tcf", "language", "diploma", "transcript"] },
+    { key: "tax_filings", label: "Tax filings — declared 3+ of last 5 years on form (verified with CRA)", required: true, keywords: ["tax", "noa", "notice of assessment", "option c"] },
+    { key: "police_certs", label: "Police certificates (if 183+ days in any country in last 4 years)", required: false, keywords: ["police certificate", "police clearance", "criminal record"] },
+    { key: "fee_receipt", label: "Fee receipt — CA$530 adult / CA$100 minor + CA$100 right-of-citizenship", required: true, keywords: ["fee", "receipt", "payment"] },
+    { key: "rep_letter", label: "Use of Representative form (IMM 5476)", required: true, keywords: ["5476", "representative"] },
+    { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter", "representative letter"] },
+    { key: "translations", label: "Certified translations (for any non-English/French docs)", required: false, keywords: ["translation"] }
   ],
   us_b1b2: [
     { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
