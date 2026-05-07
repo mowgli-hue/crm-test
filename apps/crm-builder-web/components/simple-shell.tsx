@@ -6350,9 +6350,52 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         {/* Progress bar — intake completion */}
                         {(() => {
                           const intake = selectedCase.pgwpIntake as Record<string,string> | undefined;
-                          const filled = intake ? Object.values(intake).filter(v => String(v||"").trim()).length : 0;
-                          const total = 12;
-                          const pct = Math.min(100, Math.round((filled/total)*100));
+                          // Real fix: read live progress from the WhatsApp session blob.
+                          // The old code did `Object.values(intake).length / 12` which gave
+                          // 8% for any in-progress case (because pgwpIntake only stores the
+                          // `whatsappSession` JSON field until completion). Now we parse the
+                          // session and use chatTurns / questionCount to compute % correctly
+                          // for any flow length (PGWP=19, TRV=20, SP-Ext=22, Citizenship=21).
+                          let pct = 0;
+                          let answeredCount = 0;
+                          let questionTotal = 0;
+                          try {
+                            const rawSession = intake?.whatsappSession;
+                            if (rawSession) {
+                              const sess = JSON.parse(String(rawSession)) as {
+                                phase?: string;
+                                chatTurns?: number;
+                                questions?: string[];
+                                preAnswered?: Record<number, string>;
+                              };
+                              questionTotal = sess.questions?.length || 0;
+                              const turns = sess.chatTurns || 0;
+                              // Pre-answered questions (from passport OCR) count as done
+                              const preCount = sess.preAnswered ? Object.keys(sess.preAnswered).length : 0;
+                              // chatTurns already INCLUDES skipped pre-answered (the bot bumps
+                              // chatTurns past them on advance). Use chatTurns as the count.
+                              answeredCount = turns;
+                              if (sess.phase === "complete") {
+                                pct = 100;
+                                answeredCount = questionTotal;
+                              } else if (questionTotal > 0) {
+                                pct = Math.min(100, Math.round((turns / questionTotal) * 100));
+                              }
+                              // Edge case: if there's a session but it hasn't started yet,
+                              // show a visible 5% so the bar isn't empty
+                              if (pct === 0 && sess.phase && sess.phase !== "intake") pct = 5;
+                            } else if (intake) {
+                              // No session yet (legacy data or pre-WhatsApp intake). Fall back
+                              // to counting saved keys vs an estimated 15 fields. Still better
+                              // than the old 12 hardcoded value.
+                              const filled = Object.values(intake).filter(v => String(v || "").trim()).length;
+                              pct = Math.min(100, Math.round((filled / 15) * 100));
+                              answeredCount = filled;
+                              questionTotal = 15;
+                            }
+                          } catch {
+                            pct = 0;
+                          }
                           const docsCount = documents.filter(d => d.caseId === selectedCase.id).length;
                           const tasksTotal = caseTasks.length;
                           const tasksDone = caseTasks.filter(t => t.status === "completed").length;
@@ -6361,7 +6404,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               <div className="rounded-lg bg-slate-50 px-3 py-2">
                                 <div className="flex items-center justify-between mb-1">
                                   <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Intake</p>
-                                  <p className="text-[10px] font-bold text-slate-700">{pct}%</p>
+                                  <p className="text-[10px] font-bold text-slate-700" title={questionTotal > 0 ? `${answeredCount}/${questionTotal} questions` : ""}>{pct}%</p>
                                 </div>
                                 <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
                                   <div className={`h-full rounded-full ${pct >= 80 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-400" : "bg-red-400"}`} style={{width:`${pct}%`}} />
