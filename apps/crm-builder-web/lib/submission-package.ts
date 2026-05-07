@@ -362,6 +362,61 @@ export async function assemblePgwpSubmissionPackage(
   if (primary.imm5710)          copyJobs.push({ doc: primary.imm5710,          template: "IMM5710e_<First>_<Last>" });
   if (primary.submissionLetter) copyJobs.push({ doc: primary.submissionLetter, template: "Representative_Submission_Letter_<First>_<Last>" });
 
+  // ── WRONG-CLIENT SAFETY FILTER FOR TOP-LEVEL COPIES ──
+  // Same rationale as the bundle filter below — a passport/transcript belonging
+  // to another client must not end up at the top of the submission folder.
+  // For IMM5710 we skip the check (it's a generated form, no name to OCR).
+  // For Photo we also skip (face-only, OCR can't read names from a photo).
+  const caseClientNameTop = (caseItem.client || "").toLowerCase();
+  const caseNameTokensTop = caseClientNameTop.split(/\s+/).filter(t => t.length >= 3);
+  if (caseNameTokensTop.length >= 1) {
+    const { extractDocumentFields: extractTop } = await import("@/lib/doc-ocr");
+    const filteredJobs: CopyJob[] = [];
+    for (const job of copyJobs) {
+      const skipNameCheck =
+        job.template.includes("IMM5710") ||
+        job.template.includes("Photo") ||
+        job.template.includes("Submission_Letter") ||
+        !job.doc.driveFileId;
+      if (skipNameCheck) {
+        filteredJobs.push(job);
+        continue;
+      }
+      try {
+        const bytes = await downloadDriveFileBytes(job.doc.driveFileId);
+        if (bytes.length >= 10 * 1024 * 1024) {
+          filteredJobs.push(job);
+          continue;
+        }
+        const mimeType = job.doc.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
+          job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
+          "application/pdf";
+        const extracted = await extractTop(bytes, mimeType, caseItem.client || "Client");
+        if (extracted) {
+          const docFirstName = String(extracted.firstName || "").toLowerCase();
+          const docLastName = String(extracted.lastName || "").toLowerCase();
+          const docNameTokens = (docFirstName + " " + docLastName).split(/\s+/).filter(t => t.length >= 3);
+          if (docNameTokens.length > 0) {
+            const hasOverlap = docNameTokens.some(dt =>
+              caseNameTokensTop.some(ct => ct === dt || ct.includes(dt) || dt.includes(ct))
+            );
+            if (!hasOverlap) {
+              warnings.push(
+                `⚠️ SKIPPED top-level wrong-client doc: "${job.doc.name}" appears to belong to "${docFirstName} ${docLastName}" (case is for "${caseItem.client}"). Please verify and remove from case folder.`
+              );
+              continue; // skip — don't copy
+            }
+          }
+        }
+      } catch (e) {
+        // Filter check failed — non-fatal, fall through and include the doc
+      }
+      filteredJobs.push(job);
+    }
+    copyJobs.length = 0;
+    copyJobs.push(...filteredJobs);
+  }
+
   // Determine final filename + extension for each job. Images get converted to PDF
   // for everything EXCEPT the digital photo (IRCC requires photo as image format).
   const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"]);
@@ -447,6 +502,7 @@ export async function assemblePgwpSubmissionPackage(
   //   3. Older transcripts (previous schools)
   //   4. Older LOAs (previous schools)
   //   5. Medical exam (if uploaded)
+  // ── Bundle source list ──
   // "other"-categorized docs are explicitly NOT bundled — staff handles them
   // manually. Bank statements, employment contracts, pay stubs, etc. are NOT
   // part of a PGWP-style submission.
@@ -464,6 +520,25 @@ export async function assemblePgwpSubmissionPackage(
   } else {
     try {
       const fetchedFiles: Array<{ filename: string; bytes: Buffer }> = [];
+
+      // ── WRONG-CLIENT SAFETY FILTER ──
+      // Real Newton bug: a previous case (Pratham) had Prashil Savalia's
+      // study permit + passport + IELTS sitting in the case folder by mistake.
+      // The bundler dutifully scooped them into Client_Info — making the
+      // submission unusable.
+      //
+      // Mitigation: before bundling each file, run a quick Claude vision check
+      // to extract the client name on the doc, then compare against the case's
+      // client name. Skip if it clearly belongs to someone else.
+      //
+      // Heuristic match: at least one name token (first or last) must overlap.
+      // This handles common variations: nicknames, middle names, name order
+      // (BAMBUWALA, PRATHAM HIRENBHAI vs Pratham Hirenbhai Bambuwala).
+      const caseClientName = (caseItem.client || "").toLowerCase();
+      const caseNameTokens = caseClientName.split(/\s+/).filter(t => t.length >= 3);
+
+      const { extractDocumentFields } = await import("@/lib/doc-ocr");
+
       for (const src of bundleSources) {
         if (!src.driveFileId) {
           warnings.push(`Skipped from bundle (no Drive ID): ${src.name}`);
@@ -471,6 +546,40 @@ export async function assemblePgwpSubmissionPackage(
         }
         try {
           const bytes = await downloadDriveFileBytes(src.driveFileId);
+
+          // Quick name verification via vision — only when we have enough name
+          // tokens to compare. Single-name clients (just "Pratham") get skipped
+          // to avoid overzealous filtering.
+          if (caseNameTokens.length >= 1 && bytes.length < 10 * 1024 * 1024) {
+            try {
+              const mimeType = src.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
+                src.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${src.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
+                "application/pdf";
+              const extracted = await extractDocumentFields(bytes, mimeType, caseItem.client || "Client");
+              if (extracted) {
+                const docFirstName = String(extracted.firstName || "").toLowerCase();
+                const docLastName = String(extracted.lastName || "").toLowerCase();
+                const docNameTokens = (docFirstName + " " + docLastName).split(/\s+/).filter(t => t.length >= 3);
+
+                // If we got names from the doc, check overlap with case name
+                if (docNameTokens.length > 0) {
+                  const hasOverlap = docNameTokens.some(dt =>
+                    caseNameTokens.some(ct => ct === dt || ct.includes(dt) || dt.includes(ct))
+                  );
+                  if (!hasOverlap) {
+                    warnings.push(
+                      `⚠️ SKIPPED wrong-client doc from bundle: "${src.name}" appears to belong to "${docFirstName} ${docLastName}" (case is for "${caseItem.client}"). Please verify and remove from case folder.`
+                    );
+                    continue; // skip — don't bundle this
+                  }
+                }
+              }
+            } catch (e) {
+              // Vision check failed — non-fatal, fall through and bundle the doc anyway
+              // (better to over-include than to miss a legitimate doc due to vision flaw)
+            }
+          }
+
           fetchedFiles.push({ filename: src.name, bytes });
         } catch (e) {
           warnings.push(`Skipped from bundle (download failed): ${src.name}`);
