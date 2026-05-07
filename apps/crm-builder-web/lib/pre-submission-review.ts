@@ -597,6 +597,42 @@ export const REVIEW_STUDY_PERMIT_EXT: ReviewChecklist = {
       category: "documents",
       required: false,
     },
+    // Employment / off-campus work — relevant when student is working
+    {
+      key: "spe_offcampus_work_hours_legal",
+      label: "Off-campus work hours legal (≤ 24 hrs/wk during studies, full-time on breaks)",
+      description:
+        "As of Nov 2024, IRCC allows ≤ 24 hours/week off-campus during studies (full-time " +
+        "during scheduled breaks). Working over the limit = serious refusal trigger AND " +
+        "could affect future PGWP eligibility. Verify employer letter / pay stubs match.",
+      category: "status_eligibility",
+      required: false,
+    },
+    {
+      key: "spe_employment_letter_if_working",
+      label: "Current employer letter (if applicable)",
+      description:
+        "If client is working, attach employer letter showing: title, hours/week, salary, " +
+        "start date. Must comply with study permit work conditions.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "spe_pay_stubs_if_working",
+      label: "Recent pay stubs / T4 (if applicable)",
+      description: "Last 3 months' pay stubs OR T4 from previous tax year if working.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "spe_employment_history_form",
+      label: "IMM5709 employment history complete (last 5 years, no gaps)",
+      description:
+        "Form needs ALL jobs in last 5 years (Canada and abroad). Gaps without explanation " +
+        "(unemployment / studies / stay-at-home) = refusal trigger.",
+      category: "forms",
+      required: true,
+    },
     {
       key: "submission_letter_spe",
       label: "Representative Submission Letter generated and reviewed",
@@ -748,15 +784,54 @@ export const REVIEW_TRV: ReviewChecklist = {
       category: "documents",
       required: false,
     },
+    // Employment is the #1 ties-to-home factor — give it dedicated items
     {
-      key: "employment_letter_trv",
-      label: "Employment letter from home country (with leave approval)",
+      key: "trv_employment_letter",
+      label: "Employment letter from current employer (home country)",
+      description:
+        "Letter on official letterhead showing: job title, salary, length of employment, " +
+        "approved leave dates (matching travel dates), confirmation of return, employer's " +
+        "stamp/signature + contact info. Without this, ties-to-home is weak — top refusal " +
+        "reason.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "trv_pay_stubs",
+      label: "Recent pay stubs (last 3 months)",
+      description: "Confirms ongoing employment + income level.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "trv_employment_history_complete",
+      label: "10-year employment/education history complete on IMM5257",
+      description:
+        "Form requires 10 years — every job, every gap, every period of unemployment / " +
+        "studies / stay-at-home. Gaps without explanation = refusal trigger. If retired or " +
+        "self-employed, document accordingly.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "trv_self_employed_docs",
+      label: "Self-employed: business registration + financials (if applicable)",
+      description:
+        "If client is self-employed: business registration, tax returns, recent bank " +
+        "statements showing business income. Skip if employed by someone else.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "trv_retired_pension_docs",
+      label: "Retired: pension/SSN proof (if applicable)",
+      description: "Pension statement, SSN benefit letter, or retirement certificate.",
       category: "documents",
       required: false,
     },
     {
       key: "ties_evidence_attached",
-      label: "Ties-to-home evidence: property, family, business",
+      label: "Other ties-to-home evidence: property, family, business",
       category: "documents",
       required: true,
     },

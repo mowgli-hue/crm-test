@@ -6921,7 +6921,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   try {
                                     const caseRes = await apiFetch(`/cases/${selectedCase.id}`);
                                     const cd = await caseRes.json().catch(() => ({}));
-                                    if (cd && cd.id) setSelectedCase(cd);
+                                    if (cd && cd.id) {
+                                      setCases((prev) => prev.map((c) =>
+                                        c.id === selectedCase.id ? cd : c
+                                      ));
+                                    }
                                   } catch (e) { /* non-fatal */ }
                                 } else {
                                   setCaseActionStatus(`ℹ️ Scanned ${d.filesScanned || 0} doc(s) — no new fields extracted (intake may already be complete)`);
@@ -7009,7 +7013,27 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                                                 {(() => {
                           const ft = selectedCase.formType.toLowerCase();
-                          return ft.includes("pgwp") || ft.includes("post-graduation") || ft.includes("post graduation") || ft.includes("bowp") || ft.includes("sowp") || ft.includes("lmia") || ft.includes("work permit") || ft.includes("study permit") || ft.includes("imm5710") || ft.includes("imm 5710");
+                          // Match the server-side gate in /api/cases/[id]/submission-package/route.ts
+                          // — show Assemble for any type with a profile in pickProfile().
+                          return (
+                            // Work permits + PGWP family
+                            ft.includes("pgwp") || ft.includes("post-graduation") || ft.includes("post graduation") ||
+                            ft.includes("bowp") || ft.includes("sowp") || ft.includes("vowp") ||
+                            ft.includes("lmia") || ft.includes("work permit") || ft.includes("open work permit") ||
+                            ft.includes("restoration") ||
+                            // Study permit + extension
+                            ft.includes("study permit") || ft.includes("imm5709") || ft.includes("imm 5709") ||
+                            ft.includes("imm5710") || ft.includes("imm 5710") ||
+                            // TRV / visitor visa / super visa / visitor record
+                            ft.includes("trv") || ft.includes("visitor visa") || ft.includes("visitor record") ||
+                            ft.includes("super visa") || ft.includes("supervisa") ||
+                            ft.includes("imm5257") || ft.includes("imm 5257") ||
+                            // PR Card Renewal
+                            ft.includes("pr card") || ft.includes("permanent resident card") ||
+                            ft.includes("imm5444") || ft.includes("imm 5444") ||
+                            // Citizenship
+                            ft.includes("citizenship") || ft.includes("cit 0002") || ft.includes("cit0002")
+                          );
                         })() ? (
 
                                                   <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 flex items-center justify-between gap-3 flex-wrap">
