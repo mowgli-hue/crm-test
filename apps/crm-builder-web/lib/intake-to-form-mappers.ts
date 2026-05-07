@@ -1179,41 +1179,177 @@ function mapForStudyPermitExtension(intake: Record<string, any>, formType: strin
 function mapForVisitorVisa(intake: Record<string, any>, formType: string): Record<string, any> {
   const { qN } = buildLookup(intake);
 
-  // Q1: Name (as on passport — but passport scan is more reliable, use intake first)
-  const nameRaw = qN(1);
-  const nameParts = nameRaw.split(",").map((p) => p.trim());
-  const familyName = (intake.lastName || nameParts[0] || "").toUpperCase();
-  const givenName = (intake.firstName || nameParts[1] || "").toUpperCase();
+  // ─── Smart layout detection (3 generations of visitor_visa flow) ───
+  //
+  // OLD (22 questions): qN(1)=name, qN(2)=DOB(date), Q7-Q22.
+  // MID (25 questions): qN(1)=name, qN(2)=alias, adds Q9 prev marriage, Q23 background.
+  // LEAN (20 questions): qN(1)=upload confirmation ("done"/"ok"), qN(2)=alias.
+  //   Identity fields (name/DOB/gender/birthplace/citizenship/passport) come
+  //   from OCR-filled intake.firstName, intake.dateOfBirth, etc.
+  //
+  // Detection strategy — examine qN(1) and qN(2) shapes:
+  //   - q1 looks like a name (contains comma OR 2+ words, length >= 4) → OLD or MID
+  //   - q1 looks like upload confirmation (short single word like "done"/"ok") → LEAN
+  //   - q1 empty AND intake.firstName set → LEAN (client skipped because OCR did it)
+  //   - q2 parses as date → OLD; q2 looks like Yes/No → MID/LEAN
+  const q1 = qN(1);
+  const q2 = qN(2);
+  const q1Trimmed = q1.trim().toLowerCase();
+  const q1LooksLikeName = (q1.includes(",") || q1.split(/\s+/).filter(Boolean).length >= 2) && q1.length >= 4;
+  const q1LooksLikeUploadAck = q1Trimmed.length > 0 && q1Trimmed.length <= 15 &&
+    /^(done|ok|okay|yes|uploaded|sent|finished|complete|all done|all uploaded)\b/.test(q1Trimmed);
+  const q2LooksLikeDate = /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(q2) ||
+                          /^\s*\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(q2);
 
-  // Q2: DOB
-  const dob = parseDate(qN(2) || intake.dateOfBirth || "");
+  let layout: "OLD" | "MID" | "LEAN";
+  if (q1LooksLikeUploadAck) {
+    // Upload acknowledgment is a strong LEAN signal — check first.
+    layout = "LEAN";
+  } else if (q1LooksLikeName && q2LooksLikeDate) {
+    layout = "OLD";
+  } else if (q1LooksLikeName && !q2LooksLikeDate) {
+    layout = "MID";
+  } else if (!q1Trimmed && (intake.firstName || intake.lastName)) {
+    layout = "LEAN";
+  } else {
+    // Fallback: if intake has identity fields filled (OCR ran), assume LEAN.
+    // Otherwise default to MID (most recent flow before LEAN).
+    layout = (intake.firstName || intake.lastName || intake.passportNumber) ? "LEAN" : "MID";
+  }
 
-  // Q3: Gender
+  // Position-aware Q getter — different qN offsets per layout. Anything not
+  // asked in a given layout returns "" (and the field falls back to intake.* values).
+  const Q = layout === "LEAN" ? {
+    name:           "",  // not asked — comes from intake.firstName/lastName
+    alias:          qN(2),
+    dob:            "",  // OCR
+    gender:         "",  // OCR
+    birthplace:     "",  // OCR
+    citizenship:    "",  // OCR
+    passport:       "",  // OCR
+    marital:        qN(3),
+    spouse:         qN(4),
+    prevMarriage:   qN(5),
+    residence:      qN(6),
+    otherCountries: qN(7),
+    addressPhone:   qN(8),
+    purpose:        qN(9),
+    travelDates:    qN(10),
+    contacts:       qN(11),
+    funds:          qN(12),
+    education:      qN(13),
+    employment:     qN(14),
+    travelHistory:  qN(15),
+    overstay:       qN(16),
+    canRefusal:     qN(17),
+    crimMed:        qN(18),
+    background:     qN(19),
+    nativeLang:     qN(20),
+  } : layout === "MID" ? {
+    name:           qN(1),
+    alias:          qN(2),
+    dob:            qN(3),
+    gender:         qN(4),
+    birthplace:     qN(5),
+    citizenship:    qN(6),
+    passport:       qN(7),
+    marital:        qN(8),
+    spouse:         qN(9),
+    prevMarriage:   qN(10),
+    residence:      qN(11),
+    otherCountries: qN(12),
+    addressPhone:   qN(13),
+    purpose:        qN(14),
+    travelDates:    qN(15),
+    contacts:       qN(16),
+    funds:          qN(17),
+    education:      qN(18),
+    employment:     qN(19),
+    travelHistory:  qN(20),
+    overstay:       qN(21),
+    canRefusal:     qN(22),
+    crimMed:        qN(23),
+    background:     qN(24),
+    nativeLang:     qN(25),
+  } : { // OLD
+    name:           qN(1),
+    alias:          "",
+    dob:            qN(2),
+    gender:         qN(3),
+    birthplace:     qN(4),
+    citizenship:    qN(5),
+    passport:       qN(6),
+    marital:        qN(7),
+    spouse:         qN(8),
+    prevMarriage:   "",
+    residence:      qN(9),
+    otherCountries: qN(10),
+    addressPhone:   qN(11),
+    purpose:        qN(12),
+    travelDates:    qN(13),
+    contacts:       qN(14),
+    funds:          qN(15),
+    education:      qN(16),
+    employment:     qN(17),
+    travelHistory:  qN(18),
+    overstay:       qN(19),
+    canRefusal:     qN(20),
+    crimMed:        qN(21),
+    background:     "",
+    nativeLang:     qN(22),
+  };
+
+  // Identity fields — for LEAN layout these always come from intake.* (OCR);
+  // for OLD/MID layouts we still try the typed answer first, then fall back
+  // to intake.* (handles cases where staff hand-corrects after OCR).
+  const familyNameFromIntake = (intake.lastName || "").toUpperCase();
+  const givenNameFromIntake = (intake.firstName || "").toUpperCase();
+  let familyName: string;
+  let givenName: string;
+  if (layout === "LEAN") {
+    familyName = familyNameFromIntake;
+    givenName = givenNameFromIntake;
+  } else {
+    const nameParts = Q.name.split(",").map((p) => p.trim());
+    familyName = familyNameFromIntake || (nameParts[0] || "").toUpperCase();
+    givenName = givenNameFromIntake || (nameParts[1] || "").toUpperCase();
+  }
+
+  // Q2 NEW: Alias
+  const hasAlias = isYes(Q.alias);
+  const aliasDetails = hasAlias ? detailsAfterYN(Q.alias) : "";
+  const aliasFirstName = aliasDetails.split(/[\s,]/)[0] || "";
+  const aliasLastName = aliasDetails.split(/[\s,]/).slice(1).join(" ") || "";
+
+  // DOB — from typed answer in OLD/MID layouts; from intake.dateOfBirth in LEAN
+  const dob = parseDate(Q.dob || intake.dateOfBirth || "");
+
+  // Gender
   const sex = (() => {
-    const v = stripPrefix(qN(3) || intake.sex || "").toLowerCase();
+    const v = stripPrefix(Q.gender || intake.sex || "").toLowerCase();
     if (v.startsWith("f")) return "F Female";
     if (v.startsWith("m")) return "M Male";
     return "";
   })();
 
-  // Q4: Birth place
-  const birthRaw = qN(4);
-  const birthParts = birthRaw.split(",").map((p) => p.trim());
-  const birthCity = birthParts[1] || intake.cityOfBirth || "";
+  // Birth place
+  const birthParts = Q.birthplace.split(",").map((p) => p.trim());
+  const birthCity = birthParts[1] || intake.placeOfBirthCity || intake.cityOfBirth || "";
   const birthCountry = birthParts[0] || intake.countryOfBirth || "";
 
-  // Q5: Citizenship
-  const citizenship = stripPrefix(qN(5) || intake.citizenship || birthCountry);
+  // Citizenship — typed answer first, then OCR'd intake.citizenship, then birth country
+  const citizenship = stripPrefix(Q.citizenship || intake.citizenship || birthCountry);
 
-  // Q6: Passport "ABC123, India, 2020-01-01, 2030-01-01"
-  const passportParts = qN(6).split(",").map((p) => p.trim());
-  const passportNum = passportParts[0] || intake.passportNumber || "";
+  // Passport — for LEAN layout Q.passport is empty, so all fields come from
+  // OCR-filled intake. For OLD/MID layouts we still parse the typed answer.
+  const passportParts = Q.passport ? Q.passport.split(",").map((p) => p.trim()) : [];
+  const passportNum = (intake.passportNumber || passportParts[0] || "").toString().trim();
   const passportCountry = passportParts[1] || citizenship;
-  const passportIssue = parseDate(passportParts[2] || intake.passportIssueDate || "");
-  const passportExpiry = parseDate(passportParts[3] || intake.passportExpiryDate || "");
+  const passportIssue = parseDate((intake.passportIssueDate as string) || passportParts[2] || "");
+  const passportExpiry = parseDate((intake.passportExpiryDate as string) || passportParts[3] || "");
 
-  // Q7-Q8: Marital + spouse
-  const maritalRaw = stripPrefix(qN(7) || "Single");
+  // Q8/Q9 (was Q7/Q8): Marital + spouse
+  const maritalRaw = stripPrefix(Q.marital || "Single");
   const marital = (() => {
     const v = maritalRaw.toLowerCase();
     if (v.startsWith("mar")) return "Married";
@@ -1223,54 +1359,82 @@ function mapForVisitorVisa(intake: Record<string, any>, formType: string): Recor
     if (v.startsWith("sep")) return "Separated";
     return "Single";
   })();
-  const spouseRaw = qN(8);
   const isMarried = marital === "Married" || marital === "Common-Law";
-  const spouseParts = isMarried && !isNo(spouseRaw) ? spouseRaw.split(",").map((p) => p.trim()) : [];
+  const spouseParts = isMarried && !isNo(Q.spouse) ? Q.spouse.split(",").map((p) => p.trim()) : [];
 
-  // Q9: Country of residence & status — "India, Citizen"
-  const residenceParts = qN(9).split(",").map((p) => p.trim());
+  // Q10 NEW: Previously married
+  const previouslyMarried = isYes(Q.prevMarriage);
+  const prevMarriageDetails = previouslyMarried ? detailsAfterYN(Q.prevMarriage) : "";
+  const prevSpouseParts = prevMarriageDetails.split(",").map((p) => p.trim());
+
+  // Q11 (was Q9): Residence + status + dates
+  // Format expected: "India, Citizen, 2000-01-01, permanent" or "India, Worker, 2020-05-15, 2025-05-14"
+  const residenceParts = Q.residence.split(",").map((p) => p.trim());
   const currentCountry = residenceParts[0] || "";
   const currentStatus = residenceParts[1] || "Citizen";
+  const fromDateParsed = parseDate(residenceParts[2] || "");
+  const currentStatusFromDate = fromDateParsed.year
+    ? `${fromDateParsed.year}-${fromDateParsed.month}-${fromDateParsed.day}`
+    : "";
+  const currentStatusToDateRaw = residenceParts[3] || "";
+  const toDateParsed = parseDate(currentStatusToDateRaw);
+  const currentStatusToDate = currentStatusToDateRaw.toLowerCase().includes("permanent") || !toDateParsed.year
+    ? ""
+    : `${toDateParsed.year}-${toDateParsed.month}-${toDateParsed.day}`;
 
-  // Q11: Home address & phone — combined: "Address full, country, +1 604 ..."
-  const addressPhoneRaw = qN(11);
-  // Try to find a phone-looking substring
+  // Q13 (was Q11): Home address + phone + email — combined
+  const addressPhoneRaw = Q.addressPhone;
   const phoneMatch = addressPhoneRaw.match(/[\+\d][\d\s\-\(\)]{6,}/);
   const phoneRaw = phoneMatch ? phoneMatch[0] : "";
-  const addressOnly = phoneRaw ? addressPhoneRaw.replace(phoneRaw, "").trim().replace(/[,;]\s*$/, "") : addressPhoneRaw;
+  const emailMatch = addressPhoneRaw.match(/[\w.-]+@[\w.-]+\.\w+/);
+  const emailFromQ = emailMatch ? emailMatch[0] : "";
+  let addressOnly = addressPhoneRaw;
+  if (phoneRaw) addressOnly = addressOnly.replace(phoneRaw, "");
+  if (emailFromQ) addressOnly = addressOnly.replace(emailFromQ, "");
+  addressOnly = addressOnly.trim().replace(/[,;]\s*$/, "");
   const mailing = parseAddress(addressOnly);
   const phone = parsePhone(phoneRaw);
 
-  // Q12: Purpose of visit
-  const purpose = stripPrefix(qN(12)) || "Tourism";
+  // Q14 (was Q12): Purpose of visit
+  const purpose = stripPrefix(Q.purpose) || "Tourism";
 
-  // Q13: Travel dates "2025-08-01, 2025-08-30"
-  const travelParts = qN(13).split(",").map((p) => p.trim());
+  // Q15 (was Q13): Travel dates
+  const travelParts = Q.travelDates.split(",").map((p) => p.trim());
   const arrivalDate = travelParts[0] || "";
   const departureDate = travelParts[1] || "";
 
-  // Q14: Contact in Canada
-  const contactRaw = qN(14);
-  const contactParts = isNo(contactRaw) ? [] : contactRaw.split(",").map((p) => p.trim());
+  // Q16 (was Q14): Contact in Canada — now supports up to 2 contacts.
+  // Format expected: "Name1, Rel1, Addr1, Phone1, Email1; Name2, Rel2, Addr2, ..."
+  const contactsRaw = Q.contacts;
+  const contactBlocks = isNo(contactsRaw) ? [] : contactsRaw.split(/;\s*/).filter(Boolean);
+  const contact1Parts = (contactBlocks[0] || "").split(",").map((p) => p.trim());
+  const contact2Parts = (contactBlocks[1] || "").split(",").map((p) => p.trim());
 
-  // Q15: Funds
-  const fundsRaw = qN(15);
+  // Q17 (was Q15): Funds
+  const fundsRaw = Q.funds;
   const fundsAmount = (fundsRaw.match(/[\d,]+/g) || [])[0]?.replace(/,/g, "") || "";
 
-  // Q19/Q20: Refusals
-  const overstayRaw = qN(19);
-  const hasOverstay = isYes(overstayRaw);
-  const canRefusalRaw = qN(20);
-  const hasCanRefusal = isYes(canRefusalRaw);
-
-  // Q21: Combined criminal + medical
-  const crimMedRaw = qN(21);
+  // Q21/Q22/Q23 (was Q19/Q20/Q21): Refusals + criminal/medical
+  const hasOverstay = isYes(Q.overstay);
+  const hasCanRefusal = isYes(Q.canRefusal);
+  const crimMedRaw = Q.crimMed;
   const hasCriminal = /criminal/i.test(crimMedRaw) && isYes(crimMedRaw);
   const hasMedical = /medical/i.test(crimMedRaw) && isYes(crimMedRaw);
 
-  // Q22: Native language
-  const langRaw = qN(22);
-  const langParts = langRaw.split(",").map((p) => p.trim());
+  // Q24 NEW: Background — military / government position / witnessed ill treatment
+  // Single answer covers 3 Yes/No questions. We parse permissively: if the answer
+  // contains "yes" or "served" → military=true; "government" or "political" → govt;
+  // "ill" or "war" or "witnessed" → ill_treatment.
+  const bgRaw = Q.background;
+  const bgLower = bgRaw.toLowerCase();
+  // If user said straight "no" or "none", all three are false
+  const allNo = /^\s*(no|none|n\/a|na)\s*$/i.test(bgRaw.trim());
+  const hasMilitary = !allNo && /(military|militia|armed|army|forces|served)/i.test(bgRaw) && isYes(bgRaw);
+  const heldGovt = !allNo && /(government|political|public office|civil service|police officer|judge)/i.test(bgRaw) && isYes(bgRaw);
+  const witnessedIll = !allNo && /(witness|ill\s*treat|war|genocide|atrocit|abuse)/i.test(bgRaw) && isYes(bgRaw);
+
+  // Q25 (was Q22): Native language
+  const langParts = Q.nativeLang.split(",").map((p) => p.trim());
   const nativeLang = langParts[0] || "";
   const commLang = (langParts[1] || "English").toLowerCase().includes("french")
     ? "French"
@@ -1307,27 +1471,29 @@ function mapForVisitorVisa(intake: Record<string, any>, formType: string): Recor
     // UCI
     uci_client_id: stripPrefix(intake.uci || ""),
 
-    // Q1: Aliases
-    has_alias: false,
-    alias_family_name: "",
-    alias_given_name: "",
+    // Q2: Aliases
+    has_alias: hasAlias,
+    alias_family_name: aliasLastName,
+    alias_given_name: aliasFirstName,
 
-    // Q7-Q8: Marital
+    // Q8/Q9: Marital
     marital_status: marital,
     spouse_family_name: spouseParts[0]?.split(" ").slice(-1)[0] || "",
     spouse_given_name: spouseParts[0]?.split(" ").slice(0, -1).join(" ") || "",
-    date_of_marriage: "",
+    date_of_marriage: spouseParts[3] || "",
     spouse_dob: spouseParts[1] || "",
     spouse_citizenship: spouseParts[2] || "",
-    previously_married: false,
-    prev_spouse_family_name: "",
-    prev_spouse_given_name: "",
+    previously_married: previouslyMarried,
+    prev_spouse_family_name: prevSpouseParts[0]?.split(" ").slice(-1)[0] || "",
+    prev_spouse_given_name: prevSpouseParts[0]?.split(" ").slice(0, -1).join(" ") || "",
 
-    // Q9: Country of residence
+    // Q11: Country of residence + status dates
     current_country_residence: currentCountry,
     current_country_status: currentStatus,
+    current_status_from_date: currentStatusFromDate,
+    current_status_to_date: currentStatusToDate,
 
-    // Q11: Home address
+    // Q13: Home address
     mailing_apt_unit: mailing.apt_unit,
     mailing_street_num: mailing.street_num,
     mailing_street_name: mailing.street_name,
@@ -1346,21 +1512,24 @@ function mapForVisitorVisa(intake: Record<string, any>, formType: string): Recor
     phone_area_code: phone.area_code,
     phone_first_three: phone.first_three,
     phone_last_five: phone.last_five,
-    email: stripPrefix(intake.email || ""),
+    email: emailFromQ || stripPrefix(intake.email || ""),
 
-    // Q12-Q13: Visit details
+    // Q14-Q15: Visit details
     visit_purpose: purpose,
     visit_arrival_date: arrivalDate,
     visit_departure_date: departureDate,
 
-    // Q14: Contact in Canada
-    canada_contact_name: contactParts[0] || "",
-    canada_contact_relationship: contactParts[1] || "",
-    canada_contact_address: contactParts[2] || "",
-    canada_contact_phone: contactParts[3] || "",
-    canada_contact_email: contactParts[4] || "",
+    // Q16: Contacts in Canada (up to 2)
+    canada_contact_name: contact1Parts[0] || "",
+    canada_contact_relationship: contact1Parts[1] || "",
+    canada_contact_address: contact1Parts[2] || "",
+    canada_contact_phone: contact1Parts[3] || "",
+    canada_contact_email: contact1Parts[4] || "",
+    contact_2_name: contact2Parts[0] || "",
+    contact_2_relationship: contact2Parts[1] || "",
+    contact_2_address: contact2Parts[2] || "",
 
-    // Q15: Funds
+    // Q17: Funds
     funds_amount_cad: fundsAmount,
 
     // Languages
@@ -1369,22 +1538,28 @@ function mapForVisitorVisa(intake: Record<string, any>, formType: string): Recor
     language_test_taken: false,
     frequent_language: nativeLang || "English",
 
-    // Q19/Q20/Q21: Background
+    // Q21/Q22/Q23: Background — refusals + criminal/medical
     has_overstayed: hasOverstay,
-    overstay_details: hasOverstay ? detailsAfterYN(overstayRaw) : "",
+    overstay_details: hasOverstay ? detailsAfterYN(Q.overstay) : "",
     prev_application_refused: hasCanRefusal,
     prev_refused_to_canada: hasCanRefusal,
-    prev_refused_details: hasCanRefusal ? detailsAfterYN(canRefusalRaw) : "",
+    prev_refused_details: hasCanRefusal ? detailsAfterYN(Q.canRefusal) : "",
     has_medical_condition: hasMedical,
     medical_details: hasMedical ? crimMedRaw : "",
     has_criminal_record: hasCriminal,
     criminal_details: hasCriminal ? crimMedRaw : "",
-    has_military_service: false,
-    held_government_position: false,
-    witnessed_ill_treatment: false,
+
+    // Q24: Background flags (military / government / ill treatment)
+    has_military_service: hasMilitary,
+    military_details: hasMilitary ? detailsAfterYN(bgRaw) : "",
+    held_government_position: heldGovt,
+    witnessed_ill_treatment: witnessedIll,
 
     employment: [],
     has_education: false,
+
+    // Layout marker — useful for downstream debugging / review
+    _layout: layout,
   };
 }
 
