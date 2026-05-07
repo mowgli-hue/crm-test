@@ -14,6 +14,9 @@ import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolde
 import { boundedText, isReasonablePhone, isValidEmail, normalizeEmail, normalizePhone } from "@/lib/validation";
 import { startIntakeSession } from "@/lib/whatsapp-ai-intake";
 import { isWhatsAppConfigured } from "@/lib/whatsapp";
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
@@ -243,6 +246,35 @@ ${summaryData.text}`,
   // ourselves from inside a serverless function with setTimeout was unreliable).
   try {
     const phone = String(created.leadPhone || "").replace(/\D/g, "");
+
+    // ── Mark any matching marketing lead as converted ──
+    // Without this, when staff creates a case via the CRM "Add Case" button
+    // for someone who messaged the marketing bot earlier, the marketing bot
+    // continues responding to that phone (because lead.stage stays "new").
+    // The intake template gets sent but the client's reply is intercepted
+    // by the marketing bot before the case-intake bot can pick it up. Real
+    // bug from CASE-1399 (Ramandeep): she received the intake template but
+    // her "Hi" reply was answered by the marketing bot.
+    if (phone) {
+      try {
+        await pool.query(
+          `INSERT INTO marketing_leads (phone, stage, converted_case_id, ai_enabled, updated_at)
+           VALUES ($1, 'converted', $2, FALSE, NOW())
+           ON CONFLICT (phone) DO UPDATE SET
+             stage = 'converted',
+             converted_case_id = $2,
+             ai_enabled = FALSE,
+             updated_at = NOW()`,
+          [phone, created.id]
+        );
+        console.log(`✅ Marketing lead ${phone} marked converted to ${created.id}`);
+      } catch (e) {
+        // Non-fatal — marketing_leads table might not exist yet, or no row
+        // for this phone. We still want intake to proceed.
+        console.warn(`Failed to mark marketing lead converted for ${created.id}: ${(e as Error).message.slice(0, 100)}`);
+      }
+    }
+
     // Skip auto-intake only for advisory/non-processing case types where
     // Newton doesn't actually file an application (so the bot asking intake
     // questions would be confusing for the client). Everything else —

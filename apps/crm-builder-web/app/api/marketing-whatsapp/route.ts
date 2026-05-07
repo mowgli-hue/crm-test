@@ -193,6 +193,45 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
     return;
   }
 
+  // Belt-and-suspenders: also check the cases table directly. Catches edge
+  // cases where a case was created (e.g. via the CRM "Add Case" button or
+  // bulk import) without the marketing_leads.stage being updated to
+  // "converted". Real bug from CASE-1399 (Ramandeep): she received the
+  // intake template but her "Hi" reply was answered by the marketing bot
+  // because lead.stage was still "new".
+  try {
+    const { listCases } = await import("@/lib/store");
+    const allCases = await listCases(COMPANY_ID);
+    const phoneDigits = phone.replace(/\D/g, "");
+    const matched = allCases.find((c: any) => {
+      const cp = String(c.leadPhone || "").replace(/\D/g, "");
+      if (!cp) return false;
+      // Same matching logic as the inbound WA webhook — last-9-digit overlap
+      return phoneDigits.endsWith(cp.slice(-9)) || cp.endsWith(phoneDigits.slice(-9));
+    });
+    if (matched) {
+      console.log(`🚫 Skipping marketing AI for ${phone} — has active case ${matched.id} (${matched.client})`);
+      // Self-heal the marketing_leads row so future messages skip faster
+      try {
+        await pool.query(
+          `INSERT INTO marketing_leads (phone, stage, converted_case_id, ai_enabled, updated_at)
+           VALUES ($1, 'converted', $2, FALSE, NOW())
+           ON CONFLICT (phone) DO UPDATE SET
+             stage = 'converted',
+             converted_case_id = $2,
+             ai_enabled = FALSE,
+             updated_at = NOW()`,
+          [phone, matched.id]
+        );
+      } catch { /* non-fatal */ }
+      return;
+    }
+  } catch (e) {
+    // If the case lookup fails, fall through and let the marketing bot
+    // respond — better to over-respond than silently drop a real lead.
+    console.warn(`Marketing bot case-existence check failed for ${phone}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
   const session = await getMarketingSession(phone) || { data: { stage: "new" } };
   const sessionData = session.data;
 

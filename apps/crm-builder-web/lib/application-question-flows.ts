@@ -116,25 +116,61 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
   study_permit_extension: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
     batches: [
-      { title: "👤 Personal Info", questions: [0, 1, 2, 3] },
-      { title: "🎓 Current Study Details", questions: [4, 5, 6, 7, 8] },
-      { title: "📋 Extension Reason & Background", questions: [9, 10, 11, 12, 13] },
+      { title: "📤 Upload Documents", questions: [0] },
+      { title: "👤 Personal Info", questions: [1, 2, 3, 4] },
+      { title: "🏠 Address & Contact", questions: [5, 6] },
+      { title: "🎓 School Continuity", questions: [7, 8] },
+      { title: "💰 Funds & Reason", questions: [9, 10, 11, 12] },
+      { title: "🛬 Entry & History", questions: [13, 14, 15, 16] },
+      { title: "📋 Background", questions: [17, 18, 19, 20, 21] },
     ],
     prompts: [
-      "Have you used any other name? (Yes/No — if Yes, provide full other name)",
+      // Q0 — Upload prompt. OCR fills: identity (passport), permit#+UCI+permit
+      // expiry (current study permit), school+DLI+program+dates+tuition (LOA),
+      // PAL number+expiry (PAL doc). Saves the client typing 12+ fields.
+      "📎 Please send photos of: (1) your passport bio page, (2) your current Canadian study permit, (3) your Letter of Acceptance (LOA) from your school, (4) your Provincial Attestation Letter (PAL) if you have one (most students need it — graduate students don't), (5) proof of funds (bank letter / GIC / sponsorship). Reply 'done' once uploaded. (We'll auto-fill your name, passport, permit, school, and program details from these documents.)",
+      // Q1 — Alias (cannot be OCR'd, must ask)
+      "Have you used any other name (alias, maiden name, nickname on documents)? (Yes/No — if Yes, provide full other name)",
+      // Q2 — Marital
       "What is your current marital status? (Single / Married / Common-Law / Divorced / Widowed / Separated)",
-      "Current mailing address including postal code (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
-      "Telephone number",
-      "Current study permit number and expiry date (YYYY-MM-DD)",
-      "Current institution name and city",
-      "Current program of study and expected completion date (YYYY-MM-DD)",
-      "Are you changing colleges/institutions? (Yes/No — if Yes: new institution name, program, start date YYYY-MM-DD and reason for change)",
-      "Are you changing your program of study? (Yes/No — if Yes: old program and new program details)",
-      "Reason for extension — are you still enrolled or did you need more time to complete? (provide details)",
-      "Have you maintained full-time enrollment throughout your studies? (Yes/No — if No: explain)",
-      "Have you ever been refused a visa or permit? (Yes/No — if Yes: details)",
-      "Do you have any medical history? (Yes/No — if Yes: provide details)",
-      "Do you have any criminal history? (Yes/No — if Yes: provide details)"
+      // Q3 — Spouse details (only if married/common-law)
+      "If Married or Common-Law: spouse full name, DOB (YYYY-MM-DD), citizenship, date of marriage (YYYY-MM-DD), and is your spouse currently in Canada? (Yes/No — if Yes: their immigration status). Reply NA if not applicable.",
+      // Q4 — Previously married
+      "Have you been previously married or in a common-law partnership? (Yes/No — if Yes: previous partner's name, DOB, relationship type Married/Common-Law, start and end dates YYYY-MM-DD)",
+      // Q5 — Mailing address
+      "Current mailing address in Canada (Apt/Unit, Street Number, Street Name, City, Province, Postal Code)",
+      // Q6 — Phone + email
+      "Telephone number and email address",
+      // Q7 — Same college? (drives PAL exemption logic)
+      "Have you been at the same college since your last study permit? (Yes/No — if you've changed colleges, share OLD school documents in the upload too — old completion letter, transcripts, LOAs)",
+      // Q8 — Canada history if changed schools
+      "If you changed colleges: please explain what you have been doing in Canada from when you arrived until now (which schools, what programs, dates, and why you changed). Reply NA if you've stayed at the same college.",
+      // Q9 — Reason for extension
+      "Reason for extension — are you continuing the same program, or starting a new program? Provide details on why you need the extension.",
+      // Q10 — Graduate program (drives PAL exemption)
+      "Are you currently in a Master's, PhD, or other graduate-level program? (Yes/No — graduate students are PAL-exempt)",
+      // Q11 — Funds (total + source + breakdown)
+      "How will you fund your studies and stay in Canada? Provide: (a) Total funds available in CAD, (b) Source — Self / Parents / Sponsor / Scholarship / GIC / Other, (c) Estimated room & board cost per year (CAD), (d) Other expected costs per year (textbooks, travel, etc., in CAD)",
+      // Q12 — Co-op or open work permit alongside study
+      "Are you also applying for a Co-op Work Permit or Open Work Permit alongside this study permit? (Yes/No — if Yes: which type — Co-op / Open / Post Graduation)",
+      // Q13 — Original entry to Canada
+      "When did you first enter Canada and what was the original purpose? (provide: date YYYY-MM-DD, city/airport of entry, purpose — Study / Work / Visit / Other)",
+      // Q14 — Past education
+      "Past education before your current Canadian study (most recent before this) — provide: From (YYYY-MM), To (YYYY-MM), Field of Study, Name of School, City, Country. Reply NONE if you came right after high school.",
+      // Q15 — Employment
+      "Employment history — list jobs (Canadian or foreign), most recent first, up to 3 entries. For each: From (YYYY-MM), To (YYYY-MM or 'present'), Job Title, Employer Name, City, Country. Reply NONE if you have not worked.",
+      // Q16 — Travel history
+      "Travel history last 5 years — for each trip outside Canada: country, from (YYYY-MM), to (YYYY-MM), purpose. Reply NONE if no travel.",
+      // Q17 — Full-time enrollment
+      "Have you maintained full-time enrollment throughout your studies in Canada so far? (Yes/No — if No: explain any breaks or part-time periods)",
+      // Q18 — Refusals
+      "Have you ever been refused a visa or permit by Canada or any other country? (Yes/No — if Yes: country, year, reason)",
+      // Q19 — Criminal/medical
+      "Do you have any criminal history or medical conditions? (Yes/No for each — if Yes: provide details)",
+      // Q20 — Background (military/govt/ill)
+      "Background — please answer Yes/No for each: (a) Have you served in any military, militia, or armed group? (b) Have you held a government or political position? (c) Have you witnessed war crimes, genocide, or ill treatment? — if Yes to any: provide details",
+      // Q21 — Native language
+      "Native language and can you communicate in English or French? (English / French / Both / Neither). Have you taken an English language test? (Yes/No — no need to provide score, we'll get it from the doc you upload if applicable)"
     ]
   },
 
