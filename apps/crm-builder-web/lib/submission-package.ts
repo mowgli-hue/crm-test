@@ -697,7 +697,14 @@ export async function assemblePgwpSubmissionPackage(
   // TRV profile (smaller scope: passport, photo, 5257, 5476, current permit).
   const profile = pickProfile(caseItem.formType || "");
   console.log(`📦 Submission package using ${profile.name} profile for case ${caseId} (formType: "${caseItem.formType}")`);
-  console.log(`[submission ${caseId}] step 1: ${docs.length} docs in Drive folder, ${categorized.length} categorized, ${Object.keys(primary).filter(k => (primary as any)[k]).length} primary slots filled`);
+  // Log scalar primary slots (skip arrays — those are for bundles)
+  const scalarPrimary = ["passport","photo","transcript","completionLetter","imm5710","imm5257","imm5476","imm5709","submissionLetter","loa","pal","proofOfFunds","prCard","prLanding","physicalPresenceCalc","secondaryId","languageTest","taxNotice"]
+    .filter(k => (primary as any)[k])
+    .map(k => `${k}="${((primary as any)[k] as CategorizedDoc).name.slice(0,40)}"`)
+    .join(", ");
+  console.log(`[submission ${caseId}] step 1: ${docs.length} docs in folder, ${categorized.length} categorized. Primary: ${scalarPrimary || "(none)"}`);
+  // Log each categorized doc so we see what types got detected
+  console.log(`[submission ${caseId}] doc categories: ${categorized.map(d => `${d.name.slice(0,30)}=${d.category}`).join(", ")}`);
 
   // Step 2: validate required docs (assemble what's available; surface missing
   // ones as warnings rather than blocking — per scope revision: "create whatever
@@ -905,6 +912,7 @@ export async function assemblePgwpSubmissionPackage(
           mimeType: "application/pdf",
         });
         filesAdded.push({ name: job.newName, link: uploaded.webViewLink, source: "generated" });
+        console.log(`[submission ${caseId}] ✓ converted+uploaded: ${job.newName}`);
       } else {
         // Same-format: server-side Drive copy (fast)
         const copied = await copyDriveFileToFolder({
@@ -913,9 +921,11 @@ export async function assemblePgwpSubmissionPackage(
           targetFolderId: submissionFolderId,
         });
         filesAdded.push({ name: job.newName, link: copied.webViewLink, source: "copied" });
+        console.log(`[submission ${caseId}] ✓ copied: ${job.newName}`);
       }
     } catch (e) {
       errors.push(`Failed for ${job.doc.name}: ${(e as Error).message}`);
+      console.error(`[submission ${caseId}] ✗ failed for ${job.doc.name}: ${(e as Error).message}`);
     }
   }
 
