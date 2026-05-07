@@ -163,64 +163,17 @@ export const REVIEW_PGWP: ReviewChecklist = {
       required: false,
     },
 
-    // ── IMM 5710 Form Review ─────────────────────────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "imm5710_personal_matches_passport",
-      label: "IMM5710 — name, DOB, citizenship match passport EXACTLY",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_uci_correct",
-      label: "IMM5710 — UCI matches study permit",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_address_current",
-      label: "IMM5710 — current address & phone in Canada",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_marital_status_correct",
-      label: "IMM5710 — marital status correct + spouse details if applicable",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_education_complete",
-      label: "IMM5710 — education entries complete (institution, level, dates)",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_employment_history",
-      label: "IMM5710 — employment history accurate",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5710_native_language",
-      label: "IMM5710 — native language matches docs",
-      category: "forms",
-      required: false,
-    },
-    {
-      key: "imm5710_signed",
-      label: "IMM5710 — signed and dated by client",
+      key: "imm5710_reviewed",
+      label: "IMM5710 reviewed end-to-end (every field accurate, signed, barcodes generated)",
       description:
-        "Online submission only requires barcode page signature. Paper submission needs " +
-        "every signature page signed by client (NOT representative).",
+        "Verify ALL: name/DOB/citizenship match passport; UCI matches study permit; current " +
+        "address & phone; marital status + spouse if applicable; education entries; employment " +
+        "history; native language. Form must be signed by client (online: barcode page; paper: " +
+        "every signature line). Barcode page must validate.",
       category: "forms",
       required: true,
-    },
-    {
-      key: "imm5710_validated",
-      label: "IMM5710 — barcode page generated (form validates)",
-      category: "forms",
-      required: true,
-      autoVerifiable: true,
     },
     {
       key: "imm5476_signed",
@@ -422,28 +375,14 @@ export const REVIEW_SOWP: ReviewChecklist = {
       required: true,
     },
 
-    // ── Forms (IMM5710 inside / IMM1295 outside) ────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "form_correct_for_location",
-      label: "Correct form: IMM5710 (in Canada) or IMM1295 (outside)",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "form_personal_matches_passport",
-      label: "Form — name, DOB, citizenship match passport exactly",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "form_marital_status_married",
-      label: "Form — marital status = Married/Common-law + spouse info filled",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "form_employer_section",
-      label: "Form — employer section: 'Open' (no specific employer)",
+      key: "sowp_form_reviewed",
+      label: "Application form reviewed end-to-end (IMM5710 in Canada / IMM1295 outside)",
+      description:
+        "Verify ALL: correct form for location; name/DOB/citizenship match passport; marital " +
+        "status = Married/Common-law with spouse info filled; employer section = 'Open' (no " +
+        "specific employer); signed; barcodes generated.",
       category: "forms",
       required: true,
     },
@@ -596,38 +535,16 @@ export const REVIEW_STUDY_PERMIT_EXT: ReviewChecklist = {
       required: true,
     },
 
-    // ── Forms ───────────────────────────────────────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "imm5709_latest_version",
-      label: "IMM5709 — using LATEST version (old versions error on upload)",
+      key: "imm5709_reviewed",
+      label: "IMM5709 reviewed end-to-end (latest version, every field accurate, signed, barcodes)",
+      description:
+        "Verify ALL: using LATEST IMM5709 version (old versions error on upload); personal " +
+        "info matches passport; DLI number / program / dates match LOA; funds section completed " +
+        "(tuition + living + travel); signed; barcode page validates.",
       category: "forms",
       required: true,
-      autoVerifiable: true,
-    },
-    {
-      key: "imm5709_personal_matches_passport_spe",
-      label: "IMM5709 — personal info matches passport",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5709_school_correct",
-      label: "IMM5709 — DLI number, program, dates match LOA",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5709_funds_calculated",
-      label: "IMM5709 — funds section completed (tuition + living + travel)",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5709_signed_validated_spe",
-      label: "IMM5709 — signed & barcode generated",
-      category: "forms",
-      required: true,
-      autoVerifiable: true,
     },
     {
       key: "imm5476_signed_spe",
@@ -766,38 +683,16 @@ export const REVIEW_TRV: ReviewChecklist = {
       required: true,
     },
 
-    // ── Forms ───────────────────────────────────────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "imm5257_latest",
-      label: "IMM5257 — latest version, all fields filled",
+      key: "imm5257_reviewed",
+      label: "IMM5257 reviewed end-to-end (every field accurate, signed, barcodes)",
+      description:
+        "Verify ALL: latest version + all fields filled; purpose of visit matches supporting " +
+        "docs; employment history (last 10 years) accurate; education history accurate; signed; " +
+        "barcode page validates.",
       category: "forms",
       required: true,
-      autoVerifiable: true,
-    },
-    {
-      key: "imm5257_purpose_match",
-      label: "IMM5257 — purpose of visit matches supporting docs",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5257_employment_history",
-      label: "IMM5257 — employment history (last 10 years) accurate",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5257_education",
-      label: "IMM5257 — education history accurate",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5257_signed_validated",
-      label: "IMM5257 — signed & barcode generated",
-      category: "forms",
-      required: true,
-      autoVerifiable: true,
     },
     {
       key: "imm5645_family_info",
@@ -959,16 +854,13 @@ export const REVIEW_CITIZENSHIP: ReviewChecklist = {
       required: true,
     },
 
-    // ── Forms ───────────────────────────────────────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "cit0002_complete",
-      label: "CIT 0002 — all sections completed (residence, work, education, presence)",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "cit0002_signed",
-      label: "CIT 0002 — signed and dated",
+      key: "cit0002_reviewed",
+      label: "CIT 0002 reviewed end-to-end (all sections complete, signed, dated)",
+      description:
+        "Verify ALL sections: residence history, work, education, physical presence, language, " +
+        "consents. Form must be signed and dated by client.",
       category: "forms",
       required: true,
     },
@@ -1143,56 +1035,16 @@ export const REVIEW_PR_CARD_RENEWAL: ReviewChecklist = {
       required: true,
     },
 
-    // ── Form Review (IMM 5444 + IMM 5644) ──────────────────────────
+    // ── Forms (condensed) ───────────────────────────────────────────
     {
-      key: "imm5444_name_matches_landing",
-      label: "IMM 5444 — name spelling matches PR landing doc EXACTLY",
+      key: "imm5444_reviewed",
+      label: "IMM 5444 reviewed end-to-end (every field accurate, signed)",
       description:
-        "If there's a discrepancy between landing doc and current legal name, file IMM 5218 " +
-        "first to fix landing record before renewing PR card. Don't 'fix' the spelling on the " +
-        "renewal — IRCC will return it.",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_uci_correct",
-      label: "IMM 5444 — UCI / Client ID matches PR landing doc",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_personal_matches_passport",
-      label: "IMM 5444 — DOB, gender, country of birth match passport",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_address_canadian",
-      label: "IMM 5444 — current address is in Canada (with postal code)",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_travel_history_complete",
-      label: "IMM 5444 — every trip outside Canada in last 5 years listed",
-      description:
-        "Date out, date in, country, reason. Days outside total < 1,095. Auto-flag if any " +
-        "year missing.",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_employment_education_5yr",
-      label: "IMM 5444 — employment/education history (last 5 years) complete",
-      category: "forms",
-      required: true,
-    },
-    {
-      key: "imm5444_signed",
-      label: "IMM 5444 — signed and dated by client",
-      description:
-        "Online portal: signature page generated. Paper: every signature line signed. " +
-        "For child < 14, parent/guardian signs.",
+        "Verify ALL: name spelling matches PR landing doc EXACTLY (else file IMM 5218 first); " +
+        "UCI / Client ID matches landing doc; DOB / gender / country of birth match passport; " +
+        "current Canadian address with postal code; every trip outside Canada in last 5 years " +
+        "listed (days out < 1,095); employment/education history (last 5 years); signed and " +
+        "dated by client.",
       category: "forms",
       required: true,
     },
