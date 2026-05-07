@@ -210,7 +210,35 @@ export async function POST(req: NextRequest) {
         ];
         const isGreeting = greetingPatterns.some((re) => re.test(trimmed)) && trimmed.length <= 40;
 
-        if (isGreeting && !isStaffNumber) {
+        // ── CRITICAL: skip auto-greeting if there's an active intake session ──
+        //
+        // Real bug from CASE-1399 (Ramandeep): she received the intake template,
+        // then replied "Hi" instead of tapping the template button. The auto-
+        // greeting fired with a marketing-style "How can we help you today..."
+        // message AND short-circuited the rest of the webhook (return at line
+        // ~305), so the intake bot's `awaiting_template_reply → ai_chat`
+        // transition never happened. She was stuck looking like she was talking
+        // to a marketing bot when she should have been talking to her case
+        // intake bot.
+        //
+        // If there IS an active session, we do NOT auto-greet — we let the
+        // intake bot's regular handler take the message and advance the phase.
+        let hasActiveIntakeSession = false;
+        if (isGreeting && !isStaffNumber && matched) {
+          try {
+            const intakeMod = await import("@/lib/whatsapp-ai-intake");
+            const existingSession = await intakeMod.getActiveSession(from, COMPANY_ID);
+            if (existingSession) {
+              hasActiveIntakeSession = true;
+              console.log(`🤖 Skipping auto-greeting for ${from} — has active intake session (case=${matched.id} phase=${(existingSession as any).phase || "unknown"})`);
+            }
+          } catch (e) {
+            // If session check fails, fall through and let auto-greeting run.
+            // Safer than silently dropping the message.
+          }
+        }
+
+        if (isGreeting && !isStaffNumber && !hasActiveIntakeSession) {
           // Check we haven't auto-greeted this number in the last 60 min
           // (avoid greeting loops if they keep typing "hi", "hi", "hi")
           let recentlyGreeted = false;

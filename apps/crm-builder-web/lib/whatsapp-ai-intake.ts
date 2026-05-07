@@ -283,6 +283,37 @@ export async function startIntakeSession(params: {
   existingIntake?: Record<string, any>;
 }): Promise<{ success: boolean; error?: string; skippedCount?: number; recoveredCount?: number }> {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
+
+  // ── Idempotency guard ──
+  //
+  // Real bug from CASE-1399 (Ramandeep): staff clicked "Send Intake" multiple
+  // times, AND auto-intake fired again on re-save. Each call here was creating
+  // a fresh session and OVERWRITING her progress — chatTurns went 0 → 0 → 0
+  // because every call reset her back to "awaiting_template_reply".
+  //
+  // If a session already exists and is past the template phase (i.e., the
+  // client has already engaged), skip re-creating it. Just no-op and return
+  // success. Staff who really want to restart the intake can use the dedicated
+  // "Reset Intake" admin endpoint, which clears the session first.
+  //
+  // We DO allow overwriting if the existing session is still stuck at
+  // "awaiting_template_reply" with 0 turns — that means the template was sent
+  // but client never replied, and a re-send is a legitimate retry.
+  try {
+    const existing = await getSession(phone, companyId);
+    if (existing && existing.phase !== "awaiting_template_reply") {
+      console.log(`🔁 Skipping startIntakeSession for ${phone} — session already active (phase=${existing.phase} chatTurns=${existing.chatTurns}). Use admin reset endpoint to start over.`);
+      return { success: true, skippedCount: 0, recoveredCount: 0 };
+    }
+    if (existing && existing.phase === "awaiting_template_reply" && (existing.chatTurns || 0) > 0) {
+      console.log(`🔁 Skipping startIntakeSession for ${phone} — already greeted (chatTurns=${existing.chatTurns}).`);
+      return { success: true, skippedCount: 0, recoveredCount: 0 };
+    }
+  } catch (e) {
+    // Non-fatal — if session lookup fails, fall through and start fresh.
+    console.warn(`[startIntakeSession] existing session check failed for ${phone}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
   const questions = getQuestionPromptsForFormType(formType);
   const rawBatches = getQuestionBatchesForFormType(formType);
   const firstName = clientName.split(" ")[0];
