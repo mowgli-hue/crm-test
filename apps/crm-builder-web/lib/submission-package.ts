@@ -102,12 +102,76 @@ function inferExtension(filename: string, fallback = "pdf"): string {
   return m ? m[1].toLowerCase() : fallback;
 }
 
-function categorizeDocs(documents: DocumentItem[]): CategorizedDoc[] {
-  return documents.map((d) => ({
+async function categorizeDocs(documents: DocumentItem[]): Promise<CategorizedDoc[]> {
+  // Pass 1: filename-based categorization (cheap, fast, deterministic)
+  const initial: CategorizedDoc[] = documents.map((d) => ({
     ...d,
     category: categorizeDocumentByFilename(d.name),
     driveFileId: extractDriveFileId(d.link),
   }));
+
+  // Pass 2: OCR fallback for docs categorized as "other" — staff often
+  // upload passport/transcript/etc with generic filenames like "IMG_5234.jpg"
+  // that the regex categorizer can't recognize. Vision OCR reads the actual
+  // content and categorizes properly.
+  //
+  // We only OCR docs marked "other" (the unknowns), and we cap at 8 OCR
+  // calls per package run to keep latency bounded. If you have 30+ unknown
+  // files, the rest stay as "other" and get reviewed manually by staff.
+  const OCR_BUDGET = 8;
+  let ocrUsed = 0;
+  const result: CategorizedDoc[] = [];
+
+  for (const doc of initial) {
+    if (doc.category !== "other" || !doc.driveFileId || ocrUsed >= OCR_BUDGET) {
+      result.push(doc);
+      continue;
+    }
+    try {
+      const bytes = await downloadDriveFileBytes(doc.driveFileId);
+      if (bytes.length >= 10 * 1024 * 1024) {
+        result.push(doc);
+        continue;
+      }
+      const mimeType = doc.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
+        doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
+        "application/pdf";
+      const { extractDocumentFields } = await import("@/lib/doc-ocr");
+      const extracted = await extractDocumentFields(bytes, mimeType, "Client");
+      ocrUsed++;
+      if (extracted && extracted.category) {
+        // Map OCR category strings to our CategorizedDoc category type
+        const ocrCat = extracted.category.toLowerCase();
+        const categoryMap: Record<string, DocCategory> = {
+          passport: "passport",
+          photo: "photo",
+          study_permit: "study_permit",
+          work_permit: "work_permit",
+          transcripts: "transcript",
+          completion_letter: "completion_letter",
+          language_test: "language_test",
+          ielts: "language_test",
+          medical: "medical",
+          loa: "loa",
+          bank_statement: "bank_statement",
+        };
+        const mapped = categoryMap[ocrCat];
+        if (mapped) {
+          console.log(`📋 OCR re-categorized "${doc.name}" from "other" → "${mapped}"`);
+          // Avoid spread (TS in this file has type-inference issues elsewhere
+          // that cause `...doc` to flag as never). Manually copy fields.
+          result.push(Object.assign({}, doc, { category: mapped }) as CategorizedDoc);
+          continue;
+        }
+      }
+      result.push(doc);
+    } catch (e) {
+      // OCR failed — keep as "other"
+      result.push(doc);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -313,7 +377,7 @@ export async function assemblePgwpSubmissionPackage(
 
   // Step 1: load + categorize documents
   const docs = await listDocuments(companyId, caseId);
-  const categorized = categorizeDocs(docs);
+  const categorized = await categorizeDocs(docs);
   const primary = selectPrimaryDocs(categorized);
 
   // Step 2: validate required docs (assemble what's available; surface missing
@@ -363,12 +427,36 @@ export async function assemblePgwpSubmissionPackage(
   if (primary.submissionLetter) copyJobs.push({ doc: primary.submissionLetter, template: "Representative_Submission_Letter_<First>_<Last>" });
 
   // ── WRONG-CLIENT SAFETY FILTER FOR TOP-LEVEL COPIES ──
-  // Same rationale as the bundle filter below — a passport/transcript belonging
-  // to another client must not end up at the top of the submission folder.
-  // For IMM5710 we skip the check (it's a generated form, no name to OCR).
-  // For Photo we also skip (face-only, OCR can't read names from a photo).
-  const caseClientNameTop = (caseItem.client || "").toLowerCase();
-  const caseNameTokensTop = caseClientNameTop.split(/\s+/).filter(t => t.length >= 3);
+  // Catches cases where staff accidentally drops another client's docs into
+  // a case folder (real Newton bug: Pratham case had Prashil Savalia's files).
+  //
+  // CRITICAL: build the client name reference set from MULTIPLE sources, not
+  // just `caseItem.client`. The case "client" field is sometimes a placeholder
+  // like "newton" or "File" — using it alone causes the filter to skip the
+  // legitimate client's own docs because OCR returns "PRATHAM BAMBUWALA"
+  // and "newton" doesn't match "pratham".
+  //
+  // Sources (any can match):
+  //   1. caseItem.client (raw)
+  //   2. intake.firstName + intake.lastName (from OCR or staff entry)
+  //   3. intake.fullName
+  //
+  // If none of these yield ≥1 real name token (≥3 chars, alphabetic), we
+  // SKIP the filter entirely — better to include questionable docs than to
+  // drop the client's own docs because we don't know who they are.
+  const intakeForFilter = (caseItem.pgwpIntake || {}) as Record<string, any>;
+  const nameSources: string[] = [
+    caseItem.client || "",
+    String(intakeForFilter.firstName || ""),
+    String(intakeForFilter.lastName || ""),
+    String(intakeForFilter.fullName || ""),
+  ];
+  const caseNameTokensTop = nameSources
+    .join(" ")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((t) => t.length >= 3 && !["newton", "file", "client", "test"].includes(t));
+
   if (caseNameTokensTop.length >= 1) {
     const { extractDocumentFields: extractTop } = await import("@/lib/doc-ocr");
     const filteredJobs: CopyJob[] = [];
@@ -395,16 +483,25 @@ export async function assemblePgwpSubmissionPackage(
         if (extracted) {
           const docFirstName = String(extracted.firstName || "").toLowerCase();
           const docLastName = String(extracted.lastName || "").toLowerCase();
-          const docNameTokens = (docFirstName + " " + docLastName).split(/\s+/).filter(t => t.length >= 3);
+          const docNameTokens = (docFirstName + " " + docLastName)
+            .split(/[^a-z]+/)
+            .filter((t) => t.length >= 3);
+
+          // Only skip if BOTH conditions hold:
+          //   1. Doc clearly has a name (≥1 token)
+          //   2. NONE of the doc's tokens overlap with ANY of the case's tokens
+          // This is conservative — if anything overlaps, we keep the doc.
           if (docNameTokens.length > 0) {
-            const hasOverlap = docNameTokens.some(dt =>
-              caseNameTokensTop.some(ct => ct === dt || ct.includes(dt) || dt.includes(ct))
+            const hasOverlap = docNameTokens.some((dt) =>
+              caseNameTokensTop.some((ct) =>
+                ct === dt || (ct.length >= 4 && dt.length >= 4 && (ct.includes(dt) || dt.includes(ct)))
+              )
             );
             if (!hasOverlap) {
               warnings.push(
-                `⚠️ SKIPPED top-level wrong-client doc: "${job.doc.name}" appears to belong to "${docFirstName} ${docLastName}" (case is for "${caseItem.client}"). Please verify and remove from case folder.`
+                `⚠️ SKIPPED top-level wrong-client doc: "${job.doc.name}" appears to belong to "${docFirstName} ${docLastName}" (case names: ${caseNameTokensTop.join(", ")}). Please verify and remove from case folder.`
               );
-              continue; // skip — don't copy
+              continue;
             }
           }
         }
@@ -415,6 +512,11 @@ export async function assemblePgwpSubmissionPackage(
     }
     copyJobs.length = 0;
     copyJobs.push(...filteredJobs);
+  } else {
+    // No usable name reference for this case — skip the filter entirely.
+    // Better to bundle wrong-client docs (caught at staff review) than to
+    // skip the client's own docs because we don't know their name.
+    console.warn(`Submission package: no usable client name tokens for case ${caseItem.id} — wrong-client filter SKIPPED. Add firstName/lastName to intake to enable.`);
   }
 
   // Determine final filename + extension for each job. Images get converted to PDF
@@ -531,11 +633,11 @@ export async function assemblePgwpSubmissionPackage(
       // to extract the client name on the doc, then compare against the case's
       // client name. Skip if it clearly belongs to someone else.
       //
-      // Heuristic match: at least one name token (first or last) must overlap.
-      // This handles common variations: nicknames, middle names, name order
-      // (BAMBUWALA, PRATHAM HIRENBHAI vs Pratham Hirenbhai Bambuwala).
-      const caseClientName = (caseItem.client || "").toLowerCase();
-      const caseNameTokens = caseClientName.split(/\s+/).filter(t => t.length >= 3);
+      // Reuse the case name tokens computed earlier for the top-level filter.
+      // Same logic applies: pull names from intake, fall back to case.client,
+      // skip filter entirely if no usable tokens are available (rather than
+      // skipping all the client's own docs).
+      const caseNameTokens = caseNameTokensTop; // same tokens as top-level filter
 
       const { extractDocumentFields } = await import("@/lib/doc-ocr");
 
@@ -547,9 +649,9 @@ export async function assemblePgwpSubmissionPackage(
         try {
           const bytes = await downloadDriveFileBytes(src.driveFileId);
 
-          // Quick name verification via vision — only when we have enough name
-          // tokens to compare. Single-name clients (just "Pratham") get skipped
-          // to avoid overzealous filtering.
+          // Only run vision check if we have a usable name reference for the case.
+          // If caseNameTokens is empty, skip the filter — better to bundle a wrong-
+          // client doc (caught at staff review) than to skip the client's own docs.
           if (caseNameTokens.length >= 1 && bytes.length < 10 * 1024 * 1024) {
             try {
               const mimeType = src.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
@@ -559,18 +661,23 @@ export async function assemblePgwpSubmissionPackage(
               if (extracted) {
                 const docFirstName = String(extracted.firstName || "").toLowerCase();
                 const docLastName = String(extracted.lastName || "").toLowerCase();
-                const docNameTokens = (docFirstName + " " + docLastName).split(/\s+/).filter(t => t.length >= 3);
+                const docNameTokens = (docFirstName + " " + docLastName)
+                  .split(/[^a-z]+/)
+                  .filter((t) => t.length >= 3);
 
-                // If we got names from the doc, check overlap with case name
+                // If we got names from the doc, check overlap with case name tokens.
+                // Conservative: any overlap = keep. Only skip when CLEARLY a different person.
                 if (docNameTokens.length > 0) {
-                  const hasOverlap = docNameTokens.some(dt =>
-                    caseNameTokens.some(ct => ct === dt || ct.includes(dt) || dt.includes(ct))
+                  const hasOverlap = docNameTokens.some((dt) =>
+                    caseNameTokens.some((ct) =>
+                      ct === dt || (ct.length >= 4 && dt.length >= 4 && (ct.includes(dt) || dt.includes(ct)))
+                    )
                   );
                   if (!hasOverlap) {
                     warnings.push(
-                      `⚠️ SKIPPED wrong-client doc from bundle: "${src.name}" appears to belong to "${docFirstName} ${docLastName}" (case is for "${caseItem.client}"). Please verify and remove from case folder.`
+                      `⚠️ SKIPPED wrong-client doc from bundle: "${src.name}" appears to belong to "${docFirstName} ${docLastName}" (case names: ${caseNameTokens.join(", ")}). Please verify and remove from case folder.`
                     );
-                    continue; // skip — don't bundle this
+                    continue;
                   }
                 }
               }
