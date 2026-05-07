@@ -1262,6 +1262,331 @@ export const REVIEW_PR_CARD_RENEWAL: ReviewChecklist = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// Spousal Sponsorship — Family Class PR (IMM 1344 sponsorship + 0008 generic
+// + 5532 relationship + 5562 supplementary + 5669 background + 5406 family info)
+// ─────────────────────────────────────────────────────────────────────
+// Source: canada.ca Guide 5289 + 2026 IRCC processing rules (researched May 2026).
+// TWO streams:
+//   - INLAND (Spouse or Common-Law Partner in Canada Class) — applicant in Canada,
+//     gets SOWP after AOR, NO appeal rights if refused, ~21 mo processing
+//   - OUTLAND (Family Class) — processed at visa office abroad, full appeal
+//     rights to IAD, ~15 mo processing, no automatic work permit
+// Most refused for: weak relationship genuineness, sponsor ineligibility (default
+// on previous undertaking, criminal prohibition, in receipt of social assistance),
+// missing marriage certificate (IRCC won't accept solemnization record alone),
+// inconsistent answers between spouse and sponsor questionnaires. ─────
+
+export const REVIEW_SPOUSAL_SPONSORSHIP: ReviewChecklist = {
+  applicationType: "Spousal Sponsorship (PR)",
+  description: "Family Class PR — sponsor a spouse / common-law / conjugal partner",
+  items: [
+    // ── Sponsor Eligibility (CRITICAL — refused if ANY fails) ───────
+    {
+      key: "ssp_sponsor_status",
+      label: "Sponsor is Canadian citizen or permanent resident",
+      description:
+        "If sponsor is PR: must demonstrate they reside in Canada OR will reside when sponsored " +
+        "spouse becomes PR. If sponsor lives abroad as PR, they MUST return before/when " +
+        "sponsorship finalizes — verify intent.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_age_18",
+      label: "Sponsor is at least 18 years old",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_no_removal_order",
+      label: "Sponsor NOT subject to removal order or criminal prohibition",
+      description:
+        "Refusal triggers: active removal order, criminal conviction (especially against " +
+        "spouse/family/sexual offences), prior misrepresentation. Run criminal check before " +
+        "submitting.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_not_in_default",
+      label: "Sponsor NOT in default on previous sponsorship undertaking",
+      description:
+        "If sponsor previously sponsored someone who collected social assistance, they're in " +
+        "default until the debt is repaid. Cannot sponsor again until cleared.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_not_on_social_assistance",
+      label: "Sponsor NOT receiving social assistance (except for disability)",
+      description:
+        "Welfare / income assistance disqualifies sponsor. EXCEPTION: disability-related " +
+        "assistance is OK. Verify sponsor's current benefit status.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_undertaking_signed",
+      label: "Sponsor signed 3-year financial undertaking (IMM 1344)",
+      description:
+        "3 years from date sponsored person becomes PR. Sponsor is responsible for spouse's " +
+        "basic needs during that period — even if marriage breaks down.",
+      category: "status_eligibility",
+      required: true,
+    },
+
+    // ── Stream Decision ─────────────────────────────────────────────
+    {
+      key: "ssp_stream_decided",
+      label: "Inland vs Outland decision documented (with reason)",
+      description:
+        "INLAND: applicant in Canada, gets SOWP after AOR (~4 mo), NO appeal rights, ~21 mo. " +
+        "OUTLAND: visa office abroad, FULL appeal rights to IAD if refused, ~15 mo, no auto " +
+        "work permit. Most couples in 2026 prefer OUTLAND for speed + appeal rights. Document " +
+        "WHY this choice was made — it affects everything else.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_inland_temp_status",
+      label: "INLAND ONLY: Applicant has valid temp status in Canada",
+      description:
+        "Applicant must have valid TR status (visitor / work / study) at time of submission. " +
+        "If out of status, file under outland instead OR apply for restoration first. Skip " +
+        "this item if filing outland.",
+      category: "status_eligibility",
+      required: false,
+    },
+
+    // ── Relationship Genuineness (THE CRITICAL section) ─────────────
+    {
+      key: "ssp_relationship_category",
+      label: "Relationship category correctly identified (Spouse / Common-Law / Conjugal)",
+      description:
+        "SPOUSE: legally married + recognized in country of marriage AND Canada. " +
+        "COMMON-LAW: 12 consecutive months continuous cohabitation, fully proven. " +
+        "CONJUGAL: 1+ year relationship, unable to live together due to immigration / " +
+        "religious / legal barriers. Wrong category = refusal.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_marriage_certificate",
+      label: "Marriage certificate (legally registered) — if Spouse",
+      description:
+        "MUST be government-registered marriage certificate from country where wedding took " +
+        "place. CANNOT be replaced by: solemnization record, marriage license, religious " +
+        "certificate alone, photos. Verify it shows government registration. For Indian " +
+        "marriages: marriage certificate + registration certificate from local authority.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "ssp_cohabitation_evidence",
+      label: "12+ months cohabitation evidence — if Common-Law",
+      description:
+        "Joint lease/mortgage, joint utility bills, shared mailing address documented over " +
+        "12+ continuous months. Insurance with both as residents at same address. Drivers " +
+        "license / ID showing same address. Skip if married.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "ssp_relationship_evidence_strong",
+      label: "Strong relationship genuineness package assembled",
+      description:
+        "Wedding photos (multiple events, multiple time periods, with family on BOTH sides). " +
+        "Call/messaging logs (WhatsApp/SMS — printed). Travel together (boarding passes, " +
+        "hotel bookings together). Joint bank accounts / financial support records. Joint " +
+        "lease / utilities. Insurance with each other as beneficiary. Affidavits from family " +
+        "& friends (statutory declarations). Weak evidence = refusal AND appeal nightmare.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ssp_consistent_answers",
+      label: "Sponsor and applicant questionnaires CONSISTENT",
+      description:
+        "IRCC compares spouse's vs sponsor's answers in IMM 5532 / 5562 looking for " +
+        "inconsistencies (how they met, dates, family details). Mismatched dates or stories = " +
+        "interview triggered or refusal for misrepresentation. Cross-check before submitting.",
+      category: "status_eligibility",
+      required: true,
+    },
+
+    // ── Forms (condensed — sponsorship has 6+ separate forms) ──────
+    {
+      key: "ssp_imm1344_signed",
+      label: "IMM 1344 — Application to Sponsor + Undertaking signed by sponsor",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "ssp_imm0008_signed",
+      label: "IMM 0008 — Generic Application for Canada signed by applicant",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "ssp_imm5532_relationship",
+      label: "IMM 5532 — Relationship Information & Sponsorship Evaluation completed",
+      description:
+        "Both sponsor and applicant fill their own copy — ANSWERS MUST MATCH on shared facts " +
+        "(how met, key dates, family). The most-scrutinized form for genuineness assessment.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "ssp_imm5669_background",
+      label: "IMM 5669 — Schedule A Background/Declaration (applicant + dependents)",
+      description: "10-year address, work, education history. Gaps = refusal.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "ssp_imm5406_family_info",
+      label: "IMM 5406 — Additional Family Information",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "ssp_imm5562_supplementary",
+      label: "IMM 5562 — Supplementary Information (travel history)",
+      category: "forms",
+      required: false,
+    },
+    {
+      key: "ssp_imm5476_rep",
+      label: "IMM 5476 — Use of Representative signed by client + Sandhu",
+      category: "forms",
+      required: true,
+    },
+
+    // ── Documents ───────────────────────────────────────────────────
+    {
+      key: "ssp_applicant_passport",
+      label: "Applicant's passport (bio + all stamped pages)",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_applicant_birth_cert",
+      label: "Applicant's birth certificate (+ certified translation)",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_status_proof",
+      label: "Sponsor's proof of status: PR card / citizenship cert / passport",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_sponsor_birth_cert",
+      label: "Sponsor's birth certificate",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_dependent_birth_certs",
+      label: "Birth certificates of all dependents (if children included)",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "ssp_photos",
+      label: "2 photos for applicant + 2 per dependent (IRCC photo specs)",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_police_certs",
+      label: "Police certificates from EVERY country lived 6+ months since age 18",
+      description:
+        "Required for both APPLICANT and dependents. Original + certified translation if not " +
+        "English/French. Recent (within last 6 months ideally). #1 cause of processing delays " +
+        "if missing or stale.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_medical_exam",
+      label: "Immigration Medical Exam (panel physician) — applicant + dependents",
+      description:
+        "Upfront medical exam before submission. Medical results valid 12 months. If exam " +
+        "expires before PR is granted, IRCC may request a new one. Best to do close to " +
+        "submission date.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ssp_proof_of_relationship_inland",
+      label: "Proof spouse currently lives in Canada — INLAND only",
+      description:
+        "Lease, utility bills with applicant's name, employer letter, school enrollment. " +
+        "Establishes that applicant is physically in Canada (required for inland stream).",
+      category: "documents",
+      required: false,
+    },
+
+    // ── Submission Package ──────────────────────────────────────────
+    {
+      key: "ssp_submission_letter",
+      label: "Representative Submission Letter generated and reviewed",
+      category: "submission_package",
+      required: true,
+      autoVerifiable: true,
+    },
+    {
+      key: "ssp_translations_certified",
+      label: "All non-English/French docs have certified translations",
+      description:
+        "Birth certs, marriage cert, police certs, medical reports — every non-EN/FR document " +
+        "must have a certified translation by a member of a recognized translators' association " +
+        "(ATIA, OTTIAQ, etc.). Self-translations or notarized copies don't count.",
+      category: "submission_package",
+      required: true,
+    },
+
+    // ── Fees & Sign-off ─────────────────────────────────────────────
+    {
+      key: "ssp_fee_calculated",
+      label: "Fee calculated correctly — sponsor $85 + PR $570 + RPRF $575 + biometrics $85",
+      description:
+        "Total: $1,315 for spouse alone (+ $175 per dependent child + Quebec extra fee if " +
+        "applicable). RPRF refunded if application refused. Biometrics waived if given " +
+        "in last 10 years and still valid.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "ssp_quebec_fee_if_applicable",
+      label: "Quebec sponsorship fee paid separately (if sponsor lives in Quebec)",
+      description:
+        "QC residents pay BOTH IRCC fees AND a separate Quebec MIFI fee. Note: as of 2026, " +
+        "Quebec spousal intake is at cap — closed until June 25, 2026. Verify before filing.",
+      category: "fees_signoff",
+      required: false,
+    },
+    {
+      key: "ssp_client_confirmed",
+      label: "Both sponsor + applicant confirmed final review",
+      description:
+        "Sponsorship has TWO clients — each must independently confirm their forms before " +
+        "submission. Send package summary to both on WhatsApp.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "ssp_sandhu_approved",
+      label: "Sandhu (RCIC) approved",
+      category: "fees_signoff",
+      required: true,
+    },
+  ],
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // Resolver — pick the right checklist for a case's form type
 // ─────────────────────────────────────────────────────────────────────
 
@@ -1273,6 +1598,18 @@ export function getReviewChecklist(formType: string): ReviewChecklist | null {
     ft.includes("post-graduation") ||
     ft.includes("post graduation")
   ) return REVIEW_PGWP;
+
+  // Spousal Sponsorship — must come BEFORE SOWP / generic spousal branches
+  // because the substring "spousal" appears in both. Spousal Sponsorship is
+  // PR-track (Family Class), SOWP is open work permit.
+  if (
+    ft.includes("spousal sponsorship") ||
+    ft.includes("spouse sponsorship") ||
+    ft.includes("family sponsorship") ||
+    (ft.includes("sponsorship") && (ft.includes("spous") || ft.includes("partner") || ft.includes("conjugal") || ft.includes("common law") || ft.includes("common-law"))) ||
+    ft.includes("imm1344") ||
+    ft.includes("imm 1344")
+  ) return REVIEW_SPOUSAL_SPONSORSHIP;
 
   if (
     ft.includes("sowp") ||
