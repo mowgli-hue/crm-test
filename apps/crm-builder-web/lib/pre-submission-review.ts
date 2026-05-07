@@ -1069,6 +1069,272 @@ export const REVIEW_CITIZENSHIP: ReviewChecklist = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// PR Card Renewal (IMM 5444 + IMM 5644 checklist)
+// ─────────────────────────────────────────────────────────────────────
+// Source: canada.ca + IRCC Help Centre + IRPA s. 28 (researched May 2026).
+// Most refused or returned for: applying too early (> 9 months before
+// expiry, no name change), insufficient 730-day proof, photos that don't
+// meet PR-card-specific specs (different from work-permit photos!),
+// applying from outside Canada (must use PRTD instead). ───────────────
+
+export const REVIEW_PR_CARD_RENEWAL: ReviewChecklist = {
+  applicationType: "PR Card Renewal",
+  description: "Permanent Resident Card renewal — IMM 5444, $50 fee, must be in Canada",
+  items: [
+    // ── Status & Eligibility (catch the disqualifiers first) ────────
+    {
+      key: "prcard_in_canada_now",
+      label: "Client is currently INSIDE Canada (not outside)",
+      description:
+        "PR card renewal must be filed from inside Canada. If client is outside, they need " +
+        "a Permanent Resident Travel Document (PRTD) to return first, then renew the card. " +
+        "Online portal blocks submissions from outside Canada — wrong filing path = refusal.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "prcard_eligible_renewal_window",
+      label: "Card expires within 9 months OR is already expired",
+      description:
+        "IRCC returns applications filed > 9 months before expiry UNLESS there's a name " +
+        "change, gender marker change, photo discrepancy, or damaged/lost card. " +
+        "Verify the renewal trigger is valid.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "prcard_residency_730_days",
+      label: "Met 730-day residency obligation in last 5 years",
+      description:
+        "IRPA s. 28 — must be physically present in Canada ≥ 730 days within any 5-year " +
+        "rolling window. Calculate from declared travel history. Time spent abroad with " +
+        "Canadian-citizen spouse, working for Canadian employer abroad, or accompanying a " +
+        "PR spouse working abroad MAY count — check exceptions. If short of 730, do NOT " +
+        "submit blindly — file with H&C explanation or wait until met.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "prcard_residency_calculation_correct",
+      label: "Travel history complete — every entry/exit declared",
+      description:
+        "IRCC cross-references with CBSA records. Any undeclared trip = misrepresentation = " +
+        "5-year ban. Pull all entry/exit dates from passports + flight records + CBSA history " +
+        "report (request from CBSA if needed).",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "prcard_not_under_removal",
+      label: "Not under removal order or active inadmissibility review",
+      description:
+        "If under IRB removal proceedings, criminal inadmissibility review, or has unresolved " +
+        "PR status investigation → cannot apply. Verify CBSA / IRCC notices on file.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "prcard_not_citizen",
+      label: "Client has NOT become a Canadian citizen",
+      description:
+        "PR cards are not issued to citizens. If client took oath, they're a citizen and " +
+        "cannot renew a PR card.",
+      category: "status_eligibility",
+      required: true,
+    },
+
+    // ── Form Review (IMM 5444 + IMM 5644) ──────────────────────────
+    {
+      key: "imm5444_name_matches_landing",
+      label: "IMM 5444 — name spelling matches PR landing doc EXACTLY",
+      description:
+        "If there's a discrepancy between landing doc and current legal name, file IMM 5218 " +
+        "first to fix landing record before renewing PR card. Don't 'fix' the spelling on the " +
+        "renewal — IRCC will return it.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_uci_correct",
+      label: "IMM 5444 — UCI / Client ID matches PR landing doc",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_personal_matches_passport",
+      label: "IMM 5444 — DOB, gender, country of birth match passport",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_address_canadian",
+      label: "IMM 5444 — current address is in Canada (with postal code)",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_travel_history_complete",
+      label: "IMM 5444 — every trip outside Canada in last 5 years listed",
+      description:
+        "Date out, date in, country, reason. Days outside total < 1,095. Auto-flag if any " +
+        "year missing.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_employment_education_5yr",
+      label: "IMM 5444 — employment/education history (last 5 years) complete",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5444_signed",
+      label: "IMM 5444 — signed and dated by client",
+      description:
+        "Online portal: signature page generated. Paper: every signature line signed. " +
+        "For child < 14, parent/guardian signs.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5644_checklist_completed",
+      label: "IMM 5644 (PR Card Document Checklist) completed",
+      description: "IRCC's official checklist — must be included with submission.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "imm5476_signed_prcard",
+      label: "IMM 5476 — Use of Representative signed by client + Sandhu",
+      category: "forms",
+      required: true,
+    },
+
+    // ── Document Quality ────────────────────────────────────────────
+    {
+      key: "prcard_current_both_sides",
+      label: "Current/expiring PR card (FRONT + BACK) attached",
+      description: "Both sides required. Damaged card = also include damage statement.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_passport_bio_stamps",
+      label: "Passport bio page + every stamped/visa page (5-year coverage)",
+      description:
+        "Need to see every entry stamp to verify travel history. If client renewed passports " +
+        "during the 5-year window, attach BOTH old and new passports with all stamps.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_landing_doc",
+      label: "PR landing document attached (IMM 1000 / 5292 / 5688 / COPR)",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_photos_PR_specs",
+      label: "2 photos meet PR-CARD specs (NOT work-permit specs)",
+      description:
+        "PR-card photos: 50mm × 70mm, color, white background, taken < 6 months. DIFFERENT " +
+        "from work-permit photo dimensions. Photographer must know it's for PR card. " +
+        "Wrong specs = automatic return, fee not refunded.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_residency_proof_noa",
+      label: "CRA Notices of Assessment for last 3 years",
+      description:
+        "Primary residency proof. Even if income was zero, NOA shows Canadian tax filing. " +
+        "If client didn't file when not required (low income), need CRA letter explaining " +
+        "non-filing.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_residency_proof_t4",
+      label: "T4 slips for last 3-5 years (employment in Canada)",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "prcard_residency_proof_address",
+      label: "Address proof: utility bills, lease, bank statements",
+      description:
+        "Cover the full 5-year window if possible. Gaps in address proof are common refusal " +
+        "triggers. Match addresses with employment/education records.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_secondary_id",
+      label: "Secondary government ID (driver's license / health card)",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "prcard_name_change_doc",
+      label: "Name change document (if applicable)",
+      description:
+        "Marriage certificate, divorce decree, court order. Required if name on application " +
+        "differs from landing doc.",
+      category: "documents",
+      required: false,
+    },
+
+    // ── Submission Package ──────────────────────────────────────────
+    {
+      key: "prcard_submission_letter",
+      label: "Representative Submission Letter generated and reviewed",
+      category: "submission_package",
+      required: true,
+      autoVerifiable: true,
+    },
+    {
+      key: "prcard_residency_calculator_attached",
+      label: "Residency-day calculator output (Newton internal) attached",
+      description:
+        "Days-in / days-out spreadsheet with totals. Helps reviewer + future Newton staff " +
+        "if file gets returned for clarification.",
+      category: "submission_package",
+      required: false,
+    },
+
+    // ── Fees & Sign-off ─────────────────────────────────────────────
+    {
+      key: "prcard_fee_paid",
+      label: "Fee paid: CA$50 (PR card renewal)",
+      description:
+        "Non-refundable once processing begins. Receipt PDF must be uploaded to 'Fee Proof' " +
+        "section. CA$50 is the ONLY correct fee — paying $255 (work permit fee) means client " +
+        "filed wrong app type.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "prcard_fee_receipt_attached",
+      label: "Payment receipt PDF attached",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "prcard_client_confirmed",
+      label: "Client confirmed final review",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "prcard_sandhu_approved",
+      label: "Sandhu (RCIC) approved",
+      category: "fees_signoff",
+      required: true,
+    },
+  ],
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // Resolver — pick the right checklist for a case's form type
 // ─────────────────────────────────────────────────────────────────────
 
@@ -1099,6 +1365,19 @@ export function getReviewChecklist(formType: string): ReviewChecklist | null {
     ft.includes("visitor visa") ||
     ft.includes("visitor record")
   ) return REVIEW_TRV;
+
+  // PR card renewal/replacement — must come BEFORE citizenship branch
+  // because some intake systems lump them together. PR card renewal has
+  // very different requirements (730 days, IMM 5444, $50 fee) vs
+  // citizenship (1095 days, CIT 0002, $630 fee).
+  if (
+    ft.includes("pr card renewal") ||
+    ft.includes("pr card replacement") ||
+    ft.includes("permanent resident card") ||
+    ft.includes("imm5444") ||
+    ft.includes("imm 5444") ||
+    (ft.includes("pr card") && !ft.includes("citizenship"))
+  ) return REVIEW_PR_CARD_RENEWAL;
 
   if (ft.includes("citizenship")) return REVIEW_CITIZENSHIP;
 
