@@ -656,6 +656,10 @@ export async function deleteFilesByNameInFolder(
         );
         if (delRes.ok || delRes.status === 204) {
           removed++;
+        } else if (delRes.status === 404) {
+          // File already deleted (e.g., between list and delete by another process).
+          // This is the desired end state, so don't log it as an error.
+          removed++;
         } else {
           const text = await delRes.text();
           errors.push(`delete "${m.name}" (${m.id.slice(0, 12)}): ${delRes.status} ${text.slice(0, 60)}`);
