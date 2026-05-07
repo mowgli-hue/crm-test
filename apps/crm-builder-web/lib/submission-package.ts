@@ -43,6 +43,7 @@ import {
   extractDriveFileId,
   extractDriveFolderId,
   deleteFilesByNameInFolder,
+  listFilesInFolder,
 } from "@/lib/google-drive";
 import { categorizeDocumentByFilename, DocCategory } from "@/lib/document-categories";
 
@@ -689,8 +690,51 @@ export async function assemblePgwpSubmissionPackage(
   // when a case has 6+ docs.
   const ocr = new OcrThrottle();
 
-  // Step 1: load + categorize documents
-  const docs = await listDocuments(companyId, caseId);
+  // Step 1: load documents — from BOTH the `documents` table AND a live Drive
+  // folder scan, then merge.
+  //
+  // Why both: the documents table tracks files registered through the CRM
+  // (WhatsApp uploads, "Generate Forms" output, "Send Email" attachments,
+  // etc.). But staff often drag-and-drop files directly into the case's
+  // Drive folder — those don't get registered in the table. Without scanning
+  // Drive, the package would miss them. Real bug from CASE-1401 (Gagan):
+  // staff put Passport, Photo, Completion Letter into Drive directly, the
+  // documents table only had 8 entries, package missed 4 important docs.
+  const docsFromTable = await listDocuments(companyId, caseId);
+  let docs = docsFromTable;
+  try {
+    const caseDriveId = getCaseDriveFolderId(caseItem);
+    if (caseDriveId) {
+      const driveFiles = await listFilesInFolder(caseDriveId);
+      // De-dupe: existing docsFromTable wins (it has a stable id + status +
+      // version info). Anything in Drive but NOT in the table is added as a
+      // synthetic DocumentItem with the Drive file id encoded as a viewLink.
+      const tableDriveIds = new Set(
+        docsFromTable
+          .map((d) => extractDriveFileId(d.link))
+          .filter((id): id is string => !!id),
+      );
+      const newDriveOnly = driveFiles
+        .filter((f) => !tableDriveIds.has(f.id))
+        .map((f) => ({
+          id: `drive-only-${f.id}`,
+          companyId,
+          caseId,
+          name: f.name,
+          fileType: f.mimeType,
+          status: "received" as const,
+          link: `https://drive.google.com/file/d/${f.id}/view`,
+          createdAt: new Date().toISOString(),
+        }));
+      if (newDriveOnly.length > 0) {
+        console.log(`[submission ${caseId}] step 1: +${newDriveOnly.length} files found in Drive but NOT in documents table — including them`);
+        docs = [...docsFromTable, ...newDriveOnly];
+      }
+    }
+  } catch (e) {
+    // Drive scan failed — proceed with just the documents table.
+    console.warn(`[submission ${caseId}] Drive scan failed (continuing with table only): ${(e as Error).message.slice(0, 100)}`);
+  }
   const categorized = await categorizeDocs(docs, ocr);
   const primary = selectPrimaryDocs(categorized);
 
