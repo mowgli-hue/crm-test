@@ -726,6 +726,38 @@ const PROFILE_PR_CARD: FormProfile = {
   ],
 };
 
+// SOWP — Spousal Open Work Permit. Applicant is the SPOUSE; the package
+// must include the principal partner's status proof + employment proof
+// (which doesn't apply to PGWP / generic work permits). Same form
+// (IMM5710 inside Canada / IMM1295 outside) but a different doc set.
+const PROFILE_SOWP: FormProfile = {
+  name: "SOWP",
+  topLevel: [
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
+    // IMM 5710 for in-Canada applicants (most common). For outside-Canada,
+    // staff would use IMM1295 (not yet auto-generated).
+    { sourceKey: "imm5710",          template: "IMM5710e_<First>_<Last>" },
+    { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
+  ],
+  bundleCategories: [
+    // Spouse's existing permits + supporting docs go in the bundle
+    "studyPermits", "workPermits", "languageTests",
+  ],
+  recommended: [
+    "Applicant's passport (bio + stamped pages)",
+    "Applicant's digital photo",
+    "Marriage certificate (or 12-month cohabitation evidence)",
+    "Principal partner's current work permit / study permit / PGWP",
+    "Principal partner's employment letter (NOC, duties, salary, hours)",
+    "Principal partner's recent pay stubs",
+    "Relationship evidence (photos, joint accounts, lease)",
+    "IMM5710 (in Canada) — use 'Generate Forms'",
+    "IMM5476 — Use of Representative",
+    "Representative Submission Letter",
+  ],
+};
+
 // Future profiles: PROFILE_WORK_PERMIT_LMIA, etc.
 
 function pickProfile(formType: string): FormProfile {
@@ -750,11 +782,21 @@ function pickProfile(formType: string): FormProfile {
   if (ft.includes("citizenship")) {
     return PROFILE_CITIZENSHIP;
   }
+  // SOWP — must come BEFORE generic study permit / PGWP catch-alls.
+  // SOWP cases include "spousal open work permit" or "sowp" in formType.
+  if (
+    ft.includes("sowp") ||
+    ft.includes("spousal open work permit") ||
+    ft.includes("spousal work permit") ||
+    (ft.includes("open work permit") && (ft.includes("spous") || ft.includes("partner")))
+  ) {
+    return PROFILE_SOWP;
+  }
   // Study permit extension OR new study permit (inside Canada uses 5709)
   if (ft.includes("study permit") || ft.includes("study permit extension") || ft.includes("study extension")) {
     return PROFILE_STUDY_PERMIT_EXTENSION;
   }
-  // Default: PGWP / SOWP / BOWP / VOWP / LMIA / generic work permit
+  // Default: PGWP / BOWP / VOWP / LMIA / generic work permit
   return PROFILE_PGWP;
 }
 

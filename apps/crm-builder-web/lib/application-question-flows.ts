@@ -82,6 +82,72 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
     ]
   },
 
+  // SOWP — Spousal Open Work Permit. SPOUSE is the applicant; principal
+  // worker / student / PGWP holder is the SPONSORING partner. Most refused
+  // because principal doesn't qualify (TEER 4/5 worker, bachelor student,
+  // final-term student) or marriage evidence is weak.
+  // 16 questions in 6 batches.
+  sowp: {
+    requiredFields: ["fullName", "phone", "address", "maritalStatus", "employmentHistory", "education"],
+    batches: [
+      { title: "📤 Upload Documents", questions: [0] },
+      { title: "👤 Your Info (Applicant)", questions: [1, 2, 3, 4, 5] },
+      { title: "💍 Marriage / Common-Law", questions: [6, 7, 8] },
+      { title: "👫 Principal Partner (sponsoring spouse)", questions: [9, 10, 11, 12] },
+      { title: "🛬 Status in Canada", questions: [13, 14] },
+      { title: "📋 Background", questions: [15] },
+    ],
+    prompts: [
+      // Q0 — Documents needed
+      "📎 *Please upload these documents first* (one by one is fine):\n\n• Your passport (bio page + all stamped pages)\n• Your current Canadian permit (if you have one)\n• Marriage certificate (or proof of 12-month cohabitation if common-law)\n• Your spouse's current work permit / study permit / PGWP\n• Your spouse's employment letter (with NOC, duties, salary, hours, start date)\n• Your spouse's recent pay stubs (last 3 months)\n• Photos of you both together, joint bank accounts, joint lease, etc.\n\nReply *DONE* once you've sent them. We'll extract personal details from your passport.",
+
+      // Q1 — Full legal name
+      "Your *full legal name* (exactly as on passport).",
+
+      // Q2 — DOB
+      "Your date of birth (YYYY-MM-DD).",
+
+      // Q3 — Citizenship + place of birth
+      "Your country of citizenship and place of birth (city, country).",
+
+      // Q4 — Current address in Canada
+      "Your current address (street, city, province, postal code) and phone number.",
+
+      // Q5 — Email
+      "Your email address.",
+
+      // Q6 — Marriage / common-law type and date
+      "Are you legally married OR in a common-law relationship? (Married / Common-Law)\n\n• If MARRIED: date of marriage (YYYY-MM-DD), city/country where married\n• If COMMON-LAW: date you started living together (YYYY-MM-DD), and current cohabitation address (must show 12+ months continuous cohabitation)",
+
+      // Q7 — Spouse / partner basics
+      "Your spouse / partner's full name, date of birth (YYYY-MM-DD), country of citizenship, and current location (city, country).",
+
+      // Q8 — Any previous marriages
+      "Have you OR your spouse been married or in a common-law relationship before? (Yes/No — if Yes: who, partner's name, dates, how it ended)",
+
+      // Q9 — Principal eligibility path (CRITICAL — determines if SOWP even possible)
+      "What is your spouse's current status in Canada? Pick ONE:\n\n*A — Foreign Worker* (working on a closed/employer-specific work permit, NOT PGWP)\n*B — International Student* (study permit, currently studying)\n*C — PGWP Holder* (post-graduation work permit)\n*D — Other* (PR, citizen, refugee, visitor, etc. — note: PR/citizen spouses go through Spousal SPONSORSHIP not SOWP)\n\nReply with the letter. We'll ask follow-up questions based on your choice.",
+
+      // Q10 — Principal's job / school details (the BIG eligibility question)
+      "Your spouse's *current employment or studies* details. Provide ALL that apply:\n\n*If working (paths A or C):*\n• Employer name + address\n• Job title + actual day-to-day duties (IMPORTANT: duties matter more than title for NOC)\n• NOC code if known (TEER 0 / 1 / 2 / 3 / 4 / 5)\n• Salary + hours per week\n• Permit start date and END date (YYYY-MM-DD)\n\n*If studying (path B):*\n• School name + DLI number\n• Program name (master's? doctoral? bachelor's? diploma?)\n• Program length (must be 16+ months for master's to qualify)\n• Current term (NOT final term — refused even on renewal as of March 4 2026)\n• Program start and end dates (YYYY-MM-DD)",
+
+      // Q11 — Principal lives in Canada
+      "Does your spouse currently *physically live in Canada*? (Yes/No — if living separately, give the city/province where they live)",
+
+      // Q12 — Months remaining on principal's permit
+      "How many months of valid work/study authorization does your spouse have remaining? (For SOWP, IRCC requires AT LEAST 16 MONTHS remaining at the time of your SOWP application — fewer = refused.)",
+
+      // Q13 — Applicant's current status in Canada
+      "Are you currently *inside Canada* or *outside Canada*?\n\n• If INSIDE: your current status (visitor record / work permit / study permit / no status / maintained status), permit number + expiry, and where you live\n• If OUTSIDE: country where you currently live, and when you plan to come to Canada",
+
+      // Q14 — Restoration check
+      "If you're inside Canada AND your current status has expired or expires soon: when did/will it expire? (YYYY-MM-DD — restoration only available within 90 days of expiry, $350 fee. Reply NA if your status is fine or you're outside Canada.)",
+
+      // Q15 — Refusals + criminal + medical
+      "Have you ever:\n• Been refused a visa, permit, or status by Canada or any country?\n• Been arrested, charged, or convicted of any crime?\n• Had any serious medical conditions in the past 12 months?\n\n(Yes/No for each — if Yes, give brief details: country, year, what happened)",
+    ]
+  },
+
   study_permit: {
     requiredFields: DEFAULT_REQUIRED_FIELDS,
     batches: [

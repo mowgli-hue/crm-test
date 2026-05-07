@@ -20,6 +20,7 @@ export function resolveApplicationChecklistKey(formType: string):
   | "visitor_visa"
   | "visitor_record"
   | "work_permit"
+  | "sowp"
   | "study_permit"
   | "study_permit_extension"
   | "super_visa"
@@ -38,10 +39,18 @@ export function resolveApplicationChecklistKey(formType: string):
   if (ft.includes("trv inside")) return "trv_inside";
   if (ft.includes("visitor visa") || ft.includes("trv outside") || ft === "trv") return "visitor_visa";
   if (ft.includes("visitor record")) return "visitor_record";
+  // SOWP — must come BEFORE generic work_permit branch. SOWP has very specific
+  // requirements (principal worker info, marriage proof, NOC duties) that
+  // don't apply to LMIA / VOWP / generic open work permits.
+  if (
+    ft.includes("sowp") ||
+    ft.includes("spousal open work permit") ||
+    ft.includes("spousal work permit") ||
+    (ft.includes("open work permit") && (ft.includes("spous") || ft.includes("partner")))
+  ) return "sowp";
   if (
     ft.includes("work permit") ||
     ft.includes("lmia") ||
-    ft.includes("sowp") ||
     ft.includes("bowp") ||
     ft.includes("vowp") ||
     ft.includes("open work permit") ||
@@ -122,6 +131,20 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "job_offer", label: "Job Offer/Employment Support Docs", required: true, keywords: ["job", "offer", "employment", "lmia"] },
     { key: "education_docs", label: "Education Documents", required: false, keywords: ["education", "degree", "diploma", "transcript"] },
     { key: "language_test", label: "English Test (if available)", required: false, keywords: ["ielts", "celpip", "pte", "language"] }
+  ],
+  sowp: [
+    // Spousal Open Work Permit — applicant is the SPOUSE; principal docs
+    // belong to the partner (worker / student / PGWP holder)
+    { key: "applicant_passport", label: "Applicant's passport (bio + stamped pages)", required: true, keywords: ["passport"] },
+    { key: "applicant_photo", label: "Applicant's digital photo (IRCC specs)", required: true, keywords: ["photo"] },
+    { key: "marriage_cert", label: "Marriage certificate (or 12-month cohabitation evidence)", required: true, keywords: ["marriage", "cohabitation", "common law"] },
+    { key: "principal_status", label: "Principal partner's permit (work/study/PGWP)", required: true, keywords: ["work permit", "study permit", "pgwp", "permit"] },
+    { key: "principal_employment_letter", label: "Principal's employment letter (NOC, duties, salary, hours)", required: false, keywords: ["employment letter", "job letter", "noc"] },
+    { key: "principal_pay_stubs", label: "Principal's pay stubs (last 3 months)", required: false, keywords: ["pay stub", "payslip"] },
+    { key: "principal_school_doc", label: "Principal's enrollment letter (if student spouse)", required: false, keywords: ["enrollment", "loa", "school"] },
+    { key: "relationship_evidence", label: "Relationship evidence (photos, joint accounts, lease)", required: true, keywords: ["photos", "joint", "lease", "utilities"] },
+    { key: "rep_letter", label: "Use of Representative form (IMM 5476)", required: true, keywords: ["5476", "representative"] },
+    { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter"] }
   ],
   study_permit: [
     { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
