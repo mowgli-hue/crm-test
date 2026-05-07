@@ -37,6 +37,7 @@ import { CaseItem, Role } from "@/lib/data";
 import { apiFetch } from "@/lib/api-client";
 import { Company } from "@/lib/models";
 import { getChecklistForFormType, resolveApplicationChecklistKey } from "@/lib/application-checklists";
+import { getReviewChecklist, summarizeReview, CATEGORY_LABELS, type ReviewCategory } from "@/lib/pre-submission-review";
 import { isQuestionnaireComplete, getQuestionPromptsForFormType } from "@/lib/application-question-flows";
 import { canCreateCase, canManageUsers, canAssignCases, canChangeStatus, canStaffAccessCase, tabsForRole, type AppScreen } from "@/lib/rbac";
 import { IMPORT_CASES_DATA } from "@/lib/import-data";
@@ -7128,6 +7129,225 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                                   </div>
 
                                                 ) : null}
+
+                        {/* ── Pre-Submission Review Checklist ──
+                              Shows AFTER staff has assembled the package.
+                              Per-application checklist forces deliberate
+                              human review before uploading to IRCC portal.
+                              "Mark Ready for IRCC Upload" button stays
+                              disabled until all required items are ticked. */}
+                        {(() => {
+                          const reviewChecklist = getReviewChecklist(selectedCase.formType || "");
+                          if (!reviewChecklist) return null;
+
+                          const reviewState = ((selectedCase as any).preSubmissionReview || {}) as Record<
+                            string,
+                            { ticked: boolean; by?: string; at?: string }
+                          >;
+                          const summary = summarizeReview(reviewChecklist, reviewState);
+
+                          const handleTick = async (itemKey: string, currentlyTicked: boolean) => {
+                            const newState = {
+                              ...reviewState,
+                              [itemKey]: currentlyTicked
+                                ? { ticked: false }
+                                : {
+                                    ticked: true,
+                                    by: sessionUser?.fullName || sessionUser?.email || "staff",
+                                    at: new Date().toISOString(),
+                                  },
+                            };
+                            // Optimistic update — patch the case in the cases list
+                            setCases((prev) => prev.map((c) =>
+                              c.id === selectedCase.id
+                                ? { ...c, preSubmissionReview: newState as any }
+                                : c
+                            ));
+                            // Persist via API
+                            try {
+                              await apiFetch(`/cases/${selectedCase.id}/review`, {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ preSubmissionReview: newState }),
+                              });
+                            } catch {
+                              // Revert on failure
+                              setCaseActionStatus("⚠️ Failed to save tick — please retry");
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            }
+                          };
+
+                          const handleMarkReady = async () => {
+                            if (!summary.readyForUpload) return;
+                            if (!confirm(`Mark CASE ${selectedCase.id} as Ready for IRCC Upload?\n\nAll ${summary.required} required review items are ticked. This will flag the case as ready for staff to upload to the IRCC portal.`)) return;
+                            const now = new Date().toISOString();
+                            const by = sessionUser?.fullName || sessionUser?.email || "staff";
+                            try {
+                              await apiFetch(`/cases/${selectedCase.id}/review`, {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  preSubmissionReview: reviewState,
+                                  markedReadyAt: now,
+                                  markedReadyBy: by,
+                                }),
+                              });
+                              // Optimistic local state update
+                              setCases((prev) => prev.map((c) =>
+                                c.id === selectedCase.id
+                                  ? ({ ...c, markedReadyAt: now, markedReadyBy: by } as any)
+                                  : c
+                              ));
+                              setCaseActionStatus("✅ Marked Ready for IRCC Upload");
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            } catch {
+                              setCaseActionStatus("⚠️ Failed to mark ready");
+                              setTimeout(() => setCaseActionStatus(""), 4000);
+                            }
+                          };
+
+                          // Group items by category
+                          const grouped: Record<ReviewCategory, typeof reviewChecklist.items> = {
+                            status_eligibility: [],
+                            documents: [],
+                            forms: [],
+                            submission_package: [],
+                            fees_signoff: [],
+                          };
+                          for (const item of reviewChecklist.items) grouped[item.category].push(item);
+
+                          // Color theme by category
+                          const categoryColor: Record<ReviewCategory, string> = {
+                            status_eligibility: "border-red-300 bg-red-50",
+                            documents: "border-blue-300 bg-blue-50",
+                            forms: "border-purple-300 bg-purple-50",
+                            submission_package: "border-amber-300 bg-amber-50",
+                            fees_signoff: "border-emerald-300 bg-emerald-50",
+                          };
+                          const categoryHeaderColor: Record<ReviewCategory, string> = {
+                            status_eligibility: "text-red-900",
+                            documents: "text-blue-900",
+                            forms: "text-purple-900",
+                            submission_package: "text-amber-900",
+                            fees_signoff: "text-emerald-900",
+                          };
+
+                          const isMarkedReady = !!(selectedCase as any).markedReadyAt;
+
+                          return (
+                            <div className="rounded-xl border-2 border-slate-300 bg-white p-4 mt-2">
+                              {/* Header */}
+                              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">📋 Pre-Submission Review — {reviewChecklist.applicationType}</p>
+                                  <p className="text-[11px] text-slate-600 mt-0.5">{reviewChecklist.description}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs font-bold text-slate-900">
+                                    {summary.tickedRequired}/{summary.required} required
+                                    {summary.total > summary.required && <span className="text-slate-500"> · {summary.tickedTotal}/{summary.total} total</span>}
+                                  </p>
+                                  <div className="mt-1 h-1.5 w-32 rounded-full bg-slate-200 overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full ${summary.readyForUpload ? "bg-emerald-500" : summary.tickedRequired > summary.required / 2 ? "bg-amber-400" : "bg-red-400"}`}
+                                      style={{ width: `${summary.required > 0 ? Math.round((summary.tickedRequired / summary.required) * 100) : 0}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Already-marked-ready banner */}
+                              {isMarkedReady && (
+                                <div className="mb-3 rounded-lg bg-emerald-100 border border-emerald-300 px-3 py-2">
+                                  <p className="text-xs font-bold text-emerald-900">
+                                    ✅ Marked Ready for IRCC Upload by {(selectedCase as any).markedReadyBy || "staff"}
+                                    {(selectedCase as any).markedReadyAt && ` on ${new Date((selectedCase as any).markedReadyAt).toLocaleDateString()}`}
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Category sections */}
+                              <div className="space-y-3">
+                                {(Object.keys(grouped) as ReviewCategory[]).map((cat) => {
+                                  const items = grouped[cat];
+                                  if (items.length === 0) return null;
+                                  const catSum = summary.byCategory[cat];
+                                  return (
+                                    <div key={cat} className={`rounded-lg border ${categoryColor[cat]} p-3`}>
+                                      <div className="flex items-center justify-between mb-2">
+                                        <p className={`text-xs font-bold uppercase tracking-wide ${categoryHeaderColor[cat]}`}>
+                                          {CATEGORY_LABELS[cat]}
+                                        </p>
+                                        <p className="text-[10px] font-bold text-slate-600">
+                                          {catSum.ticked}/{catSum.total}
+                                        </p>
+                                      </div>
+                                      <div className="space-y-1.5">
+                                        {items.map((item) => {
+                                          const tickInfo = reviewState[item.key];
+                                          const isTicked = !!tickInfo?.ticked;
+                                          return (
+                                            <div key={item.key} className="flex items-start gap-2 group">
+                                              <button
+                                                onClick={() => handleTick(item.key, isTicked)}
+                                                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors ${
+                                                  isTicked
+                                                    ? "bg-emerald-500 border-emerald-500 text-white"
+                                                    : "bg-white border-slate-400 hover:border-slate-600"
+                                                }`}
+                                                title={isTicked ? `Ticked by ${tickInfo?.by || "staff"} on ${tickInfo?.at ? new Date(tickInfo.at).toLocaleString() : ""}` : "Click to tick"}
+                                              >
+                                                {isTicked && <span className="text-[10px] leading-none">✓</span>}
+                                              </button>
+                                              <div className="flex-1 min-w-0">
+                                                <p className={`text-[11px] font-medium ${isTicked ? "text-slate-500 line-through" : "text-slate-900"}`}>
+                                                  {item.label}
+                                                  {item.required ? <span className="text-red-600 ml-0.5">*</span> : <span className="text-slate-400 ml-1 text-[9px]">(optional)</span>}
+                                                </p>
+                                                {item.description && (
+                                                  <p className="text-[10px] text-slate-600 mt-0.5 leading-snug">{item.description}</p>
+                                                )}
+                                                {isTicked && tickInfo?.by && (
+                                                  <p className="text-[9px] text-emerald-700 mt-0.5">
+                                                    ✓ {tickInfo.by} · {tickInfo.at ? new Date(tickInfo.at).toLocaleDateString() : ""}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Mark Ready button */}
+                              <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-[11px] text-slate-600">
+                                  <span className="text-red-600 font-bold">*</span> Required items must be ticked before marking ready
+                                </p>
+                                <button
+                                  onClick={handleMarkReady}
+                                  disabled={!summary.readyForUpload || isMarkedReady}
+                                  className={`rounded-xl px-4 py-2 text-xs font-bold shrink-0 ${
+                                    isMarkedReady
+                                      ? "bg-slate-300 text-slate-600 cursor-not-allowed"
+                                      : summary.readyForUpload
+                                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {isMarkedReady
+                                    ? "✓ Already Marked Ready"
+                                    : summary.readyForUpload
+                                      ? "✓ Mark Ready for IRCC Upload"
+                                      : `${summary.required - summary.tickedRequired} required items remaining`}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {/* ── IRCC Portal Script Generator ── */}
                         {(selectedCase.formType.toLowerCase().includes("visitor visa") || selectedCase.formType.toLowerCase().includes("trv")) && (

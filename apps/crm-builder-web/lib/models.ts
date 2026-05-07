@@ -199,6 +199,17 @@ export type CaseItem = {
     autoTriggered?: boolean;
   };
   pgwpIntake?: PgwpIntakeData;
+  // Pre-submission review checklist state — keyed by item.key from
+  // /lib/pre-submission-review.ts. Tracks which items have been ticked
+  // by which staff member at what time. Used to gate "Mark Ready for
+  // IRCC Upload" and to provide audit trail.
+  preSubmissionReview?: Record<string, { ticked: boolean; by?: string; at?: string }>;
+  // Set when staff clicks "Mark Ready for IRCC Upload" — represents
+  // human sign-off that the package is fully reviewed and ready to be
+  // submitted to IRCC. Different from `submittedAt` (which is set after
+  // it's actually been uploaded).
+  markedReadyAt?: string;
+  markedReadyBy?: string;
   docRequests?: Array<{
     id: string;
     title: string;
