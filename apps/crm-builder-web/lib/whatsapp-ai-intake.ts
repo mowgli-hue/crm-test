@@ -270,6 +270,117 @@ export async function clearSession(phone: string): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
+// Extracts the "send the first batch of questions" logic that's needed from
+// two call sites:
+//   1. handleIncomingReply when phase advances awaiting_template_reply → ai_chat
+//   2. startIntakeSession's directStart path (no template, jump straight to Q1)
+//
+// Mutates the session in place (sets phase=ai_chat, currentBatch=0, etc.) and
+// SAVES it before sending. Returns nothing — sends WhatsApp message via
+// sendAndSave so the message also lands in the inbox.
+async function sendFirstBatchAndAdvance(session: IntakeSession): Promise<void> {
+  const { phone, clientName, formType, batches: maybeBatches, batchTitles: maybeTitles, questions: allQuestions, preAnswered: maybePreAns, caseId } = session;
+  session.phase = "ai_chat";
+  session.chatTurns = 0;
+  session.currentBatch = 0;
+  await setSession(phone, session);
+
+  const firstName = clientName.split(" ")[0];
+  const batches = maybeBatches || [allQuestions];
+  const batchTitles = maybeTitles || [];
+  const totalBatches = batches.length;
+  const firstTitle = batchTitles[0] || "Part 1";
+  const preAnswered = maybePreAns || {};
+
+  // Find which absolute question indices belong to the first batch.
+  // We figure this out by matching prompt text since `batches` stores strings.
+  const firstBatchPrompts = batches[0];
+  const firstBatchIndices: number[] = firstBatchPrompts
+    .map(prompt => allQuestions.findIndex(q => q === prompt))
+    .filter(i => i >= 0);
+
+  // Filter out pre-answered ones
+  const askIndices = firstBatchIndices.filter(i => preAnswered[i] === undefined);
+  const askPrompts = askIndices.map(i => allQuestions[i]);
+  const skippedCount = firstBatchIndices.length - askPrompts.length;
+
+  // If ALL questions in this batch are pre-answered, skip to next batch.
+  if (askPrompts.length === 0 && totalBatches > 1) {
+    session.chatTurns = firstBatchIndices[firstBatchIndices.length - 1] + 1;
+    session.currentBatch = 1;
+    await setSession(phone, session);
+    const intro = [
+      `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
+      ``,
+      `Great news — we already have all your passport details on file ✓`,
+      ``,
+      `Just a few quick questions to complete your *${formType}* application 🙏`,
+    ].join("\n");
+    await sendAndSave(phone, intro, caseId, clientName);
+    await new Promise(r => setTimeout(r, 600));
+    await sendNextBatchAfterPreAnswers(session);
+    return;
+  }
+
+  // Build the questions list with renumbered display (1, 2, 3...) for the client
+  const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
+
+  // Friendly preamble — varies based on whether we skipped anything
+  const preambleLines: string[] = [
+    `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
+    ``,
+  ];
+  if (skippedCount > 0) {
+    preambleLines.push(`Great news — we already have your passport details on file ✓`);
+    preambleLines.push(``);
+    preambleLines.push(`To complete your *${formType}* application, I just need answers to *${totalBatches} short sections*.`);
+  } else {
+    preambleLines.push(`To prepare your *${formType}* application, I have *${totalBatches} sections* of questions.`);
+  }
+  preambleLines.push(`Please answer each section before I send the next one.`);
+
+  const firstMsg = [
+    ...preambleLines,
+    ``,
+    `${firstTitle} *(Section 1 of ${totalBatches})*`,
+    `━━━━━━━━━━━━━━━`,
+    questionsText,
+    `━━━━━━━━━━━━━━━`,
+    ``,
+    `Please reply with all answers numbered (1. answer, 2. answer...) 🙏`,
+  ].join("\n");
+
+  await sendAndSave(phone, firstMsg, caseId, clientName);
+}
+
+// Check if we have an active 24-hour conversation window with this client.
+// WhatsApp Business policy: free-form messages can only be sent within 24h
+// of the client's last inbound message. After that, we MUST use a template.
+//
+// Returns true if there's an inbound message from this phone within last 24h.
+async function hasOpen24hWindow(phone: string): Promise<boolean> {
+  try {
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const last10 = String(phone).replace(/\D/g, "").slice(-10);
+    const r = await pool.query(
+      `SELECT 1 FROM whatsapp_inbox
+       WHERE direction = 'inbound'
+         AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1
+         AND created_at > NOW() - INTERVAL '24 hours'
+       LIMIT 1`,
+      [last10]
+    );
+    await pool.end();
+    return r.rows.length > 0;
+  } catch (e) {
+    // If lookup fails, conservatively return false — better to send template
+    // (which always works) than fail to send anything at all.
+    console.warn(`[hasOpen24hWindow] check failed for ${phone}: ${(e as Error).message.slice(0, 100)}`);
+    return false;
+  }
+}
+
 // Start AI chat intake
 export async function startIntakeSession(params: {
   caseId: string;
@@ -281,7 +392,7 @@ export async function startIntakeSession(params: {
   // When provided, questions whose answers are already known will be SKIPPED,
   // saving the client from having to retype passport details.
   existingIntake?: Record<string, any>;
-}): Promise<{ success: boolean; error?: string; skippedCount?: number; recoveredCount?: number }> {
+}): Promise<{ success: boolean; error?: string; skippedCount?: number; recoveredCount?: number; mode?: string }> {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
 
   // ── Idempotency guard ──
@@ -299,15 +410,35 @@ export async function startIntakeSession(params: {
   // We DO allow overwriting if the existing session is still stuck at
   // "awaiting_template_reply" with 0 turns — that means the template was sent
   // but client never replied, and a re-send is a legitimate retry.
+  //
+  // Special unstuck case: if session is awaiting_template_reply BUT the 24h
+  // window has since opened (client did reply, just hit auto-greeting first),
+  // upgrade to ai_chat and send first batch directly. Unsticks Ramandeep-type
+  // cases without staff needing to do anything else.
   try {
     const existing = await getSession(phone, companyId);
     if (existing && existing.phase !== "awaiting_template_reply") {
       console.log(`🔁 Skipping startIntakeSession for ${phone} — session already active (phase=${existing.phase} chatTurns=${existing.chatTurns}). Use admin reset endpoint to start over.`);
-      return { success: true, skippedCount: 0, recoveredCount: 0 };
+      return { success: true, skippedCount: 0, recoveredCount: 0, mode: "skip-already-active" };
     }
-    if (existing && existing.phase === "awaiting_template_reply" && (existing.chatTurns || 0) > 0) {
-      console.log(`🔁 Skipping startIntakeSession for ${phone} — already greeted (chatTurns=${existing.chatTurns}).`);
-      return { success: true, skippedCount: 0, recoveredCount: 0 };
+    if (existing && existing.phase === "awaiting_template_reply") {
+      const windowOpen = await hasOpen24hWindow(phone);
+      if (windowOpen) {
+        // Client already replied (or sent some inbound), but session got stuck
+        // at template-reply phase. Advance and send first batch now.
+        console.log(`🔓 Unsticking ${phone} — session was at awaiting_template_reply but 24h window is open. Sending first batch.`);
+        try {
+          await sendFirstBatchAndAdvance(existing);
+          return { success: true, skippedCount: 0, recoveredCount: 0, mode: "unstuck" };
+        } catch (e) {
+          console.error(`Unstick failed for ${phone}: ${(e as Error).message}`);
+          // fall through to normal start (which itself will try direct-start)
+        }
+      }
+      if ((existing.chatTurns || 0) > 0) {
+        console.log(`🔁 Skipping startIntakeSession for ${phone} — already greeted (chatTurns=${existing.chatTurns}).`);
+        return { success: true, skippedCount: 0, recoveredCount: 0, mode: "skip-already-greeted" };
+      }
     }
   } catch (e) {
     // Non-fatal — if session lookup fails, fall through and start fresh.
@@ -379,7 +510,34 @@ export async function startIntakeSession(params: {
     console.log(`✅ Pre-answered ${skippedCount} question(s) from passport/case data for ${phone}`);
   }
 
-  // Send template greeting first
+  // ── Smart send: direct-start if 24h window is open, template otherwise ──
+  //
+  // WhatsApp Business policy: free-form messages can ONLY be sent within 24h
+  // of the client's last inbound message. After that, only pre-approved
+  // templates work.
+  //
+  // For most cases at Newton, clients have just messaged the marketing bot
+  // before being converted to a case — the 24h window is open. In that case
+  // we skip the template (which feels formal and adds a step) and send the
+  // first batch of questions DIRECTLY. Client gets a faster experience and
+  // staff doesn't have to wait for the template-tap step.
+  //
+  // For cold-contact cases (no recent inbound from this client), we MUST
+  // still use the template — there's no other way to message them per Meta
+  // policy.
+  const hasOpenWindow = await hasOpen24hWindow(phone);
+  if (hasOpenWindow) {
+    console.log(`📩 24h window OPEN for ${phone} — direct-start mode (skipping template)`);
+    try {
+      await sendFirstBatchAndAdvance(session);
+      return { success: true, skippedCount, mode: "direct" };
+    } catch (e) {
+      console.error(`Direct-start failed for ${phone}: ${(e as Error).message}. Falling back to template.`);
+      // fall through to template send below
+    }
+  }
+
+  // Send template greeting (cold contact OR direct-start failed)
   const templateResult = await sendWhatsAppTemplate({
     to: phone,
     templateName: "newton_intake",
@@ -395,7 +553,7 @@ export async function startIntakeSession(params: {
 
   if (templateResult.success) {
     console.log(`✅ Template sent to ${phone} — waiting for reply to start AI chat`);
-    return { success: true, skippedCount };
+    return { success: true, skippedCount, mode: "template" };
   }
 
   // Fallback — start AI chat immediately
@@ -403,7 +561,7 @@ export async function startIntakeSession(params: {
   await setSession(phone, session);
   const firstMsg = await getAiNextMessage(session, null);
   await sendWhatsAppText(phone, firstMsg);
-  return { success: true, skippedCount };
+  return { success: true, skippedCount, mode: "fallback" };
 }
 
 // Get AI's next message based on conversation history
@@ -609,87 +767,9 @@ export async function handleIncomingReply(params: {
 
   const text = message.trim();
 
-  // Phase: waiting for template reply → send first batch
+  // Phase: waiting for template reply → send first batch via shared helper
   if (session.phase === "awaiting_template_reply") {
-    session.phase = "ai_chat";
-    session.chatTurns = 0;
-    session.currentBatch = 0;
-    await setSession(phone, session);
-
-    const firstName = session.clientName.split(" ")[0];
-    const batches = session.batches || [session.questions];
-    const batchTitles = session.batchTitles || [];
-    const totalBatches = batches.length;
-    const firstTitle = batchTitles[0] || "Part 1";
-    const preAnswered = session.preAnswered || {};
-
-    // Find which absolute question indices belong to the first batch.
-    // We figure this out by matching prompt text since `batches` stores strings,
-    // not original indices.
-    const allQuestions = session.questions;
-    const firstBatchPrompts = batches[0];
-    const firstBatchIndices: number[] = firstBatchPrompts
-      .map(prompt => allQuestions.findIndex(q => q === prompt))
-      .filter(i => i >= 0);
-
-    // Filter out pre-answered ones
-    const askIndices = firstBatchIndices.filter(i => preAnswered[i] === undefined);
-    const askPrompts = askIndices.map(i => allQuestions[i]);
-    const skippedCount = firstBatchIndices.length - askPrompts.length;
-
-    // If ALL questions in this batch are pre-answered, skip to next batch
-    if (askPrompts.length === 0 && totalBatches > 1) {
-      session.chatTurns = firstBatchIndices[firstBatchIndices.length - 1] + 1;
-      session.currentBatch = 1;
-      await setSession(phone, session);
-      // Recursively trigger next batch handling — easiest: send the next batch directly
-      const intro = [
-        `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
-        ``,
-        `Great news — we already have all your passport details on file ✓`,
-        ``,
-        `Just a few quick questions to complete your *${session.formType}* application 🙏`,
-      ].join("\n");
-      await sendAndSave(phone, intro, session.caseId, session.clientName);
-      // Fall through to send the second batch — exit early and let the next-batch handler take over
-      // We do this by calling ourselves recursively after small delay
-      session.phase = "ai_chat";
-      await setSession(phone, session);
-      // Trigger sending the next batch by simulating a "ready" reply
-      await new Promise(r => setTimeout(r, 600));
-      await sendNextBatchAfterPreAnswers(session);
-      return;
-    }
-
-    // Build the questions list with renumbered display (1, 2, 3...) for the client
-    const questionsText = askPrompts.map((q, i) => `*${i + 1}.* ${q}`).join("\n\n");
-
-    // Friendly preamble — varies based on whether we skipped anything
-    const preambleLines: string[] = [
-      `ਸਤ ਸ੍ਰੀ ਅਕਾਲ ${firstName} ਜੀ! 🙏 Hi *${firstName}*!`,
-      ``,
-    ];
-    if (skippedCount > 0) {
-      preambleLines.push(`Great news — we already have your passport details on file ✓`);
-      preambleLines.push(``);
-      preambleLines.push(`To complete your *${session.formType}* application, I just need answers to *${totalBatches} short sections*.`);
-    } else {
-      preambleLines.push(`To prepare your *${session.formType}* application, I have *${totalBatches} sections* of questions.`);
-    }
-    preambleLines.push(`Please answer each section before I send the next one.`);
-
-    const firstMsg = [
-      ...preambleLines,
-      ``,
-      `${firstTitle} *(Section 1 of ${totalBatches})*`,
-      `━━━━━━━━━━━━━━━`,
-      questionsText,
-      `━━━━━━━━━━━━━━━`,
-      ``,
-      `Please reply with all answers numbered (1. answer, 2. answer...) 🙏`,
-    ].join("\n");
-
-    await sendAndSave(phone, firstMsg, session.caseId, session.clientName);
+    await sendFirstBatchAndAdvance(session);
     return;
   }
 
