@@ -187,6 +187,7 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   transcript?: CategorizedDoc;
   completionLetter?: CategorizedDoc;
   imm5710?: CategorizedDoc;
+  imm5257?: CategorizedDoc;
   imm5476?: CategorizedDoc;
   submissionLetter?: CategorizedDoc;
   olderTranscripts: CategorizedDoc[];
@@ -195,6 +196,7 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   languageTests: CategorizedDoc[];
   loas: CategorizedDoc[];
   medicals: CategorizedDoc[];
+  bankStatements: CategorizedDoc[];
 } {
   // Sort by uploadedAt descending so .find() picks the most recent
   const byDateDesc = [...categorized].sort((a, b) => {
@@ -208,9 +210,10 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const completionLetter = byDateDesc.find((d) => d.category === "completion_letter");
   const submissionLetter = byDateDesc.find((d) => d.category === "submission_letter");
 
-  // IMM forms: prefer IMM5710 by filename match, fall back to first imm_form
+  // IMM forms: pick each by filename match
   const immForms = byDateDesc.filter((d) => d.category === "imm_form");
-  const imm5710 = immForms.find((d) => /\b5710/i.test(d.name)) || immForms[0];
+  const imm5710 = immForms.find((d) => /\b5710/i.test(d.name));
+  const imm5257 = immForms.find((d) => /\b5257/i.test(d.name));
   const imm5476 = immForms.find((d) => /\b5476/i.test(d.name));
 
   // Transcripts: newest = current; older = into bundle
@@ -223,24 +226,35 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const languageTests = byDateDesc.filter((d) => d.category === "language_test");
   const loas = byDateDesc.filter((d) => d.category === "loa");
   const medicals = byDateDesc.filter((d) => d.category === "medical");
+  const bankStatements = byDateDesc.filter((d) => d.category === "bank_statement");
 
   return {
     passport, photo, transcript, completionLetter,
-    imm5710, imm5476, submissionLetter,
+    imm5710, imm5257, imm5476, submissionLetter,
     olderTranscripts, studyPermits, workPermits, languageTests, loas, medicals,
+    bankStatements,
   };
 }
 
 function validateRequired(
-  primary: ReturnType<typeof selectPrimaryDocs>
+  primary: ReturnType<typeof selectPrimaryDocs>,
+  profile: FormProfile
 ): { ok: boolean; missing: string[] } {
   const missing: string[] = [];
-  if (!primary.passport)         missing.push("Passport (upload as 'passport.pdf' or similar)");
-  if (!primary.photo)            missing.push("Digital photo");
-  if (!primary.transcript)       missing.push("Official transcript");
-  if (!primary.completionLetter) missing.push("Completion letter");
-  if (!primary.imm5710)          missing.push("IMM5710 (use 'Generate Forms' button first)");
-  if (!primary.submissionLetter) missing.push("Representative Submission Letter (use letter generator first)");
+  // Profile.topLevel describes the docs we expect to copy. Each entry's
+  // sourceKey points at primary[key]. If that's empty/falsy, the doc is
+  // missing — surface as a warning (informational only).
+  for (const entry of profile.topLevel) {
+    const val = (primary as any)[entry.sourceKey];
+    if (!val) {
+      // Find a matching human-readable label from profile.recommended; fall
+      // back to the source key if no label found.
+      const label = profile.recommended.find((r) =>
+        r.toLowerCase().includes(String(entry.sourceKey).toLowerCase())
+      ) || String(entry.sourceKey);
+      missing.push(label);
+    }
+  }
   return { ok: missing.length === 0, missing };
 }
 
@@ -368,6 +382,83 @@ function getCaseDriveFolderId(caseItem: CaseItem): string | null {
 // Main entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Form profiles ──
+//
+// Each form type has its own scope of what goes top-level vs into the
+// Client_Info bundle. PGWP needs transcripts + completion letter + IELTS
+// + rep letter; TRV is a much smaller submission with just passport, photo,
+// 5257, 5476, and (optionally) the current permit + proof of funds.
+//
+// Adding a new form: define a profile here and the assembler will use it.
+// Anything not on a profile (e.g., medical) is ignored unless we explicitly
+// list it in `bundleCategories`.
+type FormProfile = {
+  // Top-level templates: each entry = { source key on `primary`, filename template }.
+  // Keys must exist in selectPrimaryDocs return type.
+  topLevel: Array<{
+    sourceKey: keyof ReturnType<typeof selectPrimaryDocs>;
+    template: string;
+  }>;
+  // Categories that go INTO the Client_Info bundle (in this order).
+  // Empty array = no Client_Info bundle at all.
+  bundleCategories: Array<keyof ReturnType<typeof selectPrimaryDocs>>;
+  // Required for "missing" warnings (informational only — never blocking).
+  recommended: string[];
+  // Display name for logs
+  name: string;
+};
+
+const PROFILE_PGWP: FormProfile = {
+  name: "PGWP",
+  topLevel: [
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
+    { sourceKey: "transcript",       template: "Transcript_<First>_<Last>" },
+    { sourceKey: "completionLetter", template: "Completion_Letter_<First>_<Last>" },
+    { sourceKey: "imm5710",          template: "IMM5710e_<First>_<Last>" },
+    { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
+  ],
+  bundleCategories: [
+    "studyPermits", "workPermits", "languageTests",
+    "olderTranscripts", "loas", "medicals",
+  ],
+  recommended: [
+    "Passport", "Digital photo", "Official transcript",
+    "Completion letter", "IMM5710 (use 'Generate Forms')",
+    "Representative Submission Letter (use letter generator)",
+  ],
+};
+
+const PROFILE_TRV: FormProfile = {
+  name: "TRV",
+  topLevel: [
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
+    { sourceKey: "imm5257",          template: "IMM5257e_<First>_<Last>" },
+    // 5476 (Use of Representative) is GENERATED inside the package flow —
+    // it doesn't come from primary. It's added separately below.
+  ],
+  bundleCategories: [
+    // Just the current permit (study/work) for the TRV stamp on passport.
+    // Bank statement / proof of funds also bundled if uploaded (optional).
+    "studyPermits", "workPermits", "bankStatements",
+  ],
+  recommended: [
+    "Passport", "Digital photo", "IMM5257 (use 'Generate Forms')",
+  ],
+};
+
+// Future profiles: PROFILE_STUDY_PERMIT, PROFILE_WORK_PERMIT_LMIA, etc.
+
+function pickProfile(formType: string): FormProfile {
+  const ft = (formType || "").toLowerCase();
+  if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
+    return PROFILE_TRV;
+  }
+  // Default: PGWP / SOWP / BOWP / VOWP / LMIA / generic work permit
+  return PROFILE_PGWP;
+}
+
 export async function assemblePgwpSubmissionPackage(
   companyId: string,
   caseId: string
@@ -380,11 +471,17 @@ export async function assemblePgwpSubmissionPackage(
   const categorized = await categorizeDocs(docs);
   const primary = selectPrimaryDocs(categorized);
 
+  // Pick form profile based on case formType. PGWP/SOWP/work permit/study
+  // permit ext → PGWP profile (full submission set). TRV/visitor visa →
+  // TRV profile (smaller scope: passport, photo, 5257, 5476, current permit).
+  const profile = pickProfile(caseItem.formType || "");
+  console.log(`📦 Submission package using ${profile.name} profile for case ${caseId} (formType: "${caseItem.formType}")`);
+
   // Step 2: validate required docs (assemble what's available; surface missing
   // ones as warnings rather than blocking — per scope revision: "create whatever
   // is available", staff prefers a partial package they can review over an
   // error message).
-  const validation = validateRequired(primary);
+  const validation = validateRequired(primary, profile);
   const initialWarnings: string[] = [];
   if (!validation.ok) {
     initialWarnings.push(
@@ -414,17 +511,22 @@ export async function assemblePgwpSubmissionPackage(
   const filesAdded: SubmissionPackageResult["filesAdded"] = [];
   const warnings: string[] = [...initialWarnings];
 
-  // Step 4: copy top-level docs with standardized names. Each entry is added
-  // to copyJobs only if the underlying doc exists on the case — missing docs
-  // are skipped silently (they're listed in initialWarnings already).
+  // Step 4: copy top-level docs with standardized names. Driven by the
+  // form profile selected above — each entry maps a primary doc slot to
+  // its standardized filename template.
+  //
+  // Why profile-driven: PGWP needs passport+photo+transcript+letter+forms;
+  // TRV needs only passport+photo+5257. Hardcoding here would bundle PGWP
+  // docs into every TRV submission (wrong scope). The profile keeps each
+  // form type's scope clean.
   type CopyJob = { doc: CategorizedDoc; template: string; ext?: string };
   const copyJobs: CopyJob[] = [];
-  if (primary.passport)         copyJobs.push({ doc: primary.passport,         template: "Passport_<First>_<Last>" });
-  if (primary.photo)            copyJobs.push({ doc: primary.photo,            template: "Photo_<First>_<Last>" });
-  if (primary.transcript)       copyJobs.push({ doc: primary.transcript,       template: "Transcript_<First>_<Last>" });
-  if (primary.completionLetter) copyJobs.push({ doc: primary.completionLetter, template: "Completion_Letter_<First>_<Last>" });
-  if (primary.imm5710)          copyJobs.push({ doc: primary.imm5710,          template: "IMM5710e_<First>_<Last>" });
-  if (primary.submissionLetter) copyJobs.push({ doc: primary.submissionLetter, template: "Representative_Submission_Letter_<First>_<Last>" });
+  for (const entry of profile.topLevel) {
+    const doc = (primary as any)[entry.sourceKey] as CategorizedDoc | undefined;
+    if (doc) {
+      copyJobs.push({ doc, template: entry.template });
+    }
+  }
 
   // ── WRONG-CLIENT SAFETY FILTER FOR TOP-LEVEL COPIES ──
   // Catches cases where staff accidentally drops another client's docs into
@@ -461,8 +563,11 @@ export async function assemblePgwpSubmissionPackage(
     const { extractDocumentFields: extractTop } = await import("@/lib/doc-ocr");
     const filteredJobs: CopyJob[] = [];
     for (const job of copyJobs) {
+      // Skip OCR check for generated outputs (IMM forms have field overlays
+      // that confuse OCR, photos are face-only, rep letter has the Newton
+      // representative's name not the client's).
       const skipNameCheck =
-        job.template.includes("IMM5710") ||
+        /\bIMM\d{4}/i.test(job.template) ||
         job.template.includes("Photo") ||
         job.template.includes("Submission_Letter") ||
         !job.doc.driveFileId;
@@ -598,24 +703,22 @@ export async function assemblePgwpSubmissionPackage(
     errors.push(`IMM5476 generation failed: ${(e as Error).message}`);
   }
 
-  // Step 6: bundle Client_Info per Newton's spec — order:
-  //   1. Current + previous study/work permits
-  //   2. English language test (IELTS/CELPIP)
-  //   3. Older transcripts (previous schools)
-  //   4. Older LOAs (previous schools)
-  //   5. Medical exam (if uploaded)
-  // ── Bundle source list ──
-  // "other"-categorized docs are explicitly NOT bundled — staff handles them
-  // manually. Bank statements, employment contracts, pay stubs, etc. are NOT
-  // part of a PGWP-style submission.
-  const bundleSources: CategorizedDoc[] = [
-    ...primary.studyPermits,
-    ...primary.workPermits,
-    ...primary.languageTests,
-    ...primary.olderTranscripts,
-    ...primary.loas,
-    ...primary.medicals,
-  ];
+  // Step 6: bundle Client_Info per the form profile's bundleCategories.
+  //
+  // Why profile-driven: PGWP bundle = study/work permits + IELTS + older
+  // transcripts + LOAs + medical. TRV bundle is much smaller — just the
+  // current permit (for TRV stamp on passport) and optionally bank
+  // statements (proof of funds). Each profile defines its own scope.
+  //
+  // Note: docs categorized as "other" are NEVER bundled regardless of
+  // profile — staff handles those manually.
+  const bundleSources: CategorizedDoc[] = [];
+  for (const cat of profile.bundleCategories) {
+    const docs = (primary as any)[cat] as CategorizedDoc[] | undefined;
+    if (Array.isArray(docs) && docs.length > 0) {
+      bundleSources.push(...docs);
+    }
+  }
 
   if (bundleSources.length === 0) {
     warnings.push("No study permit / IELTS / prior school records found — Client_Info bundle skipped.");
