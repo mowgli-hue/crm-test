@@ -312,12 +312,14 @@ function selectPrimaryDocs(categorized: CategorizedDoc[]): {
   const completionLetter = byDateDesc.find((d) => d.category === "completion_letter");
   const submissionLetter = byDateDesc.find((d) => d.category === "submission_letter");
 
-  // IMM forms: pick each by filename match
+  // IMM forms: pick each by filename match. Use a permissive regex that
+  // catches "IMM5710E", "IMM 5710", "imm-5710", etc. — \b word boundary
+  // alone fails on "IMM5710" because both sides are alphanumeric.
   const immForms = byDateDesc.filter((d) => d.category === "imm_form");
-  const imm5710 = immForms.find((d) => /\b5710/i.test(d.name));
-  const imm5257 = immForms.find((d) => /\b5257/i.test(d.name));
-  const imm5476 = immForms.find((d) => /\b5476/i.test(d.name));
-  const imm5709 = immForms.find((d) => /\b5709/i.test(d.name));
+  const imm5710 = immForms.find((d) => /5710[a-z]?(?![\d])/i.test(d.name));
+  const imm5257 = immForms.find((d) => /5257[a-z]?(?![\d])/i.test(d.name));
+  const imm5476 = immForms.find((d) => /5476[a-z]?(?![\d])/i.test(d.name));
+  const imm5709 = immForms.find((d) => /5709[a-z]?(?![\d])/i.test(d.name));
   // CIT-0002 / CIT 0002 — adult citizenship application form
   const imm0002 = byDateDesc.find((d) => /\bCIT[\s_-]?0002\b/i.test(d.name));
 
