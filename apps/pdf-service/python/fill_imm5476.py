@@ -23,6 +23,7 @@ USAGE:
 import json, re, sys
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter
+import pikepdf
 
 NEWTON_REP = {
     "rep_family_name":   "Sandhu",
@@ -258,15 +259,24 @@ def fill_imm5476(client_data, input_pdf, output_pdf):
 
     # NB: Sections C and D not touched — we're appointing, not cancelling/withdrawing.
 
-    ds_stream.set_data(xml.encode("utf-8"))
-
-    writer = PdfWriter()
-    writer.append(reader)
+    # ── Save ──────────────────────────────────────────────────────
+    # See fill_imm5710.py for full explanation — pikepdf preserves XFA
+    # barcode generation; pypdf strips it.
+    new_xfa_xml = xml.encode("utf-8")
     Path(output_pdf).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_pdf, "wb") as f:
-        writer.write(f)
 
-    print(f"✅  IMM5476 filled → {output_pdf}")
+    with pikepdf.open(input_pdf) as pdf:
+        acroform = pdf.Root.AcroForm
+        xfa = acroform.XFA
+        for i in range(0, len(xfa), 2):
+            if str(xfa[i]) == 'datasets':
+                xfa[i + 1].write(new_xfa_xml)
+                break
+        else:
+            raise RuntimeError("Could not find datasets stream to replace")
+        pdf.save(output_pdf)
+
+    print(f"✅  IMM5476 filled (XFA-preserved) → {output_pdf}")
 
 
 def main():

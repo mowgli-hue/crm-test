@@ -25,6 +25,7 @@ Requirements:
 """
 
 from pypdf import PdfReader, PdfWriter
+import pikepdf
 import xml.etree.ElementTree as ET
 
 
@@ -486,14 +487,24 @@ def fill_imm5257(client: dict, input_pdf: str, output_pdf: str) -> str:
        "Page3","PageWrapper","Occupation","Choice")
 
     # ── Save ──────────────────────────────────────────────────────
+    # See fill_imm5710.py for full explanation. TL;DR: pypdf's PdfWriter strips
+    # XFA scripting that generates the barcode. We use pikepdf to save instead
+    # so the barcode survives validation.
     ET.register_namespace('xfa', XFA_NS)
-    ds_stream.set_data(ET.tostring(root, encoding='unicode').encode('utf-8'))
-    writer = PdfWriter()
-    writer.append(reader)
-    with open(output_pdf, 'wb') as f:
-        writer.write(f)
+    new_xfa_xml = ET.tostring(root, encoding='unicode').encode('utf-8')
 
-    print(f"✅  IMM5257 filled → {output_pdf}")
+    with pikepdf.open(input_pdf) as pdf:
+        acroform = pdf.Root.AcroForm
+        xfa = acroform.XFA
+        for i in range(0, len(xfa), 2):
+            if str(xfa[i]) == 'datasets':
+                xfa[i + 1].write(new_xfa_xml)
+                break
+        else:
+            raise RuntimeError("Could not find datasets stream to replace")
+        pdf.save(output_pdf)
+
+    print(f"✅  IMM5257 filled (XFA-preserved) → {output_pdf}")
     return output_pdf
 
 
