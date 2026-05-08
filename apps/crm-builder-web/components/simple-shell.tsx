@@ -7240,6 +7240,18 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           };
                           for (const item of reviewChecklist.items) grouped[item.category].push(item);
 
+                          // Display order — DOCS FIRST. Staff naturally reviews
+                          // documents first when assembling, so the checklist
+                          // mirrors that workflow: Documents → Status/Eligibility
+                          // → Forms → Submission Package → Fees/Sign-off.
+                          const CATEGORY_ORDER: ReviewCategory[] = [
+                            "documents",
+                            "status_eligibility",
+                            "forms",
+                            "submission_package",
+                            "fees_signoff",
+                          ];
+
                           // Color theme by category
                           const categoryColor: Record<ReviewCategory, string> = {
                             status_eligibility: "border-red-300 bg-red-50",
@@ -7292,7 +7304,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                               {/* Category sections */}
                               <div className="space-y-3">
-                                {(Object.keys(grouped) as ReviewCategory[]).map((cat) => {
+                                {CATEGORY_ORDER.map((cat) => {
                                   const items = grouped[cat];
                                   if (items.length === 0) return null;
                                   const catSum = summary.byCategory[cat];
@@ -9749,6 +9761,45 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             Open Case →
                           </button>
                         )}
+                        {/* Archive / Unarchive — flips is_archived for ALL rows of this phone.
+                            Active list: button shows "📦 Archive" → moves convo out of view.
+                            Archived list: button shows "↩️ Unarchive" → moves convo back. */}
+                        <button
+                          onClick={async () => {
+                            const action = inboxShowArchived ? "Unarchive" : "Archive";
+                            if (!confirm(`${action} entire conversation with ${clientName}?\n\nMessages stay in the database — just hidden from ${inboxShowArchived ? "Archived" : "Active"}.`)) return;
+                            try {
+                              const res = await apiFetch("/inbox/archive", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ phone, archived: !inboxShowArchived }),
+                              });
+                              const d = await res.json().catch(() => ({}));
+                              if (d?.ok) {
+                                // Optimistic UI: remove this phone's messages from current view
+                                setInboxMessages((prev) => prev.filter((m) => {
+                                  const mk = String(m.phone || "").replace(/\D/g, "").slice(-10);
+                                  return mk !== threadKey;
+                                }));
+                                setInboxThread(null);
+                                setCaseActionStatus(`✅ ${action}d ${d.updated || 0} message${d.updated === 1 ? "" : "s"} for ${clientName}`);
+                                setTimeout(() => setCaseActionStatus(""), 4000);
+                              } else {
+                                alert(`Failed to ${action.toLowerCase()}: ${d?.error || "unknown error"}`);
+                              }
+                            } catch (e) {
+                              alert(`Failed to ${action.toLowerCase()}: ${(e as Error).message}`);
+                            }
+                          }}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                            inboxShowArchived
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                          title={inboxShowArchived ? "Move back to Active inbox" : "Hide this conversation from Active inbox"}
+                        >
+                          {inboxShowArchived ? "↩️ Unarchive" : "📦 Archive"}
+                        </button>
                       </div>
                     </div>
 
