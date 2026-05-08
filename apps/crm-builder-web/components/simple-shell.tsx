@@ -10269,6 +10269,85 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     </div>
 
                     <div className="p-3 space-y-2">
+                      {/* Long-message-safe sender — splits any message >3500 chars
+                          into sequential parts (WhatsApp's hard limit is 4096 — staying
+                          well under). Used by Send Checklist and Send Intake Questions
+                          buttons because long flows like Citizenship (21 Q) or Spousal
+                          Sponsorship (37 Q) overflow easily.
+                          - Splits on double-newlines (paragraph boundaries) when possible
+                            so we don't break mid-word
+                          - Adds "(Part N/M)" prefix when chunked
+                          - Sleeps 500ms between sends so chat order is correct */}
+                      {(() => {
+                        // attach helper to closure, used by buttons below
+                        (window as any).__sendInboxLongSafe = async (
+                          phoneStr: string,
+                          fullMessage: string,
+                          caseId: string | null,
+                          onSuccess?: () => void
+                        ) => {
+                          const MAX_CHARS = 3500;
+                          const phoneClean = phoneStr.replace(/\D/g, "");
+                          if (fullMessage.length <= MAX_CHARS) {
+                            const res = await apiFetch("/inbox/send", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ phone: phoneClean, message: fullMessage, caseId }),
+                            }).catch(() => null);
+                            if (res?.ok) onSuccess?.();
+                            return res?.ok;
+                          }
+                          // Split on double-newlines (paragraph boundaries)
+                          const paragraphs = fullMessage.split("\n\n");
+                          const chunks: string[] = [];
+                          let current = "";
+                          for (const p of paragraphs) {
+                            if ((current + "\n\n" + p).length > MAX_CHARS && current) {
+                              chunks.push(current);
+                              current = p;
+                            } else {
+                              current = current ? current + "\n\n" + p : p;
+                            }
+                          }
+                          if (current) chunks.push(current);
+                          // Hard-cap: if any single chunk is still too big (a giant
+                          // paragraph), force-split on single newline as fallback.
+                          const finalChunks: string[] = [];
+                          for (const c of chunks) {
+                            if (c.length <= MAX_CHARS) { finalChunks.push(c); continue; }
+                            const lines = c.split("\n");
+                            let buf = "";
+                            for (const ln of lines) {
+                              if ((buf + "\n" + ln).length > MAX_CHARS && buf) {
+                                finalChunks.push(buf);
+                                buf = ln;
+                              } else {
+                                buf = buf ? buf + "\n" + ln : ln;
+                              }
+                            }
+                            if (buf) finalChunks.push(buf);
+                          }
+                          let allOk = true;
+                          for (let i = 0; i < finalChunks.length; i++) {
+                            const labelled = finalChunks.length > 1
+                              ? `*Part ${i + 1}/${finalChunks.length}*\n\n${finalChunks[i]}`
+                              : finalChunks[i];
+                            const res = await apiFetch("/inbox/send", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ phone: phoneClean, message: labelled, caseId }),
+                            }).catch(() => null);
+                            if (!res?.ok) { allOk = false; break; }
+                            // Small delay so messages arrive in order
+                            if (i < finalChunks.length - 1) {
+                              await new Promise(r => setTimeout(r, 500));
+                            }
+                          }
+                          if (allOk) onSuccess?.();
+                          return allOk;
+                        };
+                        return null;
+                      })()}
 
                       {/* Send Checklist */}
                       {matchedCase && (() => {
@@ -10293,8 +10372,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         ].join("\n");
                         return (
                           <button onClick={async () => {
-                            const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:checklistMsg,caseId:matchedCase.id})}).catch(()=>null);
-                            if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:checklistMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Checklist sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                            const ok = await (window as any).__sendInboxLongSafe(
+                              phone,
+                              checklistMsg,
+                              matchedCase.id,
+                              () => {
+                                setInboxMessages(prev => [
+                                  { id: `tmp-${Date.now()}`, phone, message: checklistMsg, direction: "outbound", matched_case_id: matchedCase.id, matched_case_name: clientName, is_read: true, created_at: new Date().toISOString() },
+                                  ...prev,
+                                ]);
+                                setCaseActionStatus("✅ Checklist sent!");
+                                setTimeout(() => setCaseActionStatus(""), 3000);
+                              }
+                            );
+                            if (!ok) { setCaseActionStatus("❌ Send failed — check logs"); setTimeout(() => setCaseActionStatus(""), 3000); }
                           }} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left hover:bg-blue-100 transition-colors">
                             <p className="text-xs font-bold text-blue-800">📋 Send Document Checklist</p>
                             <p className="text-[10px] text-blue-600 mt-0.5">{checklist.filter((i: any) => i.required).length} required · {checklist.filter((i: any) => !i.required).length} optional</p>
@@ -10320,11 +10411,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         ].join("\n");
                         return (
                           <button onClick={async () => {
-                            const res = await apiFetch("/inbox/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:phone.replace(/\D/g,""),message:questionsMsg,caseId:matchedCase.id})}).catch(()=>null);
-                            if (res?.ok) { setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:questionsMsg,direction:"outbound",matched_case_id:matchedCase.id,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]); setCaseActionStatus("✅ Questions sent!"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                            const ok = await (window as any).__sendInboxLongSafe(
+                              phone,
+                              questionsMsg,
+                              matchedCase.id,
+                              () => {
+                                setInboxMessages(prev => [
+                                  { id: `tmp-${Date.now()}`, phone, message: questionsMsg, direction: "outbound", matched_case_id: matchedCase.id, matched_case_name: clientName, is_read: true, created_at: new Date().toISOString() },
+                                  ...prev,
+                                ]);
+                                setCaseActionStatus("✅ Questions sent!");
+                                setTimeout(() => setCaseActionStatus(""), 3000);
+                              }
+                            );
+                            if (!ok) { setCaseActionStatus("❌ Send failed — check logs"); setTimeout(() => setCaseActionStatus(""), 3000); }
                           }} className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-left hover:bg-purple-100 transition-colors">
                             <p className="text-xs font-bold text-purple-800">📝 Send Intake Questions</p>
-                            <p className="text-[10px] text-purple-600 mt-0.5">{questions.length} questions</p>
+                            <p className="text-[10px] text-purple-600 mt-0.5">{questions.length} questions{questionsMsg.length > 3500 ? ` · auto-split into parts` : ""}</p>
                           </button>
                         );
                       })()}
