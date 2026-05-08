@@ -7190,21 +7190,38 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           </div>
                           {/* Barcode-validate workflow notice */}
                           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 mt-2">
-                            <p className="text-xs font-bold text-amber-900 mb-1">⚠️ After generating: open in Adobe Reader to add the barcode</p>
+                            <p className="text-xs font-bold text-amber-900 mb-1">⚠️ After generating: validate in Foxit Reader to add the barcode</p>
                             <p className="text-[10px] text-amber-800 leading-relaxed">
-                              IRCC forms have a barcode at the bottom that's only generated when you open the
-                              PDF in <b>Adobe Reader</b> (free download from adobe.com) and click <b>Validate</b>.
-                              Mac Preview, Chrome PDF viewer, and mobile previews don't run the barcode JavaScript,
-                              so they'll show the form without a barcode. <b>Required workflow:</b>
+                              IRCC forms have a barcode at the bottom that's only generated when the PDF is
+                              opened and validated. <b>Adobe Reader (DC 21+) BLOCKS this</b> with a "JavaScript
+                              has been disabled" warning that even Preferences won't override. Use{" "}
+                              <a
+                                href="https://www.foxit.com/pdf-reader/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-bold underline text-amber-900 hover:text-amber-700"
+                              >
+                                Foxit PDF Reader
+                              </a>{" "}
+                              instead — free, runs IRCC's barcode script without restrictions, and IRCC
+                              accepts the resulting barcode (it's standard PDF417 — they don't care which app
+                              produced it).
                             </p>
-                            <ol className="text-[10px] text-amber-800 mt-1 ml-4 list-decimal space-y-0.5">
+                            <p className="text-[11px] font-bold text-amber-900 mt-2 mb-1">Required workflow:</p>
+                            <ol className="text-[10px] text-amber-800 ml-4 list-decimal space-y-0.5">
                               <li>Click "Generate Now" → PDF saves to Drive folder</li>
                               <li>Download the PDF from Drive</li>
-                              <li>Open it in Adobe Reader (NOT Preview / Chrome / browser)</li>
+                              <li>Right-click → Open With → <b>Foxit PDF Reader</b> (NOT Preview / Chrome / Adobe)</li>
                               <li>Click the <b>Validate</b> button at the bottom of the form</li>
-                              <li>Barcode appears → save the PDF — barcode is now baked in</li>
+                              <li>Barcode appears → File → Save — barcode is now baked in</li>
                               <li>Re-upload the validated version to Drive (replaces the original)</li>
                             </ol>
+                            <p className="text-[10px] text-amber-700 italic mt-2">
+                              💡 <b>Why not Adobe?</b> Adobe Reader DC 21+ has a JavaScript blacklist that
+                              blocks IRCC's barcode-generation script. Even toggling "Enable Acrobat
+                              JavaScript" in Preferences won't bypass it. Foxit is the standard tool used
+                              by Canadian RCICs for this reason.
+                            </p>
                           </div>
                           </>
                         )}
