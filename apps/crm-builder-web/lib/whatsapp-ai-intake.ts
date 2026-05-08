@@ -439,6 +439,7 @@ export async function startIntakeSession(params: {
   existingIntake?: Record<string, any>;
 }): Promise<{ success: boolean; error?: string; skippedCount?: number; recoveredCount?: number; mode?: string }> {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
+  console.log(`▶️  startIntakeSession ENTRY: caseId=${caseId} phone=${phone} client="${clientName}" formType="${formType}"`);
 
   // ── Idempotency guard ──
   //
@@ -583,6 +584,7 @@ export async function startIntakeSession(params: {
   }
 
   // Send template greeting (cold contact OR direct-start failed)
+  console.log(`📤 Sending newton_intake template to ${phone} (firstName=${firstName}, formType=${formType})`);
   const templateResult = await sendWhatsAppTemplate({
     to: phone,
     templateName: "newton_intake",
@@ -601,11 +603,19 @@ export async function startIntakeSession(params: {
     return { success: true, skippedCount, mode: "template" };
   }
 
+  // Template send failed — log the actual reason instead of silently falling back
+  console.error(`❌ Template send FAILED for ${phone}: ${templateResult.error || "unknown error"}. Falling back to direct AI chat.`);
+
   // Fallback — start AI chat immediately
   session.phase = "ai_chat";
   await setSession(phone, session);
   const firstMsg = await getAiNextMessage(session, null);
-  await sendWhatsAppText(phone, firstMsg);
+  const fallbackResult = await sendWhatsAppText(phone, firstMsg);
+  if (fallbackResult && (fallbackResult as any).success === false) {
+    console.error(`❌ Fallback direct text ALSO failed for ${phone}: ${(fallbackResult as any).error || "unknown"}. Client will receive nothing — staff must message manually.`);
+    return { success: false, error: `Both template and direct send failed for ${phone}. Staff: send a manual greeting from the case.` };
+  }
+  console.log(`📨 Fallback direct text sent to ${phone} (template failed, used ai_chat fallback)`);
   return { success: true, skippedCount, mode: "fallback" };
 }
 
