@@ -6,18 +6,40 @@ const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 // Download media from WhatsApp
 async function downloadWaMedia(mediaId: string): Promise<{ buffer: Buffer; mimeType: string; filename: string } | null> {
   try {
-    // Get media URL
+    // Get media URL — Meta gives us a temporary download URL (5-15 min lifetime
+    // typically; nominally 30 days but often shorter in practice).
     const urlRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
       headers: { Authorization: `Bearer ${WA_TOKEN}` }
     });
-    const urlData = await urlRes.json() as { url?: string; mime_type?: string };
-    if (!urlData.url) return null;
+    if (!urlRes.ok) {
+      const errText = await urlRes.text().catch(() => "");
+      console.error(`❌ WA media URL fetch failed for ${mediaId}: status=${urlRes.status} body=${errText.slice(0, 200)}`);
+      return null;
+    }
+    const urlData = await urlRes.json() as { url?: string; mime_type?: string; error?: any };
+    if (urlData.error) {
+      console.error(`❌ WA media URL response had error for ${mediaId}:`, JSON.stringify(urlData.error).slice(0, 300));
+      return null;
+    }
+    if (!urlData.url) {
+      console.error(`❌ WA media URL response missing 'url' field for ${mediaId}:`, JSON.stringify(urlData).slice(0, 300));
+      return null;
+    }
 
-    // Download the file
+    // Download the file from the temporary CDN URL
     const fileRes = await fetch(urlData.url, {
       headers: { Authorization: `Bearer ${WA_TOKEN}` }
     });
+    if (!fileRes.ok) {
+      const errText = await fileRes.text().catch(() => "");
+      console.error(`❌ WA media file download failed for ${mediaId}: status=${fileRes.status} body=${errText.slice(0, 200)} (likely expired URL)`);
+      return null;
+    }
     const buffer = Buffer.from(await fileRes.arrayBuffer());
+    if (buffer.length === 0) {
+      console.error(`❌ WA media file downloaded as empty buffer for ${mediaId} (URL may have expired silently)`);
+      return null;
+    }
     const mimeType = urlData.mime_type || "application/octet-stream";
     // Get proper extension from mime type
     const extMap: Record<string, string> = {
@@ -36,9 +58,10 @@ async function downloadWaMedia(mediaId: string): Promise<{ buffer: Buffer; mimeT
     };
     const ext = extMap[mimeType] || (mimeType.includes("zip") ? ".zip" : mimeType.includes("pdf") ? ".pdf" : mimeType.includes("image") ? ".jpg" : ".bin");
     const filename = `wa_doc_${Date.now()}${ext}`;
+    console.log(`✅ WA media downloaded for ${mediaId}: ${buffer.length} bytes, ${mimeType}`);
     return { buffer, mimeType, filename };
   } catch (e) {
-    console.error("Failed to download WA media:", (e as Error).message);
+    console.error(`❌ Failed to download WA media ${mediaId}:`, (e as Error).message);
     return null;
   }
 }
@@ -132,17 +155,29 @@ export async function POST(req: NextRequest) {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
         // For docs/images/audio, save a placeholder that will be UPDATED later
-        // (after the file uploads to S3). Format: `[doc:msgId|kind=image|pending=1]`
+        // (after the file uploads to S3). Format:
+        //   [doc:msgId|kind=image|mediaId=<id>|pending=1|caption=...]
+        //
+        // Why include mediaId: when the upload silently fails (S3 down, media
+        // expired, DB UPDATE error, etc.), the row stays at pending=1 forever.
+        // Storing the mediaId in the placeholder lets a retry endpoint
+        // re-attempt the fetch from Meta without staff needing to reconstruct
+        // the original webhook payload. WhatsApp media URLs are time-limited
+        // (~30 days nominal but often shorter in practice), so retries only
+        // work for reasonably-recent stuck uploads.
+        //
         // The frontend renders this as "📎 (uploading...)" until the row updates.
         const docKind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
         const docCaption = String(message[msgType]?.caption || message[msgType]?.filename || message[msgType]?.name || "").trim();
         const captionPart = docCaption ? `|caption=${encodeURIComponent(docCaption)}` : "";
+        const placeholderMediaId = message[msgType]?.id || "";
+        const mediaIdPart = placeholderMediaId ? `|mediaId=${placeholderMediaId}` : "";
         // For button/interactive replies, we extracted readable text above and
         // should display that — NOT a "[doc:...]" placeholder, which would
         // confuse staff reviewing the inbox.
         const displayMsg = (msgType === "text" || (text && (msgType === "button" || msgType === "interactive")))
           ? text
-          : `[doc:${msgId}|kind=${docKind}|pending=1${captionPart}]`;
+          : `[doc:${msgId}|kind=${docKind}${mediaIdPart}|pending=1${captionPart}]`;
         // ─── Normalize phone before insert ───
         // Meta sometimes sends the same contact under two formats:
         //   "12364120016" (with country code) and "2364120016" (without).
@@ -465,9 +500,15 @@ export async function POST(req: NextRequest) {
         const mediaCaption = message[msgType]?.caption || originalFilename || message[msgType]?.filename || msgType;
 
         if (mediaId) {
-          console.log(`📎 WA media from ${matched.client}: ${mediaCaption}`);
+          console.log(`📎 WA media from ${matched.client} (mediaId=${mediaId}): ${mediaCaption}`);
           try {
             const media = await downloadWaMedia(mediaId);
+            if (!media) {
+              // downloadWaMedia already logged the specific reason. This adds
+              // the context (which case, msgId) so we can correlate to a stuck
+              // inbox row later.
+              console.error(`❌ Stuck upload: media download returned null. case=${matched.client} msgId=${msgId} mediaId=${mediaId}. Inbox row ${msgId} will remain at pending=1 until cleared.`);
+            }
             if (media) {
               const { putObjectToS3, buildS3ObjectKey, toS3StoredLink, isS3StorageEnabled } = await import("@/lib/object-storage");
               const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
@@ -503,10 +544,13 @@ export async function POST(req: NextRequest) {
                   const updatedDisplay = `[doc:${msgId}|kind=${msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document"}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}${mediaCaption && mediaCaption !== originalFilename ? `|caption=${encodeURIComponent(mediaCaption)}` : ""}]`;
                   await upPool.query(`UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`, [updatedDisplay, msgId]);
                   await upPool.end();
+                  console.log(`✅ Inbox row ${msgId} updated with download info (case=${matched.client})`);
                 } catch (e) {
-                  console.error("Inbox row update failed:", (e as Error).message);
+                  console.error(`❌ Inbox row update failed for ${msgId} (case=${matched.client}):`, (e as Error).message, "— S3 has the file but inbox row is still at pending=1.");
                 }
-              } catch(e) { console.error("S3 save failed:", e); }
+              } catch(e) {
+                console.error(`❌ S3 save failed for case=${matched.client} msgId=${msgId}:`, (e as Error).message, "— Inbox row will remain at pending=1.");
+              }
 
               // ── STEP 2: AI CLASSIFY & EXTRACT DATA ──────────────────────
               // Uses the shared doc-ocr module (same logic as the staff-triggered
