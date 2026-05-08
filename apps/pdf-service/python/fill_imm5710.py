@@ -661,14 +661,39 @@ def fill_imm5710(client: dict, input_pdf: str, output_pdf: str) -> str:
     sv(yn(data["witnessed_ill_treatment"]),  "Page4","BackgroundInfo","Illtreatment","qWitnessNY")
 
     # ── Save PDF ──────────────────────────────────────────────────
+    # IMPORTANT: We must NOT save via pypdf's PdfWriter — it does not preserve
+    # XFA streams correctly. The barcode at the bottom of the form is generated
+    # by JavaScript inside the XFA when the user clicks "Validate" in Adobe
+    # Reader. If pypdf re-encodes the XFA, the barcode generation breaks and
+    # the barcode disappears after validation.
+    #
+    # Bug history: 2026-05 — Newton staff reported "form validates fine but
+    # barcode disappears after". Root cause: pypdf was stripping/breaking the
+    # XFA scripting that generates the barcode.
+    #
+    # Fix: write the modified XFA datasets back to the file using pikepdf,
+    # which round-trips XFA properly. We use pypdf only to navigate/modify the
+    # in-memory XFA tree (which works fine); the final save goes through pikepdf.
     ET.register_namespace('xfa', XFA_NS)
-    ds_stream.set_data(ET.tostring(root, encoding='unicode').encode('utf-8'))
-    writer = PdfWriter()
-    writer.append(reader)
-    with open(output_pdf, 'wb') as f:
-        writer.write(f)
+    new_xfa_xml = ET.tostring(root, encoding='unicode').encode('utf-8')
 
-    print(f"✅  IMM5710 filled → {output_pdf}")
+    # Open the source PDF fresh with pikepdf and replace just the datasets
+    # stream. Everything else (XFA template, scripts, fonts, page tree) stays
+    # untouched so the barcode generation logic survives.
+    with pikepdf.open(input_pdf) as pdf:
+        acroform = pdf.Root.AcroForm
+        xfa = acroform.XFA
+        # XFA is an array of [name, stream, name, stream, ...]
+        # Find the 'datasets' name and replace the next stream with our updated XML.
+        for i in range(0, len(xfa), 2):
+            if str(xfa[i]) == 'datasets':
+                xfa[i + 1].write(new_xfa_xml)
+                break
+        else:
+            raise RuntimeError("Could not find datasets stream to replace")
+        pdf.save(output_pdf)
+
+    print(f"✅  IMM5710 filled (XFA-preserved) → {output_pdf}")
     return output_pdf
 
 

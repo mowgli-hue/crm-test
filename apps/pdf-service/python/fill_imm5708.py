@@ -23,7 +23,6 @@ Requirements:
 """
 
 from pypdf import PdfReader, PdfWriter
-import pikepdf
 import xml.etree.ElementTree as ET
 
 
