@@ -87,24 +87,29 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       // Skip files that look like Newton-GENERATED forms — those would mislead OCR
       // because they're already-filled forms, not raw client uploads.
       //
-      // Patterns we generate (must match these exactly so we don't accidentally
-      // skip CLIENT uploads named similarly, e.g., "Completion Letter.pdf"):
-      //   - IMM5710e_FirstName_LastName.pdf
-      //   - IMM5476_FirstName_LastName.pdf
-      //   - Representative_Submission_Letter_FirstName_LastName.pdf
-      //   - Client_Info_FirstName_LastName.pdf (legacy)
-      //   - Application_Forms_*.pdf
+      // Newton's GENERATED filename format is strict:
+      //   IMM<digits><opt-letter>_<FirstName>_<LastName>.pdf
       //
-      // Real bug fixed: previous regex `Letter|Submission` matched
-      // "Completion Letter.pdf" (a CLIENT upload, the most important PGWP doc)
-      // and incorrectly skipped it from OCR.
-      const isGeneratedDoc =
-        /^IMM\d{4}[a-z]?_/i.test(file.name) ||                         // IMM5710e_..., IMM5476_...
-        /Representative.Submission.Letter/i.test(file.name) ||           // our submission letter
-        /^Client_Info_/i.test(file.name) ||                              // legacy package file
-        /^Application_Forms/i.test(file.name) ||                         // bundled forms PDF
-        /^Submission.Package/i.test(file.name);                          // bundled package
-      if (isGeneratedDoc) {
+      // Examples GENERATED (skip):
+      //   - IMM5710e_Pratham_Patel.pdf
+      //   - IMM5476_Pratham_Patel.pdf
+      //   - IMM5444_Pratham_Patel.pdf
+      //
+      // Examples CLIENT UPLOADS (do NOT skip — must OCR):
+      //   - IMM5739_1-1431N39M.pdf  (client-filled restoration form, no name)
+      //   - IMM5710_filled.pdf       (client uploaded their own version)
+      //   - "Completion Letter.pdf"  (the most common false-positive previously)
+      //
+      // Heuristic: Newton's generated docs are ALWAYS named IMM####_FirstName_LastName
+      // pattern with the underscore-FirstName-underscore-LastName structure. Client
+      // uploads typically don't follow this — they have hyphens, numbers, no name, etc.
+      const isNewtonGenerated =
+        /^IMM\d{4}[a-z]?_[A-Z][a-z]+_[A-Z][a-z]+\.pdf$/i.test(file.name) ||  // strict: IMM####_First_Last.pdf
+        /^Representative.Submission.Letter_[A-Z][a-z]+_[A-Z][a-z]+/i.test(file.name) ||
+        /^Client_Info_[A-Z][a-z]+_[A-Z][a-z]+/i.test(file.name) ||
+        /^Application_Forms_[A-Z][a-z]+_[A-Z][a-z]+/i.test(file.name) ||
+        /^Submission.Package_[A-Z][a-z]+_[A-Z][a-z]+/i.test(file.name);
+      if (isNewtonGenerated) {
         perFileResults.push({ name: file.name, error: "Skipped (looks like generated doc)" });
         continue;
       }

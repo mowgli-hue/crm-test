@@ -72,19 +72,20 @@ export async function GET(
   }
 
   // For each file, classify what scan-docs would do with it
-  // (Pattern must match scan-docs/route.ts exactly)
-  const isGeneratedDocPattern = (name: string) =>
-    /^IMM\d{4}[a-z]?_/i.test(name) ||
-    /Representative.Submission.Letter/i.test(name) ||
-    /^Client_Info_/i.test(name) ||
-    /^Application_Forms/i.test(name) ||
-    /^Submission.Package/i.test(name);
+  // (Pattern must match scan-docs/route.ts exactly — only Newton-GENERATED docs are skipped,
+  //  identified by the strict IMM####_FirstName_LastName.pdf naming convention)
+  const isNewtonGeneratedPattern = (name: string) =>
+    /^IMM\d{4}[a-z]?_[A-Z][a-z]+_[A-Z][a-z]+\.pdf$/i.test(name) ||
+    /^Representative.Submission.Letter_[A-Z][a-z]+_[A-Z][a-z]+/i.test(name) ||
+    /^Client_Info_[A-Z][a-z]+_[A-Z][a-z]+/i.test(name) ||
+    /^Application_Forms_[A-Z][a-z]+_[A-Z][a-z]+/i.test(name) ||
+    /^Submission.Package_[A-Z][a-z]+_[A-Z][a-z]+/i.test(name);
 
   const classification = files.map((f) => {
     const isImage = f.mimeType.startsWith("image/");
     const isPdf = f.mimeType.includes("pdf");
     const isScannable = isImage || isPdf;
-    const matchesSkip = isGeneratedDocPattern(f.name);
+    const matchesSkip = isNewtonGeneratedPattern(f.name);
 
     let action: "WILL_SCAN" | "SKIP_NOT_IMAGE_OR_PDF" | "SKIP_GENERATED_DOC_PATTERN";
     let reason: string;
@@ -95,8 +96,8 @@ export async function GET(
     } else if (matchesSkip) {
       action = "SKIP_GENERATED_DOC_PATTERN";
       reason =
-        `Filename looks like a Newton-generated doc (IMM#### / Submission Letter / Client_Info / ` +
-        `Application_Forms). If this is actually a CLIENT upload, rename it.`;
+        `Filename matches Newton's generated-doc naming convention (IMM####_FirstName_LastName.pdf). ` +
+        `If this is actually a CLIENT upload, rename it to bypass.`;
     } else {
       action = "WILL_SCAN";
       reason = "OCR will run on this file";
