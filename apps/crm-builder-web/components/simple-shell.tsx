@@ -4552,6 +4552,63 @@ We will notify you as soon as we receive a decision. This usually takes a few we
         ]
       },
       {
+        title: "💼 Current / Proposed Work (Section 8 — IMM5710 only)",
+        fields: [
+          { key: "employer_name", label: "Employer Name" },
+          { key: "employer_address", label: "Employer Address" },
+          { key: "work_location_city", label: "Work City" },
+          { key: "work_location_province", label: "Work Province / State" },
+          { key: "work_location_address", label: "Work Address" },
+          { key: "job_title", label: "Job Title" },
+          { key: "job_description", label: "Job Description / Duties" },
+          { key: "work_from_date", label: "Work From (YYYY-MM-DD)" },
+          { key: "work_to_date", label: "Work To (YYYY-MM-DD)" },
+          { key: "lmo_number", label: "LMIA / LMO Number" },
+        ]
+      },
+      {
+        title: "📋 Employment History — Job 1 (most recent)",
+        fields: [
+          { key: "employment.0.from_year", label: "From Year" },
+          { key: "employment.0.from_month", label: "From Month" },
+          { key: "employment.0.to_year", label: "To Year" },
+          { key: "employment.0.to_month", label: "To Month" },
+          { key: "employment.0.occupation", label: "Job Title / Occupation" },
+          { key: "employment.0.employer", label: "Employer / Company" },
+          { key: "employment.0.city", label: "City" },
+          { key: "employment.0.country", label: "Country" },
+          { key: "employment.0.prov_state", label: "Province / State" },
+        ]
+      },
+      {
+        title: "📋 Employment History — Job 2",
+        fields: [
+          { key: "employment.1.from_year", label: "From Year" },
+          { key: "employment.1.from_month", label: "From Month" },
+          { key: "employment.1.to_year", label: "To Year" },
+          { key: "employment.1.to_month", label: "To Month" },
+          { key: "employment.1.occupation", label: "Job Title / Occupation" },
+          { key: "employment.1.employer", label: "Employer / Company" },
+          { key: "employment.1.city", label: "City" },
+          { key: "employment.1.country", label: "Country" },
+          { key: "employment.1.prov_state", label: "Province / State" },
+        ]
+      },
+      {
+        title: "📋 Employment History — Job 3 (oldest)",
+        fields: [
+          { key: "employment.2.from_year", label: "From Year" },
+          { key: "employment.2.from_month", label: "From Month" },
+          { key: "employment.2.to_year", label: "To Year" },
+          { key: "employment.2.to_month", label: "To Month" },
+          { key: "employment.2.occupation", label: "Job Title / Occupation" },
+          { key: "employment.2.employer", label: "Employer / Company" },
+          { key: "employment.2.city", label: "City" },
+          { key: "employment.2.country", label: "Country" },
+          { key: "employment.2.prov_state", label: "Province / State" },
+        ]
+      },
+      {
         title: "🔍 Background",
         fields: [
           { key: "prev_application_refused", label: "Prev Refused", type: "bool" },
@@ -4583,9 +4640,21 @@ We will notify you as soon as we receive a decision. This usually takes a few we
     const rawAnswersHTML = rawAnswersList.join("") || `<p style="color:#94a3b8;font-size:11px;">(no Q-numbered answers found)</p>`;
 
     // Build editable form fields HTML for the left panel
+    // Helper for dotted paths like "employment.0.occupation" — needed because
+    // some IRCC fields are nested arrays (Section 10 = up to 3 jobs).
+    const readPath = (obj: any, path: string): any => {
+      if (!path.includes(".")) return obj?.[path];
+      return path.split(".").reduce((acc, key) => {
+        if (acc == null) return undefined;
+        // If key is numeric, ensure parent is array-indexable
+        const numKey = /^\d+$/.test(key) ? parseInt(key, 10) : key;
+        return acc[numKey];
+      }, obj);
+    };
+
     const groupsHTML = FIELD_GROUPS.map(group => {
       const fieldsHTML = group.fields.map(f => {
-        const val = opts.clientData[f.key];
+        const val = readPath(opts.clientData, f.key);
         const displayVal = val === undefined || val === null ? "" : String(val);
         const safeVal = displayVal.replace(/"/g, "&quot;").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c] || c));
         if (f.type === "bool") {
@@ -4651,20 +4720,58 @@ We will notify you as soon as we receive a decision. This usually takes a few we
     const statusSpan = document.getElementById("__review_status__")!;
     confirmBtn?.addEventListener("click", async () => {
       // Collect every edited field — only include keys whose value actually changed from the original
-      const overrides: Record<string, any> = {};
+      // Some keys are dotted paths like "employment.0.occupation" — we need
+      // to read the original value via path AND restructure them back into
+      // proper nested arrays before sending to the server.
+      const flatOverrides: Record<string, any> = {};
       const inputs = modal.querySelectorAll("input[data-key]");
       inputs.forEach(inp => {
         const el = inp as HTMLInputElement;
         const key = el.dataset.key!;
         const type = el.dataset.type;
         const currentVal = type === "bool" ? el.checked : el.value;
-        const origVal = opts.clientData[key];
+        // Read the original value supporting dotted paths
+        const origVal = readPath(opts.clientData, key);
         const changed = type === "bool"
           ? currentVal !== (origVal === true || origVal === "true")
           : currentVal !== (origVal === undefined || origVal === null ? "" : String(origVal));
         // We send the FULL value (whether changed or not) to ensure intent is explicit
-        overrides[key] = currentVal;
+        flatOverrides[key] = currentVal;
       });
+
+      // Restructure dotted-path keys back into nested arrays/objects.
+      // Example: { "employment.0.occupation": "Cook", "employment.0.employer": "X" }
+      //   →     { employment: [ { occupation: "Cook", employer: "X" } ] }
+      const overrides: Record<string, any> = {};
+      for (const [key, val] of Object.entries(flatOverrides)) {
+        if (!key.includes(".")) {
+          overrides[key] = val;
+          continue;
+        }
+        // Walk the dotted path, building objects/arrays as needed
+        const parts = key.split(".");
+        let cur: any = overrides;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          const nextPart = parts[i + 1];
+          const nextIsArrayIndex = /^\d+$/.test(nextPart);
+          if (cur[part] == null) {
+            cur[part] = nextIsArrayIndex ? [] : {};
+          }
+          cur = cur[part];
+        }
+        const lastPart = parts[parts.length - 1];
+        const idx = /^\d+$/.test(lastPart) ? parseInt(lastPart, 10) : lastPart;
+        cur[idx as any] = val;
+      }
+
+      // Trim empty employment-history entries — if all keys in a job are blank,
+      // drop it entirely so the form doesn't show an empty row.
+      if (Array.isArray(overrides.employment)) {
+        overrides.employment = overrides.employment.filter((e: any) =>
+          e && Object.values(e).some((v) => v !== "" && v !== null && v !== undefined)
+        );
+      }
       confirmBtn.disabled = true;
       confirmBtn.textContent = "Generating...";
       statusSpan.style.display = "inline";
