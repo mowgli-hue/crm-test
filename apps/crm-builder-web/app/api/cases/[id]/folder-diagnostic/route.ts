@@ -18,15 +18,15 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireSessionUser } from "@/lib/auth-session";
-import { getCase } from "@/lib/cases-store";
+import { getCurrentUserFromRequest } from "@/lib/auth";
+import { getCase } from "@/lib/store";
 import { listFilesInFolder, extractDriveFolderId } from "@/lib/google-drive";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const user = await requireSessionUser();
+  const user = await getCurrentUserFromRequest(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const caseItem = await getCase(user.companyId, params.id);
