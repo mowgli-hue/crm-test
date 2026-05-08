@@ -84,8 +84,27 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
   for (const file of scannableFiles) {
     try {
-      // Skip files that look like generated forms — those would mislead OCR
-      if (/IMM\d{4}|Letter|Submission|Client_Info|Application_Forms/i.test(file.name)) {
+      // Skip files that look like Newton-GENERATED forms — those would mislead OCR
+      // because they're already-filled forms, not raw client uploads.
+      //
+      // Patterns we generate (must match these exactly so we don't accidentally
+      // skip CLIENT uploads named similarly, e.g., "Completion Letter.pdf"):
+      //   - IMM5710e_FirstName_LastName.pdf
+      //   - IMM5476_FirstName_LastName.pdf
+      //   - Representative_Submission_Letter_FirstName_LastName.pdf
+      //   - Client_Info_FirstName_LastName.pdf (legacy)
+      //   - Application_Forms_*.pdf
+      //
+      // Real bug fixed: previous regex `Letter|Submission` matched
+      // "Completion Letter.pdf" (a CLIENT upload, the most important PGWP doc)
+      // and incorrectly skipped it from OCR.
+      const isGeneratedDoc =
+        /^IMM\d{4}[a-z]?_/i.test(file.name) ||                         // IMM5710e_..., IMM5476_...
+        /Representative.Submission.Letter/i.test(file.name) ||           // our submission letter
+        /^Client_Info_/i.test(file.name) ||                              // legacy package file
+        /^Application_Forms/i.test(file.name) ||                         // bundled forms PDF
+        /^Submission.Package/i.test(file.name);                          // bundled package
+      if (isGeneratedDoc) {
         perFileResults.push({ name: file.name, error: "Skipped (looks like generated doc)" });
         continue;
       }
