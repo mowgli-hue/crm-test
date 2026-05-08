@@ -23,6 +23,7 @@ Requirements:
 """
 
 from pypdf import PdfReader, PdfWriter
+import pikepdf
 import xml.etree.ElementTree as ET
 
 
@@ -454,14 +455,23 @@ def fill_imm5708(client: dict, input_pdf: str, output_pdf: str) -> str:
     sv("1" if data["witnessed_ill_treatment"]  else "0", "Page4","BackgroundInfo","Illtreatment","qWitnessNY")
 
     # ── Save ──────────────────────────────────────────────────────
+    # See fill_imm5710.py for full explanation — pikepdf preserves XFA
+    # barcode generation; pypdf strips it.
     ET.register_namespace('xfa', XFA_NS)
-    ds_stream.set_data(ET.tostring(root, encoding='unicode').encode('utf-8'))
-    writer = PdfWriter()
-    writer.append(reader)
-    with open(output_pdf, 'wb') as f:
-        writer.write(f)
+    new_xfa_xml = ET.tostring(root, encoding='unicode').encode('utf-8')
 
-    print(f"✅  IMM5708 filled → {output_pdf}")
+    with pikepdf.open(input_pdf) as pdf:
+        acroform = pdf.Root.AcroForm
+        xfa = acroform.XFA
+        for i in range(0, len(xfa), 2):
+            if str(xfa[i]) == 'datasets':
+                xfa[i + 1].write(new_xfa_xml)
+                break
+        else:
+            raise RuntimeError("Could not find datasets stream to replace")
+        pdf.save(output_pdf)
+
+    print(f"✅  IMM5708 filled (XFA-preserved) → {output_pdf}")
     return output_pdf
 
 

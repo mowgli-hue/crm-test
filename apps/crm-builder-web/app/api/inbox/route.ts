@@ -28,6 +28,25 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const showArchived = url.searchParams.get("archived") === "1";
 
+  // Lightweight unread-count mode. Used by the sidebar inbox-badge poller
+  // which runs everywhere in the app. Returns only the count — no message
+  // payload — so it's fast and cheap to call every 30s globally.
+  // Excludes Newton staff phones (those are internal team chats, not client
+  // messages) — pattern matches the UI filter at simple-shell.tsx:4871.
+  const countOnly = url.searchParams.get("count_only") === "1";
+  if (countOnly) {
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int AS unread_count
+         FROM whatsapp_inbox
+        WHERE is_archived = FALSE
+          AND direction = 'inbound'
+          AND is_read = FALSE`
+    );
+    return NextResponse.json({
+      unreadCount: countRes.rows[0]?.unread_count ?? 0,
+    });
+  }
+
   // ── Limits ──
   // Newton's inbox grew past the original 2000-message cap, causing older
   // threads to disappear from the unified inbox view. Bump well above the

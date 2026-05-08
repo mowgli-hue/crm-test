@@ -507,6 +507,15 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxMessages, setInboxMessages] = useState<Array<{id:string;phone:string;message:string;direction:string;matched_case_id:string|null;matched_case_name:string|null;is_read:boolean;created_at:string}>>([]);
   const [inboxLoaded, setInboxLoaded] = useState(false);
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
+  // Global unread count — separate from inboxMessages because that state only
+  // populates when staff is ON the Inbox screen. The sidebar badge needs to
+  // show even before they've opened Inbox in this session, so we poll a
+  // lightweight count endpoint every 30s regardless of current screen.
+  const [globalInboxUnread, setGlobalInboxUnread] = useState<number>(0);
+  // Same pattern for marketing inbox — was previously broken because the
+  // referenced state `marketingInboxMessages` didn't exist; the badge
+  // silently never showed. Now uses dedicated count poller.
+  const [globalMarketingUnread, setGlobalMarketingUnread] = useState<number>(0);
   const [newtonBriefing, setNewtonBriefing] = useState<{loaded:boolean; data:any}>({loaded:false, data:null});
   const [inboxSearch, setInboxSearch] = useState<Record<string,string>>({});
   const [inboxGlobalSearch, setInboxGlobalSearch] = useState("");
@@ -1106,6 +1115,56 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       clearInterval(t);
     };
   }, [screen, inboxShowArchived]);
+
+  // ── Global inbox unread badge poller ──
+  // Runs on EVERY screen (not just Inbox). Hits a lightweight count_only
+  // endpoint that returns just an integer — fast and cheap. Refreshes every
+  // 30s so the sidebar badge stays current as new messages arrive even when
+  // staff is working in Cases / Tasks / etc.
+  // When staff IS on the Inbox screen, the heavier inboxMessages poller
+  // above provides a more accurate count from already-loaded data, so we
+  // sync globalInboxUnread from that to keep the badge consistent.
+  useEffect(() => {
+    if (!sessionUser) return;
+
+    const fetchCount = () => {
+      apiFetch(`/inbox?count_only=1`, { cache: "no-store" })
+        .then((r) => r?.json())
+        .then((d) => {
+          if (typeof d?.unreadCount === "number") {
+            setGlobalInboxUnread(d.unreadCount);
+          }
+        })
+        .catch(() => {});
+      // Marketing inbox count — same pattern, separate endpoint
+      apiFetch(`/marketing-inbox?count_only=1`, { cache: "no-store" })
+        .then((r) => r?.json())
+        .then((d) => {
+          if (typeof d?.unreadCount === "number") {
+            setGlobalMarketingUnread(d.unreadCount);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchCount(); // initial
+    const t = setInterval(fetchCount, 30000); // 30s
+    return () => clearInterval(t);
+  }, [sessionUser]);
+
+  // When the heavy inbox poller refreshes, sync the sidebar badge from its
+  // (more accurate) numbers so reading a message updates the badge instantly
+  // rather than waiting for the next 30s tick.
+  useEffect(() => {
+    if (screen !== "inbox") return;
+    const accurateUnread = inboxMessages.filter(
+      (m) =>
+        m.direction === "inbound" &&
+        !m.is_read &&
+        !STAFF_PHONES.some((p) => String(m.phone || "").includes(p.slice(-9)))
+    ).length;
+    setGlobalInboxUnread(accurateUnread);
+  }, [inboxMessages, screen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -4865,6 +4924,21 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         {visibleCases.filter((c) => isUrgentCase(c)).length}
                       </span>
                     )}
+                    {/* Inbox unread badge — uses globalInboxUnread which is
+                        kept fresh by a sidebar-wide poller every 30s, so the
+                        badge shows even when staff hasn't opened Inbox yet
+                        in this session. */}
+                    {tab.id === "inbox" && globalInboxUnread > 0 && (
+                      <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-slate-900 text-white" : "bg-blue-600 text-white"}`}>
+                        {globalInboxUnread}
+                      </span>
+                    )}
+                    {/* Marketing Inbox unread badge — same pattern as Inbox */}
+                    {tab.id === "marketing-inbox" && globalMarketingUnread > 0 && (
+                      <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold ${screen === tab.id ? "bg-slate-900 text-white" : "bg-purple-600 text-white"}`}>
+                        {globalMarketingUnread}
+                      </span>
+                    )}
                   </button>
                 );
 
@@ -6942,6 +7016,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                         {/* ── Generate IRCC Forms ── */}
                         {["post-graduation work permit","pgwp","sowp","spousal open work permit","bowp","bridging open work permit","open work permit","lmia","visitor record","visitor visa","trv","study permit","restoration"].some(k => selectedCase.formType.toLowerCase().includes(k)) && (
+                          <>
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 flex items-center justify-between gap-3 flex-wrap">
                             <div>
                               <p className="text-xs font-bold text-emerald-900">📄 IRCC Form Auto-Fill</p>
@@ -7006,6 +7081,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               ⚡ Generate Now
                             </button>
                           </div>
+                          {/* Barcode-validate workflow notice */}
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 mt-2">
+                            <p className="text-xs font-bold text-amber-900 mb-1">⚠️ After generating: open in Adobe Reader to add the barcode</p>
+                            <p className="text-[10px] text-amber-800 leading-relaxed">
+                              IRCC forms have a barcode at the bottom that's only generated when you open the
+                              PDF in <b>Adobe Reader</b> (free download from adobe.com) and click <b>Validate</b>.
+                              Mac Preview, Chrome PDF viewer, and mobile previews don't run the barcode JavaScript,
+                              so they'll show the form without a barcode. <b>Required workflow:</b>
+                            </p>
+                            <ol className="text-[10px] text-amber-800 mt-1 ml-4 list-decimal space-y-0.5">
+                              <li>Click "Generate Now" → PDF saves to Drive folder</li>
+                              <li>Download the PDF from Drive</li>
+                              <li>Open it in Adobe Reader (NOT Preview / Chrome / browser)</li>
+                              <li>Click the <b>Validate</b> button at the bottom of the form</li>
+                              <li>Barcode appears → save the PDF — barcode is now baked in</li>
+                              <li>Re-upload the validated version to Drive (replaces the original)</li>
+                            </ol>
+                          </div>
+                          </>
                         )}
 
                         

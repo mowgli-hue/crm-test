@@ -60,6 +60,22 @@ export async function GET(request: NextRequest) {
 
   try {
     await ensureSchema();
+
+    // Lightweight unread-count mode for the sidebar badge poller.
+    // Returns just the integer; runs everywhere in the app.
+    const url = new URL(request.url);
+    if (url.searchParams.get("count_only") === "1") {
+      const countRes = await pool.query(
+        `SELECT COUNT(*)::int AS unread_count
+           FROM marketing_inbox
+          WHERE direction = 'inbound'
+            AND is_read = FALSE`
+      );
+      return NextResponse.json({
+        unreadCount: countRes.rows[0]?.unread_count ?? 0,
+      });
+    }
+
     const messagesRes = await pool.query(
       `SELECT * FROM marketing_inbox ORDER BY created_at DESC LIMIT 1000`
     );
