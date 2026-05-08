@@ -10519,6 +10519,116 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <p className="mt-0.5 text-xs text-slate-500">View team members, their cases, and leave notes.</p>
               </div>
 
+              {/* ── Workload Bar Chart ──
+                  Quick visual of which team members are over/under-allocated.
+                  Uses pure CSS-width-percentage bars (no chart library) so it
+                  renders fast and adds zero kb to bundle. Colors:
+                    blue  = active cases
+                    red   = urgent flagged cases
+                    green = submitted (history, included in total height to
+                            show overall throughput)
+                  Sorted by active case count descending so the busiest staff
+                  appear at the top. */}
+              {(() => {
+                const activeMembers = teamUsers.filter(u => u.active !== false);
+                if (activeMembers.length === 0) return null;
+                const stats = activeMembers.map(member => {
+                  const memberCases = cases.filter(c => String(c.assignedTo || "").toLowerCase() === member.name.toLowerCase());
+                  const active = memberCases.filter(c => c.processingStatus !== "submitted" && c.caseStatus !== "closed").length;
+                  const urgent = memberCases.filter(c => isUrgentCase(c)).length;
+                  const submitted = memberCases.filter(c => c.processingStatus === "submitted").length;
+                  return { member, active, urgent, submitted, total: memberCases.length };
+                }).sort((a, b) => b.active - a.active);
+                const maxActive = Math.max(1, ...stats.map(s => s.active + s.submitted));
+                const totalActive = stats.reduce((sum, s) => sum + s.active, 0);
+                const totalUrgent = stats.reduce((sum, s) => sum + s.urgent, 0);
+                return (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">📊 Case Workload</h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{totalActive} active cases across {activeMembers.length} team members{totalUrgent > 0 ? ` · ${totalUrgent} urgent` : ""}</p>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px]">
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-blue-500"></span><span className="text-slate-600">Active</span></span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-red-500"></span><span className="text-slate-600">Urgent</span></span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-emerald-400"></span><span className="text-slate-600">Submitted</span></span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {stats.map(s => {
+                        const activeWidth = ((s.active - s.urgent) / maxActive) * 100;
+                        const urgentWidth = (s.urgent / maxActive) * 100;
+                        const submittedWidth = (s.submitted / maxActive) * 100;
+                        return (
+                          <button
+                            key={s.member.id}
+                            onClick={() => { setCaseAssignedFilter(s.member.name); setScreen("cases"); }}
+                            className="w-full text-left group hover:bg-slate-50 rounded-lg p-1.5 -m-1.5 transition-colors"
+                            title={`Click to view ${s.member.name}'s cases`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-32 shrink-0">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{s.member.name}</p>
+                                <p className="text-[10px] text-slate-400">{s.member.role}</p>
+                              </div>
+                              <div className="flex-1 relative">
+                                <div className="h-6 bg-slate-100 rounded-md overflow-hidden flex">
+                                  {urgentWidth > 0 && (
+                                    <div
+                                      className="bg-red-500 h-full transition-all"
+                                      style={{ width: `${urgentWidth}%` }}
+                                    />
+                                  )}
+                                  {activeWidth > 0 && (
+                                    <div
+                                      className="bg-blue-500 h-full transition-all"
+                                      style={{ width: `${activeWidth}%` }}
+                                    />
+                                  )}
+                                  {submittedWidth > 0 && (
+                                    <div
+                                      className="bg-emerald-400 h-full transition-all opacity-70"
+                                      style={{ width: `${submittedWidth}%` }}
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                              <div className="w-24 shrink-0 text-right">
+                                <span className="text-sm font-black text-slate-900">{s.active}</span>
+                                <span className="text-[10px] text-slate-400 ml-1">active</span>
+                                {s.urgent > 0 && (
+                                  <span className="ml-2 inline-block rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700">{s.urgent}!</span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Caseload balance hint */}
+                    {(() => {
+                      const activeOnly = stats.filter(s => s.active > 0);
+                      if (activeOnly.length < 2) return null;
+                      const max = Math.max(...activeOnly.map(s => s.active));
+                      const min = Math.min(...activeOnly.map(s => s.active));
+                      if (max >= min * 3) {
+                        const busiest = activeOnly.find(s => s.active === max);
+                        const lightest = activeOnly.find(s => s.active === min);
+                        return (
+                          <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
+                            <p className="text-[11px] text-amber-900">
+                              <span className="font-bold">⚖️ Workload imbalance:</span> {busiest?.member.name.split(" ")[0]} has {max} active cases, {lightest?.member.name.split(" ")[0]} has {min}. Consider redistributing.
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+                );
+              })()}
+
               {/* Team grid */}
               <div className="grid gap-4 md:grid-cols-2">
                 {teamUsers.filter(u => u.active !== false).map(member => {
