@@ -68,6 +68,7 @@ OTHER:
   • WES Evaluation: $475
   • US Application: $265
   • UK Visitor Visa (from Canada): $525 + UKVI fees on client's card
+  • Australia Visitor Visa / ETA / Subclass 600: quoted on review (Newton handles these — fee depends on visa subclass + Australian gov fees on client's card)
   • E-Visa: quoted after review
   • Travel Documents: quoted after review
   • Refugee Case: $4,000 (excluding taxes)
@@ -655,6 +656,31 @@ export const SERVICES: Record<string, ServiceInfo> = {
       "Digital photo",
     ],
     emoji: "🇬🇧",
+  },
+  AUSTRALIA_VISITOR_VISA: {
+    key: "AUSTRALIA_VISITOR_VISA",
+    displayName: "Australia Visitor Visa (Subclass 600 / ETA Subclass 601)",
+    category: "other",
+    feeText: "Quoted after review (depends on visa subclass + Australian gov fees on client's card)",
+    feeAmount: null,
+    needsConsultation: false,
+    eligibility: [
+      "Currently in Canada with valid status (PR / Citizen / Study / Work / Visitor)",
+      "Visiting Australia temporarily (tourism / family / short business trip)",
+      "Genuine visitor intent — strong ties to home country",
+      "Sufficient funds for the trip + return ticket",
+    ],
+    checklist: [
+      "Passport (front, back, all stamped pages — must be valid for trip duration)",
+      "Current Canadian status (PR card / Study permit / Work permit / Visitor record)",
+      "Bank statement (recent 3 months)",
+      "Employment letter or Study enrolment letter",
+      "Travel itinerary / hotel booking (if available)",
+      "Invitation letter from Australian host (if visiting family/friends)",
+      "Digital photo (Australian visa specs)",
+      "Travel/medical insurance (recommended)",
+    ],
+    emoji: "🇦🇺",
   },
   PASSPORT_RENEWAL: {
     key: "PASSPORT_RENEWAL",
