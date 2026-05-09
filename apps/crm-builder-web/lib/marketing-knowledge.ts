@@ -44,6 +44,14 @@ STUDY PERMITS — NO consultation fee:
   • College Change: quoted after document review
   • TRP (Temporary Resident Permit): $2,100
 
+COLLEGE ADMISSION — Newton applies on student's behalf (we are an ApplyBoard partner):
+  • Admission Service Fee: $150 (Newton charges this to apply for offer letters across multiple ApplyBoard partner colleges on the student's behalf)
+  • Programs available via ApplyBoard partners: HCA, Hospitality, Business, IT, ECE, Health Care, Trades, and many more diploma/certificate/degree programs
+  • Process: student gives Newton documents → Newton applies via ApplyBoard → Newton presents student with multiple offer letter options across colleges + semester intakes → student picks → student pays college tuition deposit directly → confirmed Letter of Acceptance issued
+  • SEPARATE from study permit — once LOA secured, student needs the Study Permit application separately (see Study Permits section above)
+  • If student is asking "what documents do I need for [HCA/Business/IT/etc.] admission" or "how do I get into college" — DO NOT redirect them to the school. WE handle the admission ourselves through ApplyBoard. Quote $150 admission fee + collect their docs.
+  • Documents needed from student: Class 10 transcripts, Class 12 transcripts, IELTS (or PTE/CELPIP), Passport bio page, Current address, Resume (helpful for some programs)
+
 VISITOR / SUPER VISA — NO consultation fee:
   • Visitor Visa (TRV outside Canada): $710 ($525 + $185 IRCC)
   • TRV / Stamping (inside Canada): $415 ($315 + $100 embassy)
@@ -68,7 +76,7 @@ OTHER:
   • WES Evaluation: $475
   • US Application: $265
   • UK Visitor Visa (from Canada): $525 + UKVI fees on client's card
-  • Australia Visitor Visa / ETA / Subclass 600: quoted on review (Newton handles these — fee depends on visa subclass + Australian gov fees on client's card)
+  • Australia Visitor Visa / ETA / Subclass 600: $525 CAD (Newton service fee — Australian government fees paid separately by client on their card)
   • E-Visa: quoted after review
   • Travel Documents: quoted after review
   • Refugee Case: $4,000 (excluding taxes)
@@ -78,6 +86,122 @@ PAYMENT METHOD:
   • Interac e-transfer to: newtonimmigration@gmail.com
   • Alt Interac (sometimes used): navisandhu0297@gmail.com
   • Receipt must be shared on WhatsApp after payment
+`;
+
+// ─────────────────────────────────────────────────────────────────────
+// APPLYBOARD PARTNER INVENTORY — sample programs Newton can apply for
+//
+// Newton is an ApplyBoard recruitment partner. When a student wants to
+// study in Canada and doesn't yet have a Letter of Acceptance, Newton
+// applies on their behalf via ApplyBoard for $150 admission service fee.
+//
+// The data below was sourced from ApplyBoard's Abbie AI advisor inside
+// Newton's partner portal. Inventory rotates — these are CONFIRMED-AS-OF
+// May 2026 partner colleges with intakes in the Jun 2026 → May 2027
+// window. Tuition figures are in CAD per academic year/program.
+//
+// IMPORTANT for the bot:
+//   1. These colleges are CONFIRMED partners — quote them with confidence
+//   2. List is REPRESENTATIVE not exhaustive — many more colleges exist
+//   3. IELTS minimums are NOT included here because Abbie requires a
+//      student profile to load language requirements per program. Bot
+//      should say "exact IELTS depends on the college — typical floor is
+//      6.0 overall with no band below 5.5 for diplomas; team will confirm
+//      after seeing the student's score"
+//   4. Intake months are CONFIRMED. Tuition is CONFIRMED.
+//   5. If client asks about a program / college NOT listed here, bot
+//      should NOT say "we don't offer that" — Newton can apply for any
+//      ApplyBoard program. Instead say "let me have the team check live
+//      availability for that specific college / program"
+// ─────────────────────────────────────────────────────────────────────
+export const APPLYBOARD_INVENTORY = `
+## APPLYBOARD PARTNER COLLEGES — CONFIRMED (May 2026 inventory snapshot)
+
+These are programs Newton can apply for on a student's behalf via ApplyBoard.
+Tuition is annual in CAD. Intakes confirmed. Many more options exist beyond
+this list — these are representative samples for quick reference.
+
+🏥 HCA / HEALTH CARE ASSISTANT
+  • Kwantlen Polytechnic University — Surrey, BC ........ $24,451 — Sep 2026, Jan 2027
+  • Vancouver Community College — Broadway, BC .......... $21,440 — Jan 2027, May 2027
+  • Selkirk College — Castlegar, BC ..................... $13,300 — Sep 2026
+  • Thompson Rivers University — Kamloops, BC ........... $20,435 — Sep 2026, Jan 2027, May 2027
+  • Western Community College — Abbotsford, BC ..........  $9,000 — Jun, Jul, Aug 2026  ← CHEAPEST + EARLIEST
+
+🍽️ HOSPITALITY
+  • Vancouver Community College — Downtown, BC .......... $17,707 — Sep 2026, Jan 2027, May 2027
+  • Seneca Polytechnic — Newnham, Toronto ............... $16,674 — Sep 2026, Jan 2027, May 2027
+  • Centennial College — Progress, Toronto .............. $16,242 — Sep 2026, Jan 2027, May 2027
+  • Cornerstone International Community College — BC ....  $8,995 — Jul, Aug, Sep 2026  ← CHEAPEST
+
+💼 BUSINESS DIPLOMAS
+  • Bow Valley College — Calgary, AB .................... $16,272 — Sep 2026, Jan 2027
+  • Centennial College — Progress, Toronto .............. $16,242 — Sep 2026, Jan 2027, May 2027
+  • Fanshawe College — London, ON ....................... $14,904 — Sep 2026, Jan 2027, Mar 2027
+  • Conestoga College — Doon, Kitchener, ON ............. $14,588 — Sep 2026, Jan 2027  ← CHEAPEST
+
+💻 IT / COMPUTER SCIENCE DIPLOMAS
+  • Alexander College — Burnaby, BC ..................... $18,300 — Sep 2026, Jan 2027, May 2027 (min grade 50)
+  • Douglas College — New Westminster, BC ............... $19,485 — Sep 2026, Jan 2027, May 2027
+  • LaSalle College — Montreal, QC ...................... $18,052 — Aug 2026, Jan 2027
+
+👶 EARLY CHILDHOOD EDUCATION (ECE)
+  • Fleming College — Peterborough, ON .................. $14,379 — Sep 2026, Jan 2027  ← CHEAPEST
+  • Conestoga College — Doon, Kitchener, ON ............. $15,026 — Sep 2026, Jan 2027
+  • Seneca Polytechnic — Newnham, Toronto ............... $16,407 — Sep 2026, Jan 2027, May 2027
+  • Centennial College — Progress, Toronto .............. $16,242 — Sep 2026, Jan 2027
+
+## QUICK ANSWERS FOR COMMON QUESTIONS
+
+Q: "Which is the cheapest option to study in Canada?"
+A: Western Community College HCA at $9,000/yr (Abbotsford BC), or Cornerstone
+   Hospitality at $8,995/yr (Vancouver BC). Both have summer 2026 intakes.
+
+Q: "Which program has the soonest intake?"
+A: For HCA — Western Community College has Jun/Jul/Aug 2026 intakes.
+   For Hospitality — Cornerstone has Jul/Aug 2026 intakes.
+
+Q: "Which province?"
+A: BC dominates the partner list (especially for HCA and Hospitality).
+   Ontario is strongest for Business and ECE (Centennial, Conestoga, Fanshawe).
+   Alberta has Bow Valley (Business). Quebec has LaSalle (IT).
+
+Q: "What IELTS / language test do I need?"
+A: Most diploma programs accept IELTS 6.0 overall with no band below 5.5.
+   Some accept PTE Core or CELPIP equivalents. EXACT requirement varies
+   per college — Newton's team confirms per program after seeing the
+   student's score. If student asks specifically, do NOT promise a number
+   the bot doesn't have — say "team will confirm based on the college you
+   pick."
+
+Q: "How long does the LOA take after I submit my documents?"
+A: Typically 2-6 weeks from when Newton submits a complete application to
+   when the offer letter is issued, depending on the college. Some are
+   faster (1-2 weeks) and some slower. Newton's team will give a per-college
+   estimate after seeing the student's profile.
+
+Q: "What documents do I need beyond 10th, 12th, IELTS, passport?"
+A: Some colleges require additional items: a Statement of Purpose (SOP),
+   proof of funds (bank statements / GIC), parent income/tax documents,
+   resume, work experience letters (if any), and digital photo. For HCA
+   programs, criminal record clearance may be requested at the LOA stage.
+   Newton's team confirms the per-college list after the initial application.
+
+Q: "Can Newton apply for [X college / Y program] not listed?"
+A: Newton works with ApplyBoard's full partner network of 1,500+ institutions
+   across Canada, US, UK, Australia, Ireland. The list above is a sample.
+   For specific colleges or programs, the team checks live availability.
+
+## INVENTORY FRESHNESS
+
+This data is a snapshot from May 2026. ApplyBoard inventory rotates:
+  - Tuition can change between academic years
+  - Intake dates open/close based on college capacity
+  - Programs add/remove as colleges adjust offerings
+
+If a client asks about a specific intake more than ~6 months from now, OR
+asks about a program/college not on the list, bot should say "let me have
+the team confirm live availability — inventory updates monthly".
 `;
 
 // ─── Service catalog (structured for template generation) ───
@@ -344,6 +468,45 @@ export const SERVICES: Record<string, ServiceInfo> = {
       "Passport",
     ],
     emoji: "🔄",
+  },
+  // ───────────────────────────────────────────────────────────────────
+  // College Admission via ApplyBoard
+  //
+  // Newton is an ApplyBoard partner. Students who want to study in Canada
+  // but don't yet have a Letter of Acceptance can come to us, pay $150,
+  // and we apply on their behalf to multiple ApplyBoard partner colleges.
+  // Student gets multiple offer options back — picks one — pays tuition
+  // deposit directly to the chosen college — confirmed LOA issued.
+  //
+  // After LOA is secured, study permit is a SEPARATE engagement (see
+  // STUDY_PERMIT_OUTSIDE_CANADA / STUDY_PERMIT_NEW services).
+  //
+  // The bot used to redirect college-admission queries to "contact the
+  // school directly" — losing leads like Manpreet (HCA inquiry, May 2026).
+  // This service entry exists so the bot can recognize and convert these
+  // leads instead of bouncing them.
+  // ───────────────────────────────────────────────────────────────────
+  COLLEGE_ADMISSION: {
+    key: "COLLEGE_ADMISSION",
+    displayName: "College Admission (via ApplyBoard)",
+    category: "study",
+    feeText: "$150 admission service fee (Newton applies for offer letters on your behalf)",
+    feeAmount: 150,
+    needsConsultation: false,
+    eligibility: [
+      "Want to study in Canada at a college / university",
+      "Don't yet have a Letter of Acceptance",
+      "Open to multiple program / college options across Canada",
+    ],
+    checklist: [
+      "Class 10 transcripts",
+      "Class 12 transcripts",
+      "IELTS / PTE / CELPIP language test results",
+      "Passport (bio page)",
+      "Current address",
+      "Resume (helpful for some programs)",
+    ],
+    emoji: "🎓",
   },
   TRP: {
     key: "TRP",
@@ -661,7 +824,7 @@ export const SERVICES: Record<string, ServiceInfo> = {
     key: "AUSTRALIA_VISITOR_VISA",
     displayName: "Australia Visitor Visa (Subclass 600 / ETA Subclass 601)",
     category: "other",
-    feeText: "Quoted after review (depends on visa subclass + Australian gov fees on client's card)",
+    feeText: "$525 CAD (Newton service fee — Australian government fees paid separately by client on their card)",
     feeAmount: null,
     needsConsultation: false,
     eligibility: [
