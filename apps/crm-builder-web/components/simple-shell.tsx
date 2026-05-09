@@ -9935,6 +9935,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     // type any of those and find the thread.
                     if (inboxGlobalSearch) {
                       const q = inboxGlobalSearch.toLowerCase().trim();
+                      const qDigits = q.replace(/\D/g, "");
                       // Pre-build phone → case lookup using last-9-digit match
                       // (same logic the threadList map uses below). Done once
                       // here so we don't re-scan cases per thread.
@@ -9951,9 +9952,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         const caseBlob = matchedCase
                           ? `${matchedCase.client || ""} ${matchedCase.id || ""} ${matchedCase.formType || ""} ${matchedCase.assignedTo || ""} ${matchedCase.leadPhone || ""}`.toLowerCase()
                           : "";
+                        // Bug fix: only do the digit-substring match when the
+                        // query actually contains digits. Otherwise empty
+                        // qDigits would falsely match every phone (since
+                        // anything.includes("") === true) — making text
+                        // searches return all threads.
+                        const phoneMatch = qDigits.length >= 3
+                          ? phone.replace(/\D/g, "").includes(qDigits)
+                          : false;
                         const hasMatch =
                           phone.toLowerCase().includes(q) ||
-                          phone.replace(/\D/g, "").includes(q.replace(/\D/g, "")) ||
+                          phoneMatch ||
                           caseBlob.includes(q) ||
                           threads[phone].some(m =>
                             (m.message || "").toLowerCase().includes(q) ||
@@ -9975,6 +9984,17 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const matchedCase = cases.find(c => { const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
                       return { phone, msgs, matchedCase };
                     }).filter(({ matchedCase }) => {
+                      // Visibility filter:
+                      //   - Admin/Marketing/Reviewer/Communications: see ALL threads
+                      //   - Processing staff: see only their own assigned cases
+                      //
+                      // BUT: when an active search is in progress, ignore the
+                      // role gate. The search is the staff's explicit intent —
+                      // if they typed "1415" they want CASE-1415's thread to
+                      // appear, even if the case lost its phone link (auto-
+                      // linker damage) or they're not the assignee. Otherwise
+                      // an unmatched thread becomes invisible and undebuggable.
+                      if (inboxGlobalSearch && inboxGlobalSearch.trim().length > 0) return true;
                       if (!matchedCase) return sessionUser?.role !== "Processing";
                       if (sessionUser?.role === "Processing") return String(matchedCase.assignedTo||"").toLowerCase()===String(sessionUser?.name||"").toLowerCase();
                       return true;
