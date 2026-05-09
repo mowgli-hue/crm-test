@@ -9812,7 +9812,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       <input
                         value={inboxGlobalSearch||""}
                         onChange={e=>setInboxGlobalSearch(e.target.value)}
-                        placeholder="🔍 Search all conversations..."
+                        placeholder="🔍 Search by name, case ID, phone, message..."
                         className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
                       />
                       <button
@@ -9905,14 +9905,53 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       threads[canonical] = b.msgs;
                     });
                     // Filter by global search
+                    //
+                    // Bug fix: the original filter only searched within the
+                    // inbox row data (message body, matched_case_name,
+                    // phone). When a thread had matched_case_name=null but
+                    // its phone DID match a case in the cases array,
+                    // searching for the client's name returned 0 results
+                    // even though the case was sitting right there.
+                    //
+                    // Now we also resolve each thread's matching case from
+                    // the cases array and search across:
+                    //   - phone digits (last 9 of canonical match)
+                    //   - any message body text
+                    //   - inbox-stored matched_case_name
+                    //   - case.client (the real client name on file)
+                    //   - case.id (e.g., search "1139" finds CASE-1139)
+                    //   - case.formType (search "PGWP" finds all PGWP threads)
+                    //   - case.assignedTo (search staff name)
+                    //   - case.leadPhone (search by stored phone format)
+                    //
+                    // This makes the search actually useful — staff can
+                    // type any of those and find the thread.
                     if (inboxGlobalSearch) {
-                      const q = inboxGlobalSearch.toLowerCase();
+                      const q = inboxGlobalSearch.toLowerCase().trim();
+                      // Pre-build phone → case lookup using last-9-digit match
+                      // (same logic the threadList map uses below). Done once
+                      // here so we don't re-scan cases per thread.
+                      const findCaseForPhone = (phone: string) => {
+                        const mp = phone.replace(/\D/g, "");
+                        if (mp.length < 9) return null;
+                        return cases.find(c => {
+                          const cp = (c.leadPhone || "").replace(/\D/g, "");
+                          return cp && mp.slice(-9) === cp.slice(-9);
+                        }) || null;
+                      };
                       Object.keys(threads).forEach(phone => {
-                        const hasMatch = threads[phone].some(m => 
-                          m.message.toLowerCase().includes(q) || 
-                          (m.matched_case_name||"").toLowerCase().includes(q) ||
-                          phone.includes(q)
-                        );
+                        const matchedCase = findCaseForPhone(phone);
+                        const caseBlob = matchedCase
+                          ? `${matchedCase.client || ""} ${matchedCase.id || ""} ${matchedCase.formType || ""} ${matchedCase.assignedTo || ""} ${matchedCase.leadPhone || ""}`.toLowerCase()
+                          : "";
+                        const hasMatch =
+                          phone.toLowerCase().includes(q) ||
+                          phone.replace(/\D/g, "").includes(q.replace(/\D/g, "")) ||
+                          caseBlob.includes(q) ||
+                          threads[phone].some(m =>
+                            (m.message || "").toLowerCase().includes(q) ||
+                            (m.matched_case_name || "").toLowerCase().includes(q)
+                          );
                         if (!hasMatch) delete threads[phone];
                       });
                     }
