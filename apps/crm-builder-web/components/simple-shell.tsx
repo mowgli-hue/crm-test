@@ -4,6 +4,7 @@ import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
+import ResultsDashboard from "@/components/results-dashboard";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -665,6 +666,14 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [diagnoseCaseModalId, setDiagnoseCaseModalId] = useState<string | null>(null);
   const [diagnoseResult, setDiagnoseResult] = useState<any | null>(null);
   const [diagnoseLoading, setDiagnoseLoading] = useState(false);
+  // Link-phone-to-case modal: when staff wants to link an inbox phone to an
+  // existing case (e.g. client got a new number, or marketing-bot lead is
+  // actually an existing client). Replaces the old <select> dropdown which
+  // only showed 50 cases and had no search.
+  // Holds the phone number being linked (or null when modal closed).
+  const [linkCaseModalPhone, setLinkCaseModalPhone] = useState<string | null>(null);
+  const [linkCaseSearch, setLinkCaseSearch] = useState("");
+  const [linkCaseInProgress, setLinkCaseInProgress] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   // Resizable inbox thread list — drag the divider to adjust width.
   const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
@@ -8796,24 +8805,50 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const file = e.target.files?.[0];
                       if (!file) return;
                       const text = await file.text();
+                      let parsed: any;
+                      try { parsed = JSON.parse(text); } catch { alert("Invalid JSON file"); return; }
+                      // RepTrack format: { scanDate, totalScanned, results: [...] }
+                      // Legacy flat format: [...] or single { ... }
+                      // Either way, end up with a flat array of records.
                       let records: any[];
-                      try { records = JSON.parse(text); } catch { alert("Invalid JSON file"); return; }
-                      if (!Array.isArray(records)) records = [records];
+                      if (Array.isArray(parsed)) {
+                        records = parsed;
+                      } else if (parsed && Array.isArray(parsed.results)) {
+                        // RepTrack file — pull the inner results array. The
+                        // outer scanDate / totalScanned are kept as metadata
+                        // (not surfaced yet, but useful if we later log a
+                        // per-scan summary).
+                        records = parsed.results;
+                      } else if (parsed && typeof parsed === "object") {
+                        records = [parsed];
+                      } else {
+                        alert("JSON didn't contain any results");
+                        return;
+                      }
                       let added = 0, skipped = 0;
                       for (const rec of records) {
-                        const appNum = String(rec.applicationNumber || rec.app_num || rec.application_number || "").trim().toUpperCase();
+                        // RepTrack uses appNum; legacy uploads use applicationNumber.
+                        // Try every reasonable spelling so we never drop a record.
+                        const appNum = String(rec.applicationNumber || rec.appNum || rec.app_num || rec.application_number || "").trim().toUpperCase();
                         if (!appNum) { skipped++; continue; }
-                        // Try to match to a case
                         const phone = String(rec.phone || rec.phoneNumber || "").replace(/\D/g,"");
                         const name = String(rec.name || rec.clientName || rec.client_name || "").trim();
+                        // Outcome is one of: approved | refused | request_letter | other
                         const outcome = String(rec.outcome || rec.result || "other").toLowerCase();
-                        const date = String(rec.date || rec.resultDate || rec.submission_date || new Date().toISOString().slice(0,10));
+                        // Date — RepTrack writes "May 8, 2026" in dateCreated and
+                        // "2026-05-08" in date. Prefer the ISO date when present.
+                        const date = String(rec.date || rec.resultDate || rec.dateCreated || rec.submission_date || new Date().toISOString().slice(0,10));
+                        // RepTrack's "subjects" field contains the IRCC letter
+                        // types ("Biometrics Collection Letter | ..."). We pass
+                        // it through as notes so the dashboard can categorize.
+                        const notes = String(rec.subjects || rec.notes || "").slice(0, 4000);
                         const form = new FormData();
                         form.append("applicationNumber", appNum);
                         form.append("clientName", name);
                         form.append("phone", phone);
                         form.append("outcome", outcome);
-                        form.append("resultDate", date.slice(0,10));
+                        form.append("resultDate", date.length > 10 ? new Date(date).toISOString().slice(0,10) : date.slice(0,10));
+                        if (notes) form.append("notes", notes);
                         const res = await apiFetch("/results/legacy", { method: "POST", body: form });
                         if (res.ok) added++; else skipped++;
                       }
@@ -8852,6 +8887,32 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   </label>
                 </div>
               </div>
+
+              {/* ── Dashboard: hero metrics + charts + wins + red flags ─────
+                   Sits at the top of the Results screen so staff opens this
+                   page and sees Newton's daily pulse — approval rate, recent
+                   wins, refusals needing attention — before they even scroll
+                   to the work queue below.
+              */}
+              <ResultsDashboard
+                results={legacyResults as any}
+                cases={visibleCases.map(c => ({
+                  id: c.id,
+                  client: c.client,
+                  formType: c.formType,
+                  leadPhone: c.leadPhone,
+                  applicationNumber: (c as any).applicationNumber,
+                  assignedTo: c.assignedTo,
+                }))}
+                onScrollToList={() => {
+                  // Smooth scroll to the unmatched/list section below
+                  const el = document.getElementById("results-list-anchor");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              />
+
+              {/* Anchor for scroll-to-list link from the dashboard */}
+              <div id="results-list-anchor" />
 
               {/* Unmatched — collapsible */}
               {unlinkedScannerUploads.length > 0 && (
@@ -10047,26 +10108,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             >
                               💾 Save
                             </button>
-                            <select defaultValue="" onChange={async e => {
-                              const cId = e.target.value; if (!cId) return;
-                              await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
-                              // Auto-link any orphan WhatsApp docs from this phone to this case
-                              try {
-                                const linkRes = await apiFetch(`/orphan-docs`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, caseId: cId})});
-                                const linkData = await linkRes?.json().catch(() => ({}));
-                                if (linkData?.linked > 0) {
-                                  setCaseActionStatus(`✅ Linked to case + filed ${linkData.linked} WhatsApp doc${linkData.linked === 1 ? "" : "s"} to Drive`);
-                                } else {
-                                  setCaseActionStatus(`✅ Linked to case ${cId}`);
-                                }
-                                setTimeout(() => setCaseActionStatus(""), 4500);
-                              } catch {}
-                              setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
-                              setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
-                            }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
-                              <option value="">⚠️ Link to existing case...</option>
-                              {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
-                            </select>
+                            <button
+                              onClick={() => {
+                                setLinkCaseModalPhone(phone);
+                                setLinkCaseSearch("");
+                              }}
+                              className="rounded-lg border border-orange-200 bg-white px-3 py-1.5 text-xs font-bold text-orange-700 hover:bg-orange-50 shrink-0"
+                              title="Link this phone to an existing case (search by name, ID, or form type)"
+                            >
+                              🔗 Link to Case…
+                            </button>
                           </div>
                         )}
                         {matchedCase && (
@@ -12487,6 +12538,211 @@ function ClientPortal({
                     className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
                   >
                     Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+      ), document.body)}
+
+      {/* ────────────────────────────────────────────────────────────
+           Link Phone to Case Modal — searchable picker
+           Replaces the old <select> that only showed 50 cases and had no
+           search. Staff often needs to link a new phone number to an
+           existing client whose case is buried in the list (e.g., client
+           switched phones, or a marketing-bot lead is actually an existing
+           client). The old dropdown made this nearly impossible.
+           Search matches: client name, case ID, form type, current phone.
+           Result shows: client / case ID / form type / assigned-to /
+           current phone (so staff can confirm before linking).
+         ──────────────────────────────────────────────────────────── */}
+      {typeof document !== "undefined" && linkCaseModalPhone && createPortal((
+        (() => {
+          const close = () => {
+            if (linkCaseInProgress) return;
+            setLinkCaseModalPhone(null);
+            setLinkCaseSearch("");
+          };
+          const phone = linkCaseModalPhone;
+          const formattedPhone = (() => {
+            const d = String(phone).replace(/\D/g, "");
+            if (d.length === 11 && d.startsWith("1")) return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+            if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+            return phone;
+          })();
+
+          // Filter cases by search query — match name, case ID, form type, phone
+          const q = linkCaseSearch.trim().toLowerCase();
+          const filtered = q.length === 0
+            ? cases.slice(0, 30) // show first 30 by default if no search
+            : cases.filter(c => {
+                const blob = `${c.client || ""} ${c.id || ""} ${c.formType || ""} ${c.leadPhone || ""} ${c.assignedTo || ""}`.toLowerCase();
+                return blob.includes(q);
+              }).slice(0, 50);
+
+          const performLink = async (caseId: string) => {
+            setLinkCaseInProgress(true);
+            try {
+              await apiFetch(`/cases/${caseId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ leadPhone: phone }),
+              });
+              // Auto-link any orphan WhatsApp docs from this phone to this case
+              try {
+                const linkRes = await apiFetch(`/orphan-docs`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ phone, caseId }),
+                });
+                const linkData = await linkRes?.json().catch(() => ({}));
+                if (linkData?.linked > 0) {
+                  setCaseActionStatus(`✅ Linked to ${caseId} + filed ${linkData.linked} WhatsApp doc${linkData.linked === 1 ? "" : "s"} to Drive`);
+                } else {
+                  setCaseActionStatus(`✅ Linked phone to ${caseId}`);
+                }
+                setTimeout(() => setCaseActionStatus(""), 4500);
+              } catch { /* non-blocking */ }
+              setCases(prev => prev.map(c => c.id === caseId ? { ...c, leadPhone: phone } : c));
+              setInboxMessages(prev => prev.map(m => m.phone === phone ? { ...m, matched_case_id: caseId } : m));
+              setLinkCaseModalPhone(null);
+              setLinkCaseSearch("");
+            } catch (e) {
+              alert(`Link failed: ${(e as Error).message}`);
+            } finally {
+              setLinkCaseInProgress(false);
+            }
+          };
+
+          return (
+            <div
+              style={{
+                position: "fixed",
+                top: 0, left: 0, right: 0, bottom: 0,
+                background: "rgba(0,0,0,0.6)",
+                zIndex: 999999,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "16px",
+              }}
+              onClick={close}
+            >
+              <div
+                style={{
+                  background: "white",
+                  borderRadius: "16px",
+                  padding: "20px",
+                  width: "100%",
+                  maxWidth: "640px",
+                  maxHeight: "85vh",
+                  display: "flex",
+                  flexDirection: "column",
+                  boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">🔗 Link Phone to Case</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Find the client's case → phone <span className="font-mono font-semibold text-slate-700">{formattedPhone}</span> will be saved as their leadPhone.
+                    </p>
+                  </div>
+                  <button onClick={close} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+                </div>
+
+                {/* Search */}
+                <div className="relative mb-3">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={linkCaseSearch}
+                    onChange={(e) => setLinkCaseSearch(e.target.value)}
+                    placeholder="Search by client name, case ID (e.g. 1139), form type, or assigned staff…"
+                    className="w-full rounded-lg border-2 border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {q.length === 0
+                      ? `Showing first 30 of ${cases.length} cases — type to search all.`
+                      : `${filtered.length} match${filtered.length === 1 ? "" : "es"} for "${linkCaseSearch}"`}
+                  </p>
+                </div>
+
+                {/* Results list — scrollable */}
+                <div className="flex-1 overflow-y-auto -mx-2 px-2">
+                  {filtered.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <p className="text-sm text-slate-500">No cases match "{linkCaseSearch}"</p>
+                      <p className="text-xs text-slate-400 mt-1">Try a different search — case ID number alone usually works (e.g. "1139").</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {filtered.map(c => {
+                        const hasPhone = !!(c.leadPhone || "").trim();
+                        const phoneSame = (c.leadPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
+                        return (
+                          <button
+                            key={c.id}
+                            onClick={() => performLink(c.id)}
+                            disabled={linkCaseInProgress || phoneSame}
+                            className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                              phoneSame
+                                ? "border-emerald-200 bg-emerald-50 cursor-default"
+                                : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-bold text-slate-900 truncate">{c.client || "(no name)"}</p>
+                                  <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{c.id}</span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 truncate mt-0.5">{c.formType}</p>
+                                <div className="flex items-center gap-3 mt-1 text-[10px]">
+                                  {hasPhone ? (
+                                    <span className={`font-mono ${phoneSame ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
+                                      📱 {c.leadPhone}{phoneSame ? " ← same as new!" : ""}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-600">📵 no phone yet</span>
+                                  )}
+                                  {c.assignedTo && (
+                                    <span className="text-slate-500">👤 {c.assignedTo}</span>
+                                  )}
+                                </div>
+                              </div>
+                              {!phoneSame && (
+                                <span className="rounded-md bg-blue-600 text-white px-3 py-1.5 text-xs font-bold shrink-0">
+                                  Link →
+                                </span>
+                              )}
+                              {phoneSame && (
+                                <span className="rounded-md bg-emerald-100 text-emerald-700 px-3 py-1.5 text-xs font-bold shrink-0">
+                                  ✓ already linked
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-[10px] text-slate-400 italic">
+                    {linkCaseInProgress ? "⏳ Linking…" : "Click any case row to link this phone to it"}
+                  </p>
+                  <button
+                    onClick={close}
+                    disabled={linkCaseInProgress}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
                   </button>
                 </div>
               </div>
