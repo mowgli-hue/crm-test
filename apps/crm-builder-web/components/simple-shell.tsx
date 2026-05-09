@@ -2010,8 +2010,15 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       body: JSON.stringify({
         client: commClientName.trim(),
         formType: effectiveFormType,
-        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
-        leadEmail: commEmail.trim() || undefined,
+        // Phone clear bug fix: previously this used `commPhone.trim() ? ... : undefined`
+        // which meant a blank phone field sent `leadPhone: undefined`, omitting
+        // the field entirely from the PATCH. The backend then left the
+        // existing phone alone, so staff couldn't clear an incorrectly-set
+        // phone (e.g., the auto-linker bug victims). Now empty string is sent
+        // explicitly to clear the phone in the backend.
+        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : "",
+        // Same bug applied to email — fixing it for consistency
+        leadEmail: commEmail.trim() || "",
         totalCharges,
         irccFees,
         irccFeePayer: commIrccFeePayer,
