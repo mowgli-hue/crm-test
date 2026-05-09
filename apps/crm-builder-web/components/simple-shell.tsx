@@ -728,6 +728,10 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [reviewReplyDraft, setReviewReplyDraft] = useState<Record<string, string>>({});      // per-thread reply draft
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [diagnosticsReport, setDiagnosticsReport] = useState<DiagnosticsReport | null>(null);
+  // Phone collisions admin tool — finds cases that share the same phone
+  // (auto-linker bug victims). Loaded on demand via "Scan Now" button.
+  const [phoneCollisions, setPhoneCollisions] = useState<any | null>(null);
+  const [phoneCollisionsLoading, setPhoneCollisionsLoading] = useState(false);
   const [caseSearch, setCaseSearch] = useState("");
   // Top-header search autocomplete dropdown
   const [headerSearchFocused, setHeaderSearchFocused] = useState(false);
@@ -5897,6 +5901,107 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 </button>
                 {diagnosticsStatus ? <p className="mt-2 text-xs text-slate-700">{diagnosticsStatus}</p> : null}
               </section>
+
+              {/* Phone Collision Detector — admin-only.
+                  Finds cases that share the same phone number, which is
+                  the signature of the May 2026 auto-linker bug (since
+                  fixed). Lets staff triage and clean up duplicates by
+                  showing every affected case in one screen. Read-only —
+                  staff fixes by going into each case and editing.        */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📞 Phone Collisions</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Cases sharing the same phone number. Usually leftover from the
+                        auto-linker bug (May 2026, since fixed). Edit each case to clear
+                        the wrong phone.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setPhoneCollisionsLoading(true);
+                        try {
+                          const res = await apiFetch(`/admin/phone-collisions`, { cache: "no-store" });
+                          if (res?.ok) {
+                            const d = await res.json();
+                            setPhoneCollisions(d);
+                          } else {
+                            const err = await res?.json().catch(() => ({}));
+                            alert(`Scan failed: ${err.error || res?.status}`);
+                          }
+                        } catch (e) {
+                          alert(`Scan failed: ${(e as Error).message}`);
+                        } finally {
+                          setPhoneCollisionsLoading(false);
+                        }
+                      }}
+                      disabled={phoneCollisionsLoading}
+                      className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {phoneCollisionsLoading ? "Scanning…" : "🔎 Scan Now"}
+                    </button>
+                  </div>
+
+                  {phoneCollisions && (
+                    <div className="mt-3">
+                      {phoneCollisions.collisionGroupCount === 0 ? (
+                        <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+                          <p className="text-sm font-semibold text-emerald-900">✅ No phone collisions detected</p>
+                          <p className="text-xs text-emerald-700 mt-1">
+                            Scanned {phoneCollisions.totalCasesScanned} cases — every phone is unique.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-xs text-amber-700 font-semibold">
+                            ⚠️ {phoneCollisions.collisionGroupCount} collision group(s) — {phoneCollisions.affectedCaseCount} affected case(s) of {phoneCollisions.totalCasesScanned} scanned
+                          </p>
+                          {phoneCollisions.collisions.map((group: any) => (
+                            <div key={group.phone} className="rounded-lg border-2 border-amber-200 bg-amber-50 p-3">
+                              <p className="text-xs font-bold text-amber-900 mb-2">
+                                📞 {group.formattedPhone} — shared by {group.caseCount} cases
+                              </p>
+                              <div className="space-y-1">
+                                {group.cases.map((c: any, i: number) => (
+                                  <div key={c.id} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-xs font-bold text-slate-900 truncate">
+                                        {i === 0 && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded mr-1 font-bold">MOST RECENT</span>}
+                                        {c.client}
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 truncate">
+                                        {c.id} · {c.formType} · 👤 {c.assignedTo} · updated {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : "—"}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedCaseId(c.id);
+                                        setScreen("cases");
+                                      }}
+                                      className="text-[10px] font-bold text-blue-600 hover:underline shrink-0"
+                                    >
+                                      Open Case →
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-[10px] text-amber-800 mt-2 italic">
+                                💡 Usually the OLDER case legitimately owns this phone. Open the newer one(s) and clear the phone field.
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!phoneCollisions && !phoneCollisionsLoading && (
+                    <p className="text-xs text-slate-400 italic mt-1">Click "Scan Now" to check for duplicate phone numbers across cases.</p>
+                  )}
+                </section>
+              ) : null}
 
               {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
                 <section className="rounded-xl border border-slate-200 bg-white p-5">
