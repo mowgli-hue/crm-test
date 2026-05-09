@@ -768,7 +768,29 @@ export async function POST(req: NextRequest) {
           console.error("Intake handler error:", (e as Error).message);
         }
 
-        // Handle UNKNOWN numbers — auto detect name + case status
+        // Handle UNKNOWN numbers — just acknowledge politely and store the
+        // extracted name so staff can find them later. We DO NOT auto-link
+        // the phone to any case here.
+        //
+        // ⚠️  HISTORY: Earlier versions of this handler used a fuzzy name
+        // match against listCases() and CALLED updateCase(leadPhone) without
+        // staff confirmation. That logic produced two catastrophic bugs:
+        //   1. Sukhmandeep (CASE-1415) lost her phone link because another
+        //      unknown-number reply matched a different case with a
+        //      similar-sounding first name → her thread disappeared from
+        //      the inbox view (it had no matched case anymore).
+        //   2. Ravinder Singh's new number got auto-linked to Ruben's
+        //      PR Card Renewal case because both first names share letters
+        //      and the find() picked the first one in array order.
+        //
+        // The fuzzy match was intrinsically unsafe — there's no way to
+        // distinguish "Singh" from "Singh" without more signal. So instead:
+        //   - Save the name in the inbox row's matched_case_name column
+        //     (so staff sees it in the inbox list)
+        //   - Send a friendly acknowledgement that the team will review
+        //   - Do NOT touch any case's leadPhone
+        // Staff uses the new 🔗 Link-to-Case modal to make the connection
+        // safely with a search-and-confirm flow.
         if (!handledByIntake && !matched) {
           try {
             const { sendWhatsAppText } = await import("@/lib/whatsapp");
@@ -809,64 +831,37 @@ Reply ONLY with JSON:
               try { extracted = JSON.parse(aiData.content?.[0]?.text?.replace(/```json|```/g,"").trim() || "{}"); } catch {}
             }
 
-            // Save name if detected
+            // Save the extracted name on the inbox row so staff can SEE it
+            // in the inbox list — but DO NOT touch any case's leadPhone.
             if (extracted.name && extracted.name !== knownName) {
               await pool.query(`UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone = $2`, [extracted.name, from]);
             }
 
-            // Search for their case
-            const casesData = await listCases(COMPANY_ID);
-            const foundCase = extracted.name ? casesData.find((c: any) => {
-              const clientName = String(c.client || "").toLowerCase();
-              const searchName = String(extracted.name || "").toLowerCase();
-              return clientName.includes(searchName.split(" ")[0]) || searchName.includes(clientName.split(" ")[0]);
-            }) : null;
-
-            if (foundCase) {
-              // Link phone to case
-              const { updateCase } = await import("@/lib/store");
-              await updateCase(COMPANY_ID, foundCase.id, { leadPhone: from });
-
-              // Reply with case status
-              const firstName = String(foundCase.client || "").split(" ")[0];
-              const status = foundCase.processingStatus || "in progress";
-              const statusMap: Record<string, string> = {
-                "docs_pending": "we are waiting for your documents",
-                "under_review": "your application is under review by our team",
-                "submitted": "your application has been submitted to IRCC",
-                "approved": "your application has been approved! 🎉",
-                "refused": "unfortunately your application was not approved"
-              };
-              const statusMsg = statusMap[status] || `status: ${status}`;
-              await sendWhatsAppText(from, `Hello ${firstName}! 🍁
-
-We found your file at Newton Immigration.
-
-Your *${foundCase.formType}* application — ${statusMsg}.
-
-If you have any questions, our team will be in touch shortly.
-
-— Newton Immigration Team`);
-              console.log(`✅ Auto-replied to unknown number with case status: ${foundCase.client}`);
-            } else if (extracted.isAskingForUpdate) {
-              // They want an update but we can't find their case
-              const name = extracted.name || "there";
-              await sendWhatsAppText(from, `Hello ${name}! 🍁
+            // Acknowledge — keep it generic; never claim we found their file
+            // because we no longer auto-search for it. Staff will link via
+            // the searchable Link-to-Case modal in the inbox UI.
+            const greeting = extracted.name ? `Hello ${extracted.name.split(" ")[0]}!` : "Hello!";
+            if (extracted.isAskingForUpdate) {
+              await sendWhatsAppText(from, `${greeting} 🍁
 
 Thank you for reaching out to Newton Immigration.
 
-We couldn't find your file with this number. Could you please share:
-1. Your full name
-2. Your application type (work permit, study permit, etc.)
+Our team will review your message and get back to you shortly with an update on your file.
 
-Our team will look into your file and get back to you shortly!
+If you have a case ID or application number handy, sharing it will help us respond faster.
 
 — Newton Immigration Team`);
             } else if (extracted.isGreeting || text.length < 20) {
-              // Simple greeting
-              await sendWhatsAppText(from, `Hello! 🍁 Welcome to Newton Immigration.
+              await sendWhatsAppText(from, `${greeting} 🍁 Welcome to Newton Immigration.
 
-How can we help you today? Please share your name and query and our team will assist you.
+How can we help you today? Please share your name and what service you need (work permit, study permit, PR, etc.) and our team will assist you.
+
+— Newton Immigration Team`);
+            } else {
+              // General message — acknowledge so the client knows it landed
+              await sendWhatsAppText(from, `${greeting} 🍁
+
+Thank you for your message — our team has received it and will get back to you shortly.
 
 — Newton Immigration Team`);
             }
