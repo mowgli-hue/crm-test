@@ -7173,14 +7173,18 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
 
                                   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:10px;font-size:11px;color:#1e3a8a;line-height:1.5;">
-                                    📝 <strong>Edit the letter body and enclosed-document list below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited.
+                                    📝 <strong>Edit the subject line, body, and enclosed-document list below</strong> — every word is yours. The header (date, "To IRCC"), greeting, signature, and Newton letterhead are added automatically and can't be edited.
                                     <br /><span style="color:#1d4ed8;">Tip: blank lines separate paragraphs in the body. Each line in the doc list is a separate entry.</span>
                                   </div>
 
                                   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;font-size:11px;color:#334155;line-height:1.6;">
                                     <div><strong>Date:</strong> ${safeDate}</div>
                                     <div><strong>To:</strong> Immigration, Refugees and Citizenship Canada</div>
-                                    <div><strong>Subject:</strong> ${safeSubject}</div>
+                                    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                                      <strong style="white-space:nowrap;">Subject:</strong>
+                                      <input id="__rep_edit_subject__" type="text" value="${safeSubject}"
+                                        style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;color:#0f172a;background:white;font-family:inherit;" />
+                                    </div>
                                     <div style="margin-top:4px;font-style:italic;color:#64748b;">Dear Sir/Madam,</div>
                                   </div>
 
@@ -7285,6 +7289,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     .map(l => l.trim())
                                     .filter(l => l.length > 0);
 
+                                  // editedSubject: read the editable subject input and send to backend.
+                                  // Empty/blank → backend falls back to the formula-generated subject.
+                                  const subjectInput = document.getElementById("__rep_edit_subject__") as HTMLInputElement | null;
+                                  const editedSubject = (subjectInput?.value || "").trim();
+
                                   downloadBtn.disabled = true;
                                   downloadBtn.textContent = "Building…";
                                   editStatus.style.display = "inline";
@@ -7296,6 +7305,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                         systemToken: "newton-recovery-2024",
                                         editedBodyLines,
                                         editedDocs,
+                                        editedSubject,
                                         pronouns: selectedPronoun,
                                       }),
                                     });

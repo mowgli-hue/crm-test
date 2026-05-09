@@ -941,7 +941,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     else if (pronounIn.startsWith("she")) pronoun = { subject: "she", object: "her", possessive: "her" };
 
     const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-    const subjectLine = getSubjectLine(formType, clientName);
+    const defaultSubjectLine = getSubjectLine(formType, clientName);
+    // editedSubject — staff can edit the subject line in the rep letter
+    // modal. If provided on download, we use it verbatim instead of the
+    // default formula. Trim and length-cap to avoid pathological inputs
+    // (the PDF subject is bold and on one line — keep it sane).
+    const editedSubjectRaw = typeof body.editedSubject === "string" ? body.editedSubject.trim() : "";
+    const subjectLine = editedSubjectRaw.length > 0 && editedSubjectRaw.length <= 300
+      ? editedSubjectRaw
+      : defaultSubjectLine;
     // Default docs list — used only as a fallback when:
     //   (a) staff didn't provide a story, OR
     //   (b) AI generation fails, OR
