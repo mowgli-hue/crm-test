@@ -655,6 +655,11 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [deleteCaseModalId, setDeleteCaseModalId] = useState<string | null>(null);
   const [deleteCaseTypedName, setDeleteCaseTypedName] = useState("");
   const [deleteCaseInProgress, setDeleteCaseInProgress] = useState(false);
+  // Diagnose-case modal: runs comprehensive WhatsApp + intake diagnostic on
+  // the case and renders the result. Read-only — doesn't change state.
+  const [diagnoseCaseModalId, setDiagnoseCaseModalId] = useState<string | null>(null);
+  const [diagnoseResult, setDiagnoseResult] = useState<any | null>(null);
+  const [diagnoseLoading, setDiagnoseLoading] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   // Resizable inbox thread list — drag the divider to adjust width.
   const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
@@ -6502,6 +6507,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 ✏️ Edit
                               </button>
                             )}
+                            {/* Diagnose Client — runs the comprehensive case
+                                diagnostic and shows the result in a modal.
+                                Available to all staff (read-only — no actions
+                                taken, just inspection). Answers questions like
+                                "did the bot really not send anything?", "is the
+                                phone format wrong?", "is marketing bot stealing
+                                replies?". */}
+                            <button
+                              onClick={() => setDiagnoseCaseModalId(selectedCase.id)}
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100"
+                              title="Run delivery + intake diagnostic on this case"
+                            >
+                              🩺 Diagnose
+                            </button>
                             {/* Delete Case — Admin only. Opens a confirmation modal that
                                 requires the staff to type the client's name to confirm.
                                 The DELETE endpoint then cascades through messages, tasks,
@@ -12210,6 +12229,249 @@ function ClientPortal({
                     className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${namesMatch && !deleteCaseInProgress ? "bg-red-600 hover:bg-red-700" : "bg-red-300 cursor-not-allowed"}`}
                   >
                     {deleteCaseInProgress ? "Deleting…" : "🗑️ Delete Permanently"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+      ), document.body)}
+
+      {/* ────────────────────────────────────────────────────────────
+           Diagnose Case Modal — open this when staff says "client
+           didn't get my message" / "auto-intake didn't fire" / "bot
+           is silent". It hits /api/cases/[id]/debug, renders the
+           result in plain English, and surfaces actionable issues.
+         ──────────────────────────────────────────────────────────── */}
+      {typeof document !== "undefined" && diagnoseCaseModalId && createPortal((
+        (() => {
+          const close = () => {
+            setDiagnoseCaseModalId(null);
+            setDiagnoseResult(null);
+            setDiagnoseLoading(false);
+          };
+          // Lazy-fire the fetch when the modal opens (idempotent — guarded by
+          // diagnoseLoading + diagnoseResult). Using setTimeout 0 so the
+          // useEffect doesn't run during render.
+          if (!diagnoseResult && !diagnoseLoading) {
+            setDiagnoseLoading(true);
+            setTimeout(async () => {
+              try {
+                const res = await apiFetch(`/cases/${diagnoseCaseModalId}/debug`, { method: "GET" });
+                if (res?.ok) {
+                  const data = await res.json();
+                  setDiagnoseResult(data);
+                } else {
+                  setDiagnoseResult({ error: `Diagnostic failed: ${res?.status || "no response"}` });
+                }
+              } catch (e) {
+                setDiagnoseResult({ error: (e as Error).message });
+              } finally {
+                setDiagnoseLoading(false);
+              }
+            }, 0);
+          }
+          const r = diagnoseResult;
+          const summary = r?.summary;
+          const isHealthy = summary?.status === "HEALTHY";
+          return (
+            <div
+              style={{
+                position: "fixed",
+                top: 0, left: 0, right: 0, bottom: 0,
+                background: "rgba(0,0,0,0.7)",
+                zIndex: 999999,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "16px",
+              }}
+              onClick={close}
+            >
+              <div
+                style={{
+                  background: "white",
+                  borderRadius: "16px",
+                  padding: "20px",
+                  width: "100%",
+                  maxWidth: "720px",
+                  maxHeight: "90vh",
+                  overflowY: "auto",
+                  boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">🩺 Case Diagnostic</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {r?.caseSummary?.client} · {r?.caseId || diagnoseCaseModalId}
+                    </p>
+                  </div>
+                  <button onClick={close} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+                </div>
+
+                {diagnoseLoading && !r && (
+                  <div className="py-12 text-center text-sm text-slate-500">
+                    <div className="inline-block animate-spin text-2xl">⏳</div>
+                    <p className="mt-2">Running diagnostic checks…</p>
+                  </div>
+                )}
+
+                {r?.error && (
+                  <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 mb-4 text-sm text-red-800">
+                    <p className="font-bold">Diagnostic failed</p>
+                    <p className="mt-1 text-xs">{r.error}</p>
+                  </div>
+                )}
+
+                {r && !r.error && (
+                  <>
+                    {/* Top-level summary */}
+                    <div className={`rounded-xl border-2 p-4 mb-4 ${isHealthy ? "border-emerald-200 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+                      <p className={`text-sm font-bold ${isHealthy ? "text-emerald-900" : "text-amber-900"}`}>
+                        {isHealthy ? "✅ Healthy" : `⚠️ ${summary?.issues?.length || 0} issue(s) found`}
+                      </p>
+                      {isHealthy ? (
+                        <p className="text-xs mt-1 text-emerald-800">{summary?.message}</p>
+                      ) : (
+                        <ul className="text-xs mt-2 space-y-1 text-amber-900">
+                          {(summary?.issues || []).map((issue: string, i: number) => (
+                            <li key={i}>• {issue}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* Detail sections — collapsible card per check */}
+                    <div className="space-y-2">
+                      {/* Phone format */}
+                      {r.phoneFormat && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">📞 Phone Format</p>
+                          <p className="text-[11px] text-slate-600">{r.phoneFormat.diagnosis}</p>
+                          {r.phoneFormat.digits && (
+                            <p className="text-[10px] text-slate-400 mt-1 font-mono">→ {r.phoneFormat.e164 || r.phoneFormat.digits}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 24h window */}
+                      {r.window24h && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">⏰ 24-Hour Messaging Window</p>
+                          <p className="text-[11px] text-slate-600">{r.window24h.diagnosis}</p>
+                          {r.window24h.lastInboundAt && (
+                            <p className="text-[10px] text-slate-400 mt-1">Last client reply: {r.window24h.ageHours}h ago</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Marketing bot */}
+                      {r.marketingBotStatus && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">🤖 Marketing Bot Ownership</p>
+                          <p className="text-[11px] text-slate-600 whitespace-pre-line">{r.marketingBotStatus.diagnosis}</p>
+                          {(r.marketingBotStatus.stage !== undefined) && (
+                            <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                              stage={r.marketingBotStatus.stage}, ai_enabled={String(r.marketingBotStatus.aiEnabled)}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Intake session */}
+                      {r.intakeSession && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">📝 Intake Session</p>
+                          <p className="text-[11px] text-slate-600">{r.intakeSession.diagnosis || "—"}</p>
+                          {r.intakeSession.phase && (
+                            <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                              phase={r.intakeSession.phase} · turns={r.intakeSession.chatTurns} · {r.intakeSession.questionsAnswered}/{r.intakeSession.questionsTotal} answered
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Form type / checklist */}
+                      {r.checklist && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">📋 Form Type Resolution</p>
+                          <p className="text-[11px] text-slate-600">{r.checklist.diagnosis}</p>
+                          {r.checklist.resolvedKey && (
+                            <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                              {r.checklist.formType} → "{r.checklist.resolvedKey}" ({r.checklist.checklistItemCount} docs, {r.checklist.intakeQuestionCount} questions)
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Recent outbound */}
+                      {r.recentOutbound && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">📤 Recent Outbound Sends</p>
+                          <p className="text-[11px] text-slate-600">{r.recentOutbound.diagnosis}</p>
+                          {r.recentOutbound.messages && r.recentOutbound.messages.length > 0 && (
+                            <ul className="mt-1.5 space-y-0.5">
+                              {r.recentOutbound.messages.slice(0, 3).map((m: any, i: number) => (
+                                <li key={i} className="text-[10px] text-slate-500 font-mono">
+                                  · {m.ageMinutes}min ago: {m.preview.slice(0, 70)}{m.preview.length > 70 ? "…" : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Recent messages (mixed) */}
+                      {r.recentMessages && Array.isArray(r.recentMessages) && r.recentMessages.length > 0 && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">💬 Recent Messages (Both Directions)</p>
+                          <ul className="space-y-0.5">
+                            {r.recentMessages.slice(0, 5).map((m: any, i: number) => (
+                              <li key={i} className="text-[10px] text-slate-500 font-mono">
+                                {m.direction === "inbound" ? "← " : "→ "}
+                                <span className="text-slate-400">{m.ageMinutes}m ago:</span>{" "}
+                                {String(m.preview || "").slice(0, 70)}{(m.preview || "").length > 70 ? "…" : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Documents */}
+                      {r.documents && r.documents.count !== undefined && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-1">📎 Documents</p>
+                          <p className="text-[11px] text-slate-600">{r.documents.count} document(s) on file</p>
+                        </div>
+                      )}
+
+                      {/* Stuck uploads */}
+                      {r.stuckUploadCount > 0 && (
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+                          <p className="text-xs font-bold text-amber-900 mb-1">⚠️ Stuck Uploads</p>
+                          <p className="text-[11px] text-amber-800">{r.stuckUploadHint}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Raw JSON expandable */}
+                    <details className="mt-4">
+                      <summary className="text-[10px] text-slate-400 cursor-pointer hover:text-slate-600">View raw diagnostic JSON</summary>
+                      <pre className="mt-2 text-[9px] text-slate-500 bg-slate-50 p-2 rounded overflow-x-auto max-h-60 overflow-y-auto">
+                        {JSON.stringify(r, null, 2)}
+                      </pre>
+                    </details>
+                  </>
+                )}
+
+                <div className="flex items-center justify-end mt-4 pt-3 border-t border-slate-100">
+                  <button
+                    onClick={close}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
                   </button>
                 </div>
               </div>

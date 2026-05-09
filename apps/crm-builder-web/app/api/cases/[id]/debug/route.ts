@@ -215,9 +215,125 @@ export async function GET(
     /* ignore */
   }
 
-  // 7. Top-level summary
+  // 7. Phone format validity (Meta requires E.164 — country code, no + or spaces)
+  // This is the most common cause of "client never received message" — staff edits
+  // the phone in the CRM and adds a "+" or dashes, Meta rejects every send.
+  result.phoneFormat = (() => {
+    const raw = caseItem.leadPhone || "";
+    const digits = String(raw).replace(/\D/g, "");
+    if (!digits) {
+      return {
+        status: "MISSING",
+        diagnosis: "❌ No phone number on this case. All sends will fail. Action: edit case and add the client's WhatsApp number.",
+      };
+    }
+    if (digits.length < 10) {
+      return {
+        status: "TOO_SHORT",
+        digits,
+        diagnosis: `❌ Phone "${raw}" → ${digits.length} digits (need ≥10). Likely missing country code or partial. Meta will reject.`,
+      };
+    }
+    if (digits.length > 15) {
+      return {
+        status: "TOO_LONG",
+        digits,
+        diagnosis: `❌ Phone "${raw}" → ${digits.length} digits (max 15 per E.164). Meta will reject.`,
+      };
+    }
+    // Most clients are Canada (1) or India (91)
+    const startsWithCanada = digits.startsWith("1") && digits.length === 11;
+    const startsWithIndia = digits.startsWith("91") && digits.length === 12;
+    return {
+      status: "OK",
+      digits,
+      e164: `+${digits}`,
+      diagnosis: `✅ Phone format valid${startsWithCanada ? " (Canada)" : startsWithIndia ? " (India)" : ""} — Meta should accept.`,
+    };
+  })();
+
+  // 8. Marketing-bot interception check
+  // Real bug from CASE-1399 (Ramandeep): she received the intake template but
+  // her reply was answered by the marketing bot because marketing_leads.stage
+  // wasn't flipped to "converted" + ai_enabled wasn't false. The fix was added
+  // to /api/cases/route.ts but old leads might still have stale state. This
+  // diagnostic surfaces it so staff can fix manually.
+  if (phone) {
+    try {
+      const leadRes = await pool.query(
+        `SELECT phone, stage, converted_case_id, ai_enabled, updated_at
+           FROM marketing_leads WHERE phone = $1`,
+        [phone]
+      );
+      if (leadRes.rows.length === 0) {
+        result.marketingBotStatus = {
+          status: "NO_LEAD_ROW",
+          diagnosis: "No marketing_leads row — marketing bot won't intercept. ✅ Safe.",
+        };
+      } else {
+        const lead = leadRes.rows[0];
+        const wouldIntercept = lead.ai_enabled === true && lead.stage !== "converted";
+        result.marketingBotStatus = {
+          stage: lead.stage,
+          aiEnabled: lead.ai_enabled,
+          convertedCaseId: lead.converted_case_id,
+          updatedAt: lead.updated_at,
+          diagnosis: wouldIntercept
+            ? `❌ MARKETING BOT WILL INTERCEPT! lead.ai_enabled=true and stage="${lead.stage}" (not "converted"). Client's reply will be answered by marketing bot, not the case-intake bot. Fix: UPDATE marketing_leads SET stage='converted', ai_enabled=FALSE, converted_case_id='${caseId}' WHERE phone='${phone}';`
+            : lead.converted_case_id && lead.converted_case_id !== caseId
+              ? `⚠️ marketing_leads.converted_case_id="${lead.converted_case_id}" but this case is ${caseId}. Old conversion pointer — usually harmless but staff should verify.`
+              : "✅ Marketing bot disabled for this lead — case-intake bot owns this conversation.",
+        };
+      }
+    } catch (e) {
+      result.marketingBotStatus = { error: (e as Error).message.slice(0, 100) };
+    }
+  }
+
+  // 9. Last 5 outbound message delivery statuses
+  // Outbound rows in whatsapp_inbox have direction='outbound'. There's no
+  // delivery-receipt status stored at the moment, but knowing that recent
+  // outbounds EXIST tells us the bot tried to send. If staff says "client
+  // didn't receive", checking this confirms the send happened.
+  try {
+    const outRes = await pool.query(
+      `SELECT message, created_at
+         FROM whatsapp_inbox
+        WHERE direction = 'outbound'
+          AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1
+        ORDER BY created_at DESC
+        LIMIT 5`,
+      [last10]
+    );
+    result.recentOutbound = {
+      count: outRes.rows.length,
+      messages: outRes.rows.map((r) => ({
+        createdAt: r.created_at,
+        ageMinutes: Math.round((Date.now() - new Date(r.created_at).getTime()) / 60000),
+        preview: String(r.message || "").slice(0, 100),
+      })),
+      diagnosis:
+        outRes.rows.length === 0
+          ? "❌ No outbound messages ever sent to this phone. Either case is fresh and intake hasn't started, OR all sends are silently failing."
+          : `✅ ${outRes.rows.length} recent outbound(s). If client says they didn't receive, possible causes: (a) blocked Newton's number, (b) phone format wrong [check #7 above], (c) WhatsApp inactive on this number — try SMS or call.`,
+    };
+  } catch (e) {
+    result.recentOutbound = { error: (e as Error).message.slice(0, 100) };
+  }
+
+  // 10. Top-level summary
   result.summary = (() => {
     const issues: string[] = [];
+    // Phone format issues come first — always the prerequisite
+    if (result.phoneFormat?.status === "MISSING") {
+      issues.push("❌ No phone number on case — fix this first");
+    } else if (result.phoneFormat?.status === "TOO_SHORT" || result.phoneFormat?.status === "TOO_LONG") {
+      issues.push(`❌ Phone format invalid (${result.phoneFormat.digits?.length || 0} digits) — Meta will reject`);
+    }
+    // Marketing bot interception
+    if (result.marketingBotStatus?.diagnosis?.startsWith("❌")) {
+      issues.push("❌ Marketing bot will intercept replies — flip lead stage to 'converted'");
+    }
     if (result.intakeSession?.status === "NO_SESSION") {
       issues.push("⚠️ No intake session — click Start Intake");
     }
@@ -233,12 +349,15 @@ export async function GET(
     if (result.checklist?.resolvedKey === "generic") {
       issues.push("⚠️ Form type fell back to 'generic' — checklist + intake questions will be wrong/missing. Most likely root cause.");
     }
+    if (result.recentOutbound?.count === 0 && result.intakeSession?.status !== "NO_SESSION") {
+      issues.push("⚠️ No outbound messages ever sent — sends may be silently failing");
+    }
     if (result.stuckUploadCount > 0) {
       issues.push(`⚠️ ${result.stuckUploadCount} stuck upload(s) for this case`);
     }
     return issues.length > 0
       ? { status: "ISSUES_FOUND", issues }
-      : { status: "HEALTHY", message: "No obvious issues detected" };
+      : { status: "HEALTHY", message: "✅ No obvious issues — phone format, 24h window, intake session, and bot ownership all look good" };
   })();
 
   return NextResponse.json(result);
