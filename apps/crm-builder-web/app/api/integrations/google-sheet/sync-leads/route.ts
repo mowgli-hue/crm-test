@@ -221,6 +221,43 @@ export async function POST(request: NextRequest) {
         })
       )
     );
+
+    // ── Auto-start WhatsApp intake ──
+    // Without this block, leads imported from Google Sheets had cases created
+    // but were never sent the intake template / questions. The case sat at 0%
+    // intake until staff manually clicked "Send Intake" days later — by which
+    // point the client had often forgotten about Newton.
+    //
+    // Same logic / skip rules as the main /api/cases POST path. We don't want
+    // to fail the entire sync if intake fails for one client, so the whole
+    // block is wrapped in try/catch.
+    try {
+      const phoneDigits = String(row.phone || "").replace(/\D/g, "");
+      const skipFormTypes = ["college change", "college transfer"];
+      const shouldSkip = skipFormTypes.some(t => String(row.formType || "").toLowerCase().includes(t));
+      if (phoneDigits && !shouldSkip) {
+        const { startIntakeSession } = await import("@/lib/whatsapp-ai-intake");
+        const result = await startIntakeSession({
+          caseId: created.id,
+          companyId: user.companyId,
+          phone: phoneDigits,
+          clientName: row.name || "Client",
+          formType: row.formType || "PGWP",
+          existingIntake: {},
+        });
+        if (result.success) {
+          console.log(`📱 Auto-started WhatsApp intake from Google Sheets sync: ${row.name} (${created.id})`);
+        } else {
+          console.error(`Auto WA intake from Sheets sync failed for ${created.id}: ${result.error}`);
+        }
+      } else if (!phoneDigits) {
+        console.log(`⏭️  Skipped WA intake for ${created.id} (Sheets sync): no phone number`);
+      } else if (shouldSkip) {
+        console.log(`⏭️  Skipped WA intake for ${created.id} (Sheets sync): formType "${row.formType}" is in manual-handling list`);
+      }
+    } catch (e) {
+      console.error(`Auto WA intake from Sheets sync failed for ${created.id}:`, (e as Error).message);
+    }
   }
 
   return NextResponse.json({

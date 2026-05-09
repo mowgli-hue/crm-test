@@ -282,6 +282,28 @@ ${summaryData.text}`,
     // sponsorship, etc. — runs auto-intake.
     const skipFormTypes = ["college change", "college transfer"];
     const shouldSkip = skipFormTypes.some(t => created.formType.toLowerCase().includes(t));
+
+    // Helper: when auto-intake is skipped or fails, leave a visible note on
+    // the case so staff can see WHY without having to grep Railway logs.
+    // Most "auto-intake didn't trigger" complaints from staff are actually
+    // explainable (no phone / wrong format / template send failed) but the
+    // reason was buried in logs nobody reads.
+    const { addMessage } = await import("@/lib/store");
+    const writeIntakeNote = async (text: string) => {
+      try {
+        await addMessage({
+          companyId: created.companyId,
+          caseId: created.id,
+          senderType: "ai",
+          senderName: "Auto-Intake",
+          text,
+        });
+      } catch (e) {
+        // Note-writing failure is non-fatal — don't block case creation
+        console.warn(`Could not write intake note: ${(e as Error).message.slice(0, 80)}`);
+      }
+    };
+
     if (phone && !shouldSkip) {
       const { startIntakeSession } = await import("@/lib/whatsapp-ai-intake");
       const result = await startIntakeSession({
@@ -293,16 +315,36 @@ ${summaryData.text}`,
         existingIntake: ((created as any).pgwpIntake as Record<string, any>) || {},
       });
       if (result.success) {
-        console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id})`);
+        console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id}) — mode=${result.mode || "?"}`);
+        await writeIntakeNote(`✅ Auto-intake started (mode: ${result.mode || "?"})${result.skippedCount ? ` · ${result.skippedCount} questions pre-filled from passport/case data` : ""}`);
       } else {
         console.error(`Auto WA intake failed for ${created.id}: ${result.error}`);
+        await writeIntakeNote(`⚠️ Auto-intake FAILED: ${result.error || "unknown error"}\n\nStaff: send a manual greeting from the case (👋 Send Greeting button), or click Send Intake to retry.`);
       }
     } else if (!phone) {
       console.log(`⏭️  Skipped WA intake for ${created.id}: no phone number`);
+      await writeIntakeNote(`⏭️ Auto-intake skipped: case has no phone number (leadPhone is empty).\n\nStaff: add a phone number to the case, then click Send Intake.`);
     } else if (shouldSkip) {
       console.log(`⏭️  Skipped WA intake for ${created.id}: formType "${created.formType}" is in manual-handling list`);
+      await writeIntakeNote(`⏭️ Auto-intake skipped: formType "${created.formType}" is in the manual-handling list (advisory cases — Newton doesn't file an application). No bot intake will run for this case.`);
     }
-  } catch (e) { console.error("Auto WA intake failed:", (e as Error).message); }
+  } catch (e) {
+    // Top-level catch: auto-intake should NEVER block case creation. Log
+    // the actual error so staff can diagnose, and try to leave a note on
+    // the case if possible (best-effort — case might already be saved).
+    const errMsg = (e as Error).message;
+    console.error(`Auto WA intake failed (top-level catch): ${errMsg}`);
+    try {
+      const { addMessage } = await import("@/lib/store");
+      await addMessage({
+        companyId: created.companyId,
+        caseId: created.id,
+        senderType: "ai",
+        senderName: "Auto-Intake",
+        text: `❌ Auto-intake CRASHED: ${errMsg}\n\nStaff: send a manual greeting, or click Send Intake to retry. Engineering: check Railway logs around case creation timestamp.`,
+      });
+    } catch { /* ignore — we did our best */ }
+  }
 
   return NextResponse.json({ case: created, drive }, { status: 201 });
 }
