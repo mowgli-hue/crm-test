@@ -747,22 +747,78 @@ Format: a flat array of strings, each a single document entry, properly named. U
 Typical doc count: 6-12 entries. Order: forms first (IMM numbers), then identity (passport), then status (permits), then evidence (transcripts, letters, financial proofs), then photos last.
 
 ═══════════════════════════════════════════════════════════════
+🔴 CRITICAL: ENUMERATE EVERY ELIGIBILITY RULE AS A BULLET
+═══════════════════════════════════════════════════════════════
+Your most important job is to make the eligibility argument VISIBLE.
+
+In the "APPLICATION-SPECIFIC RULES" section above, you were given a list
+of rules / requirements / conditions for this application type. EVERY
+one of those rules that is RELEVANT to this client's case MUST appear
+in the letter body as its OWN bullet point with a bold label.
+
+This is not optional. Visa officers scan rep letters looking for each
+eligibility criterion to be addressed. If a rule is not visibly addressed,
+the officer assumes we missed it.
+
+Examples of rules that MUST become bullets (when applicable):
+  • Language requirement (CLB level) → "BULLET:Language Proficiency:|..."
+  • 180-day filing window (PGWP) → "BULLET:Application Within 180 Days:|..."
+  • Designated Learning Institution → "BULLET:Eligible DLI:|..."
+  • Program length (≥ 8 months) → "BULLET:Program Length:|..."
+  • Full-time enrolment → "BULLET:Full-Time Enrolment:|..."
+  • Field of study (PGWP CIP code) → "BULLET:Field of Study:|..."
+  • Valid status / restoration → "BULLET:Valid Status:|..."
+  • 730-day residency (PR card) → "BULLET:Residency Obligation:|..."
+  • 1095-day physical presence (citizenship) → "BULLET:Physical Presence:|..."
+  • Tax filing (citizenship) → "BULLET:Tax Filing:|..."
+  • NOC TEER level (work permits, EE) → "BULLET:NOC Classification:|..."
+  • Genuineness of relationship (sponsorship, SOWP) → "BULLET:Genuine Relationship:|..."
+  • ECA for foreign credentials (EE) → "BULLET:Educational Credential Assessment:|..."
+  • Police certificates / medical (PR) → "BULLET:Background Verification:|..."
+  • Funds / financial capacity (TRV, study, EE) → "BULLET:Financial Capacity:|..."
+  • Strong ties to home country (TRV) → "BULLET:Ties to Home Country:|..."
+  • Dual intent (TRV) → "BULLET:Dual Intent:|..."
+  • Principal partner's status (SOWP) → "BULLET:Principal Partner Status:|..."
+
+EACH bullet should:
+  - Have a bold label naming the rule (e.g. "Language Proficiency:")
+  - Have a body explaining HOW the client meets that rule, citing the
+    specific evidence in the file (test score, dates, school name, etc.)
+  - Reference the regulation where appropriate (IRPR section, IRPA section,
+    IRCC policy)
+
+Example for a PGWP case (Post-Graduation Work Permit):
+[
+  "BULLET:Eligible Designated Learning Institution:|My client completed studies at Capilano University, which is on IRCC's PGWP-eligible Designated Learning Institution list, satisfying this core eligibility requirement.",
+  "BULLET:Program Length:|The Bachelor of Hospitality Management program is a 4-year full-time program, well exceeding the 8-month minimum required under PGWP rules.",
+  "BULLET:Full-Time Enrolment:|My client maintained full-time student status across all required academic semesters as evidenced by the official transcripts enclosed.",
+  "BULLET:Application Within 180 Days:|This application is submitted within the 180-day window from the program completion date of August 15, 2026, as required by IRCC.",
+  "BULLET:Valid Status:|My client continues to hold valid status under section 183(5) of IRPR (implied/maintained status) while this application is being processed.",
+  "BULLET:Field of Study:|The program completed by my client falls within IRCC's PGWP-eligible field of study list under the post-February 2024 framework.",
+  "BULLET:Language Proficiency:|My client meets the required Canadian Language Benchmark (CLB) level, as evidenced by the IELTS Test Report Form enclosed showing scores well above the minimum threshold.",
+  "BULLET:One-Time Eligibility:|My client has not previously been issued a Post-Graduation Work Permit, satisfying the once-per-lifetime eligibility rule under PGWP guidelines."
+]
+
+Note how every applicable rule is its own bullet. This is what the
+output must look like for ANY application type — adjust the bullets
+to match the rule set for the specific application.
+
+═══════════════════════════════════════════════════════════════
 STRUCTURE GUIDELINES (BODY)
 ═══════════════════════════════════════════════════════════════
-1. Open with 1-2 introductory paragraphs naming the client + application type, weaving in their specific situation.
-2. Add 2-4 HEADING sections that organize the case logically:
-   - "Background and ${p.formTypeFull.includes("Permit") || p.formTypeFull.includes("Visa") ? "Status History" : "Application Context"}"
-   - "Eligibility for [Permit Type]" (this is the most important section — use BULLET points to enumerate)
-   - "Compliance with IRCC Requirements" (cite specific IMM forms + regulations)
-   - "Request for Consideration" (close)
-3. BULLET points should bear the regulatory weight where listing eligibility — they are visually scanned, so each one is one criterion met.
-4. Close with a polite request for favourable consideration + thank-you paragraph.
-5. Use the consultant's third-person voice — "my client", "${p.clientName}", and pronouns ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive}.
-6. Tone: formal, respectful, confident, professional. No flowery adjectives. No exclamation marks. No "I hope" / "I think" hedging.
-7. Total body: 8-15 entries in the array.
-8. NEVER include "Dear Sir/Madam" or "Sincerely" — those are added separately by the PDF builder.
-9. NEVER include the document subject line — that's added separately.
-10. If the consultant mentions specific dates / facts that contradict known facts, USE THE CONSULTANT'S VERSION (they may have updated info).
+1. Open with 1-2 introductory paragraphs naming the client + application type, weaving in their specific situation from the consultant's notes.
+2. Add a HEADING called "Background and ${p.formTypeFull.includes("Permit") || p.formTypeFull.includes("Visa") ? "Status History" : "Application Context"}" with 1-2 paragraphs of context (academic journey for study/PGWP, employment history for work, relationship timeline for sponsorship, etc.).
+3. Add a HEADING called "Eligibility for ${p.formTypeFull}" — under it, ENUMERATE EVERY APPLICABLE RULE AS ITS OWN BULLET (see above — this is the heart of the letter).
+4. Add a HEADING called "Compliance with IRCC Requirements" — cite the specific IMM forms enclosed and the relevant IRPR/IRPA sections.
+5. Add a HEADING called "Request for Consideration" — close with a polite request for favourable consideration and a thank-you paragraph.
+6. BULLET points are mandatory under "Eligibility" — they are how visa officers verify we addressed each criterion.
+7. Use the consultant's third-person voice — "my client", "${p.clientName}", and pronouns ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive}.
+8. Tone: formal, respectful, confident, professional. No flowery adjectives. No exclamation marks. No "I hope" / "I think" hedging.
+9. Total body: 12-20 entries in the array (more than before — because every eligibility rule is now its own bullet).
+10. NEVER include "Dear Sir/Madam" or "Sincerely" — those are added separately by the PDF builder.
+11. NEVER include the document subject line — that's added separately.
+12. If the consultant mentions specific dates / facts that contradict known facts, USE THE CONSULTANT'S VERSION (they may have updated info).
+13. If the consultant gives instructions like "emphasize X" or "don't mention Y", FOLLOW THOSE INSTRUCTIONS even if it changes the structure above.
 
 Return ONLY the JSON object. No prose before or after. No markdown fences.`;
 
@@ -790,7 +846,10 @@ Draft the letter as a JSON object with bodyLines (using HEADING/BULLET markers) 
       // for legally-significant letters. Cost is minimal (one call per
       // letter generation, only when staff explicitly invoke it).
       model: "claude-sonnet-4-5-20250929",
-      max_tokens: 4000,
+      // 6000 tokens — letters now enumerate every eligibility rule as its
+      // own bullet, so they're longer than before. 6000 leaves comfortable
+      // room for the full body + docs without truncation.
+      max_tokens: 6000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     }),
