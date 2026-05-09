@@ -180,6 +180,82 @@ function validateEmployment(answer: string): ValidationResult {
 
 // ─── Date validator ─────────────────────────────────────────────────
 //
+// ─── Date helpers (extracted for reuse) ─────────────────────────────
+//
+// Real bug from CASE-1415: client typed "1- 2024-24-03 Vancouver YVR" for
+// Q8 (date+place of entry to Canada). The entry_to_canada validator only
+// checked that a date PATTERN existed — never that the components were
+// valid. So "2024-24-03" (year-day-month, swapped) sailed through.
+//
+// extractDateComponents takes a date string in any common format and
+// returns { ok: true, year, month, day, normalized } if every component
+// is valid, or { ok: false, reason } with a human-readable error.
+
+interface DateComponents {
+  year: number;
+  month: number;
+  day: number;
+  normalized: string; // YYYY-MM-DD
+}
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  if ([4, 6, 9, 11].includes(month)) return 30;
+  return 31;
+}
+
+function extractDateComponents(s: string): { ok: true; data: DateComponents } | { ok: false; reason: string } {
+  const v = s.trim();
+  if (!v) return { ok: false, reason: "empty" };
+
+  // Try YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+  let m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  let year = 0, month = 0, day = 0;
+  if (m) {
+    year = parseInt(m[1], 10);
+    month = parseInt(m[2], 10);
+    day = parseInt(m[3], 10);
+  } else {
+    // Try DD-MM-YYYY (common Indian/Canadian format)
+    m = v.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (m) {
+      day = parseInt(m[1], 10);
+      month = parseInt(m[2], 10);
+      year = parseInt(m[3], 10);
+    } else {
+      return { ok: false, reason: "format" };
+    }
+  }
+
+  // Range checks — these catch the year-day-month swap (e.g., "2024-24-03").
+  if (month < 1 || month > 12) {
+    return { ok: false, reason: `month=${month} (must be 1-12 — did you type the year, day, then month? IRCC format is YYYY-MM-DD = year, month, day)` };
+  }
+  if (day < 1 || day > 31) {
+    return { ok: false, reason: `day=${day} (must be 1-31)` };
+  }
+  if (year < 1900 || year > 2100) {
+    return { ok: false, reason: `year=${year} (must be 1900-2100)` };
+  }
+
+  // Day-in-month check (catches 2024-02-30, 2024-04-31, etc.)
+  const maxDay = daysInMonth(year, month);
+  if (day > maxDay) {
+    return {
+      ok: false,
+      reason: `${year}-${String(month).padStart(2, "0")} has only ${maxDay} days — day=${day} is invalid`,
+    };
+  }
+
+  const normalized = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return { ok: true, data: { year, month, day, normalized } };
+}
+
+// ─── Date validator ─────────────────────────────────────────────────
 // For: date_of_birth, passport_expiry
 // Catches: invalid month (2023-19-12), impossible dates, wrong format
 //
@@ -189,56 +265,21 @@ function validateDate(answer: string, kind: "dob" | "passport_expiry"): Validati
   const v = (answer || "").trim();
   if (!v) return { ok: false, hint: "I need a date. Please reply with the date in YYYY-MM-DD format (e.g., 1995-08-22)." };
 
-  // Try common formats
-  const patterns = [
-    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/, // YYYY-MM-DD
-    /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/, // DD-MM-YYYY (ambiguous with MM-DD-YYYY)
-  ];
-
-  let year = 0, month = 0, day = 0, matched = false;
-
-  for (const re of patterns) {
-    const m = v.match(re);
-    if (m) {
-      // First pattern: year/month/day; second: ambiguous — assume DD-MM-YYYY (Newton's clients tend to use this)
-      if (re === patterns[0]) {
-        [, year, month, day] = m.map((x) => parseInt(x, 10)) as any;
-      } else {
-        [, day, month, year] = m.map((x) => parseInt(x, 10)) as any;
-        // If "day" > 12 we're confident it's DD-MM-YYYY; otherwise it's ambiguous
-        // Leave as-is for now; flag if validation fails
-      }
-      matched = true;
-      break;
+  const parsed = extractDateComponents(v);
+  if (!parsed.ok) {
+    if (parsed.reason === "format" || parsed.reason === "empty") {
+      return {
+        ok: false,
+        hint: "I couldn't read that date. Please use this format: YYYY-MM-DD. For example: 1995-08-22 (= 22 August 1995).",
+      };
     }
-  }
-
-  if (!matched) {
+    // Range / day-in-month error — be specific so client understands what's wrong
     return {
       ok: false,
-      hint: "I couldn't read that date. Please use this format: YYYY-MM-DD. For example: 1995-08-22 (= 22 August 1995).",
+      hint: `That date isn't valid: ${parsed.reason}. Please reply in YYYY-MM-DD format (year-month-day). Example: 1995-08-22 means 22 August 1995.`,
     };
   }
-
-  // Validate ranges
-  if (month < 1 || month > 12) {
-    return {
-      ok: false,
-      hint: `That date has month=${month} which isn't valid (must be 1-12). Please reply with the date in YYYY-MM-DD format. Example: 1995-08-22.`,
-    };
-  }
-  if (day < 1 || day > 31) {
-    return {
-      ok: false,
-      hint: `That date has day=${day} which isn't valid. Please reply with the date in YYYY-MM-DD format. Example: 1995-08-22.`,
-    };
-  }
-  if (year < 1900 || year > 2100) {
-    return {
-      ok: false,
-      hint: "That year doesn't look right. Please reply with the date in YYYY-MM-DD format. Example: 1995-08-22.",
-    };
-  }
+  const { year } = parsed.data;
 
   // Sanity-check by kind
   const now = new Date();
@@ -274,6 +315,11 @@ function validateDate(answer: string, kind: "dob" | "passport_expiry"): Validati
 // IRCC requires BOTH date and place on Form 5710. If client gives only a date
 // (like "2022-09-01"), we push back asking for the place. If they answer NO
 // to recent entry, accept that.
+//
+// Real bug from CASE-1415: client typed "2024-24-03 Vancouver YVR" — the
+// date is YEAR-DAY-MONTH (swapped). The date-pattern regex accepted it,
+// but month=24 is impossible. Now we extract the date component and
+// validate it with extractDateComponents, which catches the swap.
 function validateEntryToCanada(answer: string): ValidationResult {
   const v = (answer || "").trim();
   if (!v) {
@@ -283,16 +329,33 @@ function validateEntryToCanada(answer: string): ValidationResult {
   if (/^\s*(no|n|none|n\/?a|outside|outside canada)\s*[.!]?\s*$/i.test(v)) {
     return { ok: true };
   }
-  // If answer has a date AND something else (place/airport name), accept
-  const hasDate = /\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(v);
-  if (!hasDate) {
+  // Extract the first date-shaped token
+  const dateMatch = v.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/);
+  if (!dateMatch) {
     return {
       ok: false,
       hint: "Please include the date in YYYY-MM-DD format. Example: 2019-09-01, Toronto Pearson",
     };
   }
+  const dateStr = dateMatch[0];
+  // Validate the date components — catches "2024-24-03" (swapped month/day)
+  const parsed = extractDateComponents(dateStr);
+  if (!parsed.ok) {
+    if (parsed.reason === "format" || parsed.reason === "empty") {
+      return {
+        ok: false,
+        hint: "I couldn't read that date. Please use YYYY-MM-DD format. Example: 2019-09-01, Toronto Pearson.",
+      };
+    }
+    return {
+      ok: false,
+      hint: `That date isn't valid: ${parsed.reason}. Please reply with date AND place in this format: 2019-09-01, Toronto Pearson.`,
+    };
+  }
+
   // Strip the date part and see if there's anything else
-  const withoutDate = v.replace(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/g, "")
+  const withoutDate = v.replace(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/g, "")
+    .replace(/\d{1,2}[-/.]\d{1,2}[-/.]\d{4}/g, "")
     .replace(/[,;\s]+/g, " ")
     .trim();
   // If only 0-1 words after stripping date, push back for the place
@@ -366,13 +429,28 @@ export function runSelfTest(): { passed: number; failed: number; failures: strin
     { q: "What is your date of birth (DOB)?", a: "1995-19-12", expect: "reject", label: "Invalid month" },
     { q: "What is your date of birth (DOB)?", a: "yesterday", expect: "reject", label: "Non-date answer" },
     { q: "What is your date of birth (DOB)?", a: "2050-08-22", expect: "reject", label: "Future DOB" },
+    { q: "What is your date of birth (DOB)?", a: "1995-02-30", expect: "reject", label: "Feb 30 invalid" },
+    { q: "What is your date of birth (DOB)?", a: "1995-04-31", expect: "reject", label: "April 31 invalid" },
+    { q: "What is your date of birth (DOB)?", a: "1899-08-22", expect: "reject", label: "Year too old" },
 
     // DOB — should accept
     { q: "What is your date of birth (DOB)?", a: "1995-08-22", expect: "ok", label: "Valid DOB YYYY-MM-DD" },
     { q: "What is your date of birth (DOB)?", a: "22-08-1995", expect: "ok", label: "Valid DOB DD-MM-YYYY" },
+    { q: "What is your date of birth (DOB)?", a: "2000-02-29", expect: "ok", label: "Leap year Feb 29" },
 
     // Passport expiry — should flag (past) but not reject
     { q: "When does your passport expire?", a: "2020-01-15", expect: "flag", label: "Past passport expiry" },
+
+    // Entry-to-Canada — should reject (the CASE-1415 bug)
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2024-24-03 Vancouver YVR", expect: "reject", label: "Year-day-month swap (sukhmandeep CASE-1415)" },
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2024-13-05 Toronto Pearson", expect: "reject", label: "Month=13 invalid" },
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2024-02-30 Toronto", expect: "reject", label: "Feb 30 in entry date" },
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2019-09-01", expect: "reject", label: "Date but no place" },
+
+    // Entry-to-Canada — should accept
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2019-09-01, Toronto Pearson", expect: "ok", label: "Date + place comma-separated" },
+    { q: "Date and place you first entered Canada (YYYY-MM-DD, city/airport)", a: "2024-03-24 Vancouver YVR", expect: "ok", label: "Date + place space-separated (correct format)" },
+    { q: "Recent entry to Canada? (Yes/No — if Yes: provide date YYYY-MM-DD and reason)", a: "No", expect: "ok", label: "No recent entry" },
 
     // Other questions — pass through
     { q: "What is your full name as on passport?", a: "anything", expect: "ok", label: "Non-validated question" },
