@@ -672,6 +672,25 @@ export async function POST(req: NextRequest) {
 
       // Handle text messages — intake flow or general message notification
       // Also handle images/documents during intake (send next question after saving doc)
+      //
+      // ── BURST-UPLOAD DEBOUNCING ──
+      // Real bug: client (sukhmandeep singh / CASE-1415) uploaded 7 docs in
+      // quick succession. Each doc triggered its own webhook in parallel,
+      // each webhook fired its own AI reply, and the client got bombarded
+      // with 10+ messages. The webhooks ran concurrently with no lock, so
+      // they all read the same chatTurns=14 from the session and all sent
+      // their own response.
+      //
+      // Fix: maintain an in-memory map of recent doc-reply timestamps per
+      // phone number. If we already replied to a doc upload from this phone
+      // within the last 5 seconds, SKIP this reply. The first webhook in
+      // the burst sends the acknowledgment; subsequent ones in the burst
+      // just save the doc silently and the client hears one ack instead of
+      // seven.
+      //
+      // The map is module-level so it persists across requests within the
+      // same Node process. Serverless cold-starts will reset it, but that's
+      // fine — a cold start means there's no prior reply to debounce against.
       if (msgType === "image" || msgType === "document") {
         try {
           const intakeMod = await import("@/lib/whatsapp-ai-intake");
@@ -680,8 +699,21 @@ export async function POST(req: NextRequest) {
           const matchedFormType = String(matched?.formType || "").toLowerCase();
           const skipIntake = skipFormTypes.some(t => matchedFormType.includes(t));
           if (session && session.phase === "ai_chat" && !skipIntake) {
-            // Acknowledge doc and send next question
-            await intakeMod.handleIncomingReply({ phone: from, message: "[document received]", companyId: COMPANY_ID });
+            // Check the per-phone debounce window
+            const lastReplyAt = (globalThis as any).__waDocReplyDebounce?.[from] as number | undefined;
+            const now = Date.now();
+            const DEBOUNCE_MS = 5000; // 5 seconds — covers typical "burst upload" of multiple docs
+            if (lastReplyAt && now - lastReplyAt < DEBOUNCE_MS) {
+              console.log(`⏸️  Skipping doc-reply for ${from} — last doc reply was ${now - lastReplyAt}ms ago (within debounce window). Doc was saved, just no extra ack.`);
+            } else {
+              // Initialize the map if needed (first call)
+              if (!(globalThis as any).__waDocReplyDebounce) {
+                (globalThis as any).__waDocReplyDebounce = {};
+              }
+              (globalThis as any).__waDocReplyDebounce[from] = now;
+              // Acknowledge doc and send next question
+              await intakeMod.handleIncomingReply({ phone: from, message: "[document received]", companyId: COMPANY_ID });
+            }
           }
         } catch(e) { console.error("Intake image handler error:", e); }
       }
@@ -699,8 +731,36 @@ export async function POST(req: NextRequest) {
           const skipIntake = skipFormTypes.some(t => matchedFormType.includes(t));
           
           if (session && !skipIntake) {
-            await intakeMod.handleIncomingReply({ phone: from, message: text, companyId: COMPANY_ID });
-            handledByIntake = true;
+            // ── Per-message-ID dedup ──
+            // Meta occasionally retries webhooks (especially on slow networks).
+            // If we've already processed this exact msgId in the last 60 seconds,
+            // skip it to avoid the bot replying twice. Different from the doc
+            // debounce above (which is per-phone for bursts of different msgIds);
+            // this is per-msgId for retries of the SAME message.
+            const dedupKey = `text:${msgId}`;
+            const lastSeenAt = (globalThis as any).__waMsgDedup?.[dedupKey] as number | undefined;
+            const now = Date.now();
+            const DEDUP_WINDOW_MS = 60000; // 60 seconds
+            if (lastSeenAt && now - lastSeenAt < DEDUP_WINDOW_MS) {
+              console.log(`⏸️  Skipping text reply for msgId=${msgId} — already processed ${now - lastSeenAt}ms ago (Meta webhook retry).`);
+              handledByIntake = true; // Mark handled so we don't fall through to other branches
+            } else {
+              if (!(globalThis as any).__waMsgDedup) {
+                (globalThis as any).__waMsgDedup = {};
+              }
+              (globalThis as any).__waMsgDedup[dedupKey] = now;
+              // Cleanup old entries to prevent memory growth — drop anything older
+              // than 5 minutes. Cheap because the map is small in practice (one
+              // entry per inbound message in a 60-second window).
+              const CLEANUP_MS = 5 * 60 * 1000;
+              for (const k of Object.keys((globalThis as any).__waMsgDedup)) {
+                if (now - (globalThis as any).__waMsgDedup[k] > CLEANUP_MS) {
+                  delete (globalThis as any).__waMsgDedup[k];
+                }
+              }
+              await intakeMod.handleIncomingReply({ phone: from, message: text, companyId: COMPANY_ID });
+              handledByIntake = true;
+            }
           } else if (session && skipIntake) {
             console.log(`⏭️ Skipping intake for ${matched?.formType} — forwarding to team`);
           }
