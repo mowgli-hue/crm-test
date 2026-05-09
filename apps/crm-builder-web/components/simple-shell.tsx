@@ -285,7 +285,12 @@ const APPLICATION_TYPES: string[] = [
   "Other"
 ];
 
-const NON_PROCESSING_APPLICATION_TYPES = new Set(["PR Consultation", "Not for Processing", "College Change"]);
+// Cases with these formTypes never get submitted to IRCC — they are admin
+// flags (PR Consultation = pre-engagement only) or short-cert programs we
+// handle via partners, not via IRCC submission. We hide them from the
+// "Mark as Submitted" dropdown and Submission Log client autocomplete so
+// staff doesn't accidentally pick them when filing a real application.
+const NON_PROCESSING_APPLICATION_TYPES = new Set(["PR Consultation", "Not for Processing", "College Change", "Webform Submission"]);
 
 const PROCESSING_ASSIGNEE_FALLBACK: string[] = [
   "Unassigned",
@@ -9007,7 +9012,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* ── Submission Log Sheet (TOP — main daily-use view) ── */}
               <SubmissionLogPage
                 apiFetch={apiFetch}
-                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
+                cases={visibleCases
+                  .filter((c) => !NON_PROCESSING_APPLICATION_TYPES.has(String(c.formType || "")))
+                  .map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
                 team={processingAssigneeOptions}
                 currentUser={sessionUser?.name || ""}
               />
@@ -9019,7 +9026,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   <select id="submit-case-select"
                     className="flex-1 min-w-[220px] rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-emerald-400">
                     <option value="">Select case...</option>
-                    {cases.filter(c => filterCasesByRole([c], viewRole, sessionUser?.name).length > 0 && c.processingStatus !== "submitted").map(c => (
+                    {cases
+                      .filter(c => filterCasesByRole([c], viewRole, sessionUser?.name).length > 0
+                              && c.processingStatus !== "submitted"
+                              // Hide non-processing form types (PR Consultation, Not for
+                              // Processing, College Change, Webform Submission) — these
+                              // are never filed at IRCC and shouldn't appear when staff
+                              // is recording a submission.
+                              && !NON_PROCESSING_APPLICATION_TYPES.has(String(c.formType || "")))
+                      .map(c => (
                       <option key={c.id} value={c.id}>{c.client} — {c.id} — {c.formType}</option>
                     ))}
                   </select>
