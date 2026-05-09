@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NEWTON_FEES, NEWTON_DOCS, APPLYBOARD_INVENTORY } from "@/lib/marketing-knowledge";
+import { NEWTON_FEES, NEWTON_DOCS } from "@/lib/marketing-knowledge";
 import { Pool } from "pg";
 
 const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "1047138985153613";
@@ -260,8 +260,6 @@ ${NEWTON_FEES}
 
 ${NEWTON_DOCS}
 
-${APPLYBOARD_INVENTORY}
-
 CONVERSATION STAGE: ${sessionData.stage || "new"}
 COLLECTED INFO: ${JSON.stringify(sessionData)}
 KNOWN SERVICE INTEREST: ${interest || lead?.service_interest || "unknown"}
@@ -400,59 +398,6 @@ If client asks for Australia / UK / US / other-country visas:
 If you genuinely don't know whether Newton handles a service (e.g., obscure third-country
 PR, niche embassy work), DO NOT refuse. Instead say: "Let me check with our team and get
 back to you on whether we can handle that — what country / visa type are you looking at?"
-
-═══════════════════════════════════════════════
-COLLEGE ADMISSION VIA APPLYBOARD (Important — was a leak point):
-═══════════════════════════════════════════════
-
-Newton is an ApplyBoard partner. When a student wants to come to Canada to study but
-DOESN'T YET HAVE A LETTER OF ACCEPTANCE, Newton handles the admission application FOR
-them — across multiple partner colleges, multiple intake semesters.
-
-Service: COLLEGE_ADMISSION (see SERVICES catalog)
-Fee: $150 (Newton's admission service fee — flat, not "quoted later")
-What student gets: multiple offer letter options across partner colleges + semesters
-After admission: separate engagement for the Study Permit application (NOT included)
-
-You have the APPLYBOARD_INVENTORY block above with confirmed colleges, tuitions, and
-intake months across HCA, Hospitality, Business, IT, ECE. USE IT.
-
-Triggers — when client asks any of these, bot must offer admission service + use the
-inventory to give specific college names:
-- "I want to apply to college / university in Canada"
-- "What documents do I need for admission?"
-- "I want to study HCA / Hospitality / Business / IT / ECE / [any program]"
-- "How do I get into [program] in Canada?"
-- "Do you help with admission?"
-- "I need an offer letter / LOA"
-- "How much does HCA cost?" / "What are tuition fees?" / "Cheapest option?"
-- "When can I start?" / "What intakes are available?"
-- "Which colleges?" / "Where can I study?"
-
-If client asks for college admission help / documents:
-   ❌ NEVER say "that's outside what we handle, contact the school directly"
-   ❌ NEVER say "we focus on the immigration side only — admission is on the school"
-   ❌ NEVER redirect them to research colleges themselves
-   ✅ DO leverage the APPLYBOARD_INVENTORY to give SPECIFIC examples. Example:
-        "Yes — we apply on your behalf via ApplyBoard for $150. For HCA we partner
-         with several colleges in BC: Western Community College in Abbotsford is
-         the most affordable at around $9,000/year with summer intakes. Selkirk
-         College in Castlegar is around $13,300. Or Thompson Rivers University in
-         Kamloops at $20,435 if you want a university setting. We'd need 10th, 12th,
-         IELTS, passport, and current address. Want to share those?"
-
-This was a real leak point — May 2026, lead Manpreet asked about HCA admission three
-times across two days, was told each time to "check with the college directly", and
-walked away. NEVER do this again.
-
-When quoting tuition or intakes, ALWAYS use the figures from APPLYBOARD_INVENTORY —
-don't invent numbers. If a college / program is not on the list, say "let me have
-the team check live availability for that — ApplyBoard updates inventory monthly".
-
-For IELTS specifically: do NOT promise a hard minimum — Abbie can't surface the
-IELTS minimum without a per-student profile. Say "typical floor is 6.0 overall
-with no band below 5.5 for diplomas; team will confirm exact requirement once
-they see your scores and pick the college".
 
 ═══════════════════════════════════════════════
 PRICING DISCIPLINE:
