@@ -1001,7 +1001,17 @@ export async function handleIncomingReply(params: {
       const positions: Array<{ num: number; start: number; end: number }> = [];
 
       // Pattern A — punctuated: keep the original behavior, this is unambiguous.
-      const punctuatedRegex = /(?:^|\s)(\d{1,2})[.)\:]+\s*/g;
+      //
+      // BUG FIX (sukhmandeep CASE-1415): the original regex only matched
+      // `1.` `1)` `1:` but NOT `1-` — which is the second-most common format
+      // clients use ("1- No, 2- Single, 3- NA"). Without the dash matching,
+      // the parser fell through to single-answer mode and saved only ONE
+      // answer per reply, causing infinite "I still need answers" loops.
+      // Added: `-` (regular dash), `–` (en-dash, sometimes auto-corrected
+      // by mobile keyboards), `—` (em-dash, less common but seen).
+      // Also allow optional whitespace BETWEEN digit and punct so "1 - No"
+      // (space-dash) works too.
+      const punctuatedRegex = /(?:^|\s)(\d{1,2})\s*[.)\:\-–—]+\s*/g;
       let m: RegExpExecArray | null;
       while ((m = punctuatedRegex.exec(text)) !== null) {
         const num = parseInt(m[1], 10);
@@ -1093,6 +1103,25 @@ export async function handleIncomingReply(params: {
         // in the master question list.
         const promptedIndices = batchIndices.filter(i => !isAlreadyAnswered(i));
 
+        // ── Detect global numbering (Bug #5 fix) ──
+        //
+        // Real bug from CASE-1415: client looked at the original full intake
+        // template (which numbered 1-19 across all sections) and replied with
+        // ALL 16 answers in one message using global numbers. The bot was at
+        // Section 5 with only 5 questions in the current batch, so markers
+        // 6-16 got dropped via "out of range" branch below — leaving the
+        // bot still asking for Q12/Q13/Q17/Q18/Q19.
+        //
+        // Heuristic: if at least 3 markers exceed the current batch size AND
+        // they fit within the total question count, treat the WHOLE reply as
+        // global-numbered and map by global question index. This matches what
+        // the client actually meant.
+        const totalQuestions = session.questions.length;
+        const markersExceedingBatch = positions.filter(
+          p => p.num > promptedIndices.length && p.num >= 1 && p.num <= totalQuestions
+        ).length;
+        const useGlobalNumbering = markersExceedingBatch >= 3 && totalQuestions > 0;
+
         for (let i = 0; i < positions.length; i++) {
           const pos = positions[i];
           const nextStart = i + 1 < positions.length ? positions[i + 1].start : text.length;
@@ -1100,7 +1129,11 @@ export async function handleIncomingReply(params: {
           if (!answerText) continue;
 
           let targetIdx: number;
-          if (pos.num >= 1 && pos.num <= promptedIndices.length) {
+          if (useGlobalNumbering && pos.num >= 1 && pos.num <= totalQuestions) {
+            // Global numbering — client is answering the original 1-N intake
+            // template numbers. Map directly to question index N-1.
+            targetIdx = pos.num - 1;
+          } else if (pos.num >= 1 && pos.num <= promptedIndices.length) {
             targetIdx = promptedIndices[pos.num - 1];
           } else if (promptedIndices.length === 0 && batchIndices.length > 0 &&
                      pos.num >= 1 && pos.num <= batchIndices.length) {
@@ -1108,8 +1141,15 @@ export async function handleIncomingReply(params: {
             // answered (shouldn't normally happen on an active reply), fall
             // back to the full batch order so we don't drop the answer.
             targetIdx = batchIndices[pos.num - 1];
+          } else if (pos.num >= 1 && pos.num <= totalQuestions) {
+            // Last-resort fallback: marker number is out of current-batch
+            // range BUT it's still a valid global question index. Save it
+            // there rather than dropping the client's answer entirely. This
+            // covers single stray over-numbered markers in mostly-batch
+            // replies (e.g., 1-5 in batch + one stray "8-").
+            targetIdx = pos.num - 1;
           } else {
-            // Client's marker number is out of range for the current prompt.
+            // Client's marker number is out of range entirely.
             // Skip rather than misalign — better to drop one stray answer
             // than to land it on the wrong question.
             continue;
@@ -1127,8 +1167,11 @@ export async function handleIncomingReply(params: {
 
     // Fall back to single-answer save if batch detection didn't fire
     if (answersCaptured === 0 && currentQuestion && text) {
-      // Strip a leading "N." / "N)" / "N.)" prefix if present (e.g. "4.) No" → "No")
-      const cleaned = text.replace(/^\s*\d{1,2}[.)\:]+\s*/, "").trim() || text.trim();
+      // Strip a leading "N." / "N)" / "N:" / "N-" / "N–" / "N—" prefix if
+      // present (e.g. "4) No" → "No", "1- No" → "No"). Includes dash variants
+      // — without these, "1- No" was being saved verbatim and failing
+      // downstream validators that parsed for Yes/No or a date.
+      const cleaned = text.replace(/^\s*\d{1,2}\s*[.)\:\-–—]+\s*/, "").trim() || text.trim();
       session.answers[`q${qIndex + 1}`] = cleaned;
       session.answers[currentQuestion.slice(0, 50)] = cleaned;
       answersCaptured = 1;

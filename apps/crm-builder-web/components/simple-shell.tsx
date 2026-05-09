@@ -10432,8 +10432,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           ``,
                           `— Newton Immigration Team 🍁`,
                         ].join("\n");
+                        // Warn if the bot is mid-intake — sending a checklist
+                        // alongside an active intake flow can confuse the
+                        // client about which to do first.
+                        const intake = (matchedCase.pgwpIntake as Record<string, any>) || {};
+                        const hasActiveSession =
+                          !!intake.whatsappSession &&
+                          intake.whatsappIntakePhase !== "complete";
                         return (
                           <button onClick={async () => {
+                            if (hasActiveSession) {
+                              const ok = window.confirm(
+                                `⚠️ The bot is mid-intake conversation with this client.\n\n` +
+                                `Sending the checklist now might confuse them while they're answering questions.\n\n` +
+                                `Send anyway?`
+                              );
+                              if (!ok) return;
+                            }
                             const ok = await (window as any).__sendInboxLongSafe(
                               phone,
                               checklistMsg,
@@ -10449,8 +10464,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             );
                             if (!ok) { setCaseActionStatus("❌ Send failed — check logs"); setTimeout(() => setCaseActionStatus(""), 3000); }
                           }} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left hover:bg-blue-100 transition-colors">
-                            <p className="text-xs font-bold text-blue-800">📋 Send Document Checklist</p>
-                            <p className="text-[10px] text-blue-600 mt-0.5">{checklist.filter((i: any) => i.required).length} required · {checklist.filter((i: any) => !i.required).length} optional</p>
+                            <p className="text-xs font-bold text-blue-800">📋 Send Document Checklist{hasActiveSession ? " ⚠️" : ""}</p>
+                            <p className="text-[10px] text-blue-600 mt-0.5">
+                              {checklist.filter((i: any) => i.required).length} required · {checklist.filter((i: any) => !i.required).length} optional
+                              {hasActiveSession ? ` · ⚠️ bot mid-flow` : ""}
+                            </p>
                           </button>
                         );
                       })()}
@@ -10471,8 +10489,26 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           ``,
                           `Take your time. Reply with all answers together. 🙏`,
                         ].join("\n");
+                        // Detect whether the bot is mid-intake — block accidental
+                        // re-sends that confuse the client. Real bug from CASE-1415:
+                        // staff clicked this button while bot was already in Section 4,
+                        // sending the full 1-19 list a second time alongside the
+                        // section flow. Now we warn and require explicit confirmation.
+                        const intake = (matchedCase.pgwpIntake as Record<string, any>) || {};
+                        const hasActiveSession =
+                          !!intake.whatsappSession &&
+                          intake.whatsappIntakePhase !== "complete";
                         return (
                           <button onClick={async () => {
+                            if (hasActiveSession) {
+                              const ok = window.confirm(
+                                `⚠️ The bot is already running an intake conversation with this client.\n\n` +
+                                `Sending the questions again will confuse the client (they'll see two question lists).\n\n` +
+                                `If you really want to restart, use Reset Intake first.\n\n` +
+                                `Send anyway?`
+                              );
+                              if (!ok) return;
+                            }
                             const ok = await (window as any).__sendInboxLongSafe(
                               phone,
                               questionsMsg,
@@ -10488,8 +10524,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             );
                             if (!ok) { setCaseActionStatus("❌ Send failed — check logs"); setTimeout(() => setCaseActionStatus(""), 3000); }
                           }} className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-left hover:bg-purple-100 transition-colors">
-                            <p className="text-xs font-bold text-purple-800">📝 Send Intake Questions</p>
-                            <p className="text-[10px] text-purple-600 mt-0.5">{questions.length} questions{questionsMsg.length > 3500 ? ` · auto-split into parts` : ""}</p>
+                            <p className="text-xs font-bold text-purple-800">📝 Send Intake Questions{hasActiveSession ? " ⚠️" : ""}</p>
+                            <p className="text-[10px] text-purple-600 mt-0.5">
+                              {questions.length} questions{questionsMsg.length > 3500 ? ` · auto-split into parts` : ""}
+                              {hasActiveSession ? ` · ⚠️ bot already mid-flow` : ""}
+                            </p>
                           </button>
                         );
                       })()}
