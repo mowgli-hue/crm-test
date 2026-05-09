@@ -2836,6 +2836,72 @@ export async function deleteSubmission(companyId: string, id: string): Promise<b
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Delete a case + all related data (cascade).
+//
+// Cascade scope (everything in the JSON store that references caseId):
+//   • cases — the case row itself
+//   • messages — outbound + inbound conversation log
+//   • outbound_messages — staff-sent WhatsApp messages
+//   • tasks — to-dos created against this case
+//   • submissions — submission row, if status was already "submitted"
+//
+// NOT touched here (in-store):
+//   • google drive folder — preserved manually if needed (we never mass-
+//     delete client docs from Drive — staff must do it intentionally)
+//   • whatsapp_inbox table (PG) — separate database, kept so historical
+//     conversations remain searchable by phone
+//   • case_notes table (PG) — separate database, deleted by the route
+//     handler in a separate query (not by this function — keeps store.ts
+//     free of cross-database dependencies)
+//   • marketing_leads table (PG) — kept for lead history; the route
+//     handler resets converted_case_id pointer separately
+//
+// This is destructive and irreversible — caller MUST verify intent
+// (admin role + double confirmation in the UI).
+// ─────────────────────────────────────────────────────────────────────
+export async function deleteCase(companyId: string, id: string): Promise<{
+  ok: boolean;
+  removed?: {
+    case: boolean;
+    messages: number;
+    outboundMessages: number;
+    tasks: number;
+    submissions: number;
+  };
+}> {
+  const store = await readStore();
+  const caseIdx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+  if (caseIdx === -1) {
+    return { ok: false };
+  }
+
+  // Count + remove cascade tables
+  const before = {
+    messages: (store.messages || []).filter(m => m.companyId === companyId && m.caseId === id).length,
+    outboundMessages: (store.outboundMessages || []).filter(m => m.companyId === companyId && m.caseId === id).length,
+    tasks: (store.tasks || []).filter(t => t.companyId === companyId && t.caseId === id).length,
+    submissions: (store.submissions || []).filter(s => s.companyId === companyId && s.caseId === id).length,
+  };
+
+  store.cases.splice(caseIdx, 1);
+  store.messages = (store.messages || []).filter(m => !(m.companyId === companyId && m.caseId === id));
+  store.outboundMessages = (store.outboundMessages || []).filter(m => !(m.companyId === companyId && m.caseId === id));
+  store.tasks = (store.tasks || []).filter(t => !(t.companyId === companyId && t.caseId === id));
+  if (Array.isArray(store.submissions)) {
+    store.submissions = store.submissions.filter(s => !(s.companyId === companyId && s.caseId === id));
+  }
+
+  await writeStore(store);
+  return {
+    ok: true,
+    removed: {
+      case: true,
+      ...before,
+    },
+  };
+}
+
 // Auto-create submission row when a case status moves to "submitted".
 // Idempotent: if a submission already exists for this caseId, returns the existing one
 // (so we don't duplicate when staff toggles the status back and forth).

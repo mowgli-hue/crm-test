@@ -3,7 +3,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { stageOrder } from "@/lib/data";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolderId, syncCaseToUnderReviewSheet } from "@/lib/google-drive";
-import { addAuditLog, getCase, resolveCaseDriveRootLink, updateCaseLinks, updateCaseProcessing, updateCaseProfile, updateCaseStage } from "@/lib/store";
+import { addAuditLog, deleteCase, getCase, resolveCaseDriveRootLink, updateCaseLinks, updateCaseProcessing, updateCaseProfile, updateCaseStage } from "@/lib/store";
 import { boundedText } from "@/lib/validation";
 
 export async function PATCH(
@@ -291,4 +291,123 @@ export async function GET(
   }
 
   return NextResponse.json({ case: found });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DELETE — permanently remove a case + cascade-delete related data
+//
+// Admin-only. Use sparingly. Leaves Google Drive folder + WhatsApp inbox
+// history INTACT (those are recoverable signals if a case was deleted by
+// mistake) but removes the case row, all messages, tasks, and submissions.
+//
+// Audit log records who deleted what and when, so any complaint about a
+// missing case can be traced back.
+// ─────────────────────────────────────────────────────────────────────
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const user = await getCurrentUserFromRequest(request);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  // Admin-only — case deletion is destructive and should never be in the
+  // hands of regular processing staff. Even if Marketing/Admin can edit,
+  // only Admin can delete.
+  if (user.role !== "Admin") {
+    return NextResponse.json(
+      { error: "Forbidden — only Admins can delete cases" },
+      { status: 403 }
+    );
+  }
+
+  // Look up first so we have details for the audit log even after delete
+  const caseToDelete = await getCase(user.companyId, params.id);
+  if (!caseToDelete) {
+    return NextResponse.json({ error: "Case not found" }, { status: 404 });
+  }
+
+  // Defensive: caller must include `confirm: true` in the request body. The
+  // frontend modal sets this after a typed-name confirmation. Prevents an
+  // accidental DELETE from a misbehaving script or curl mistake.
+  const body = await request.json().catch(() => ({}));
+  if (body?.confirm !== true) {
+    return NextResponse.json(
+      {
+        error: "Deletion requires explicit confirmation. Pass {\"confirm\": true} in the request body.",
+      },
+      { status: 400 }
+    );
+  }
+
+  // ── Best-effort cleanup of marketing_leads pointer + case_notes (PG) ──
+  // marketing_leads.converted_case_id: reset to NULL if it points at the
+  //   case being deleted. Lead row itself is preserved for history.
+  // case_notes: case notes live in a separate PG table, not the JSON
+  //   store. Cascade them here.
+  // Both wrapped in try/catch so a PG failure (e.g. missing DATABASE_URL,
+  // table doesn't exist yet) doesn't block the case delete from completing.
+  try {
+    const phoneDigits = String(caseToDelete.leadPhone || "").replace(/\D/g, "");
+    const { Pool } = await import("pg");
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    if (phoneDigits) {
+      await pool.query(
+        `UPDATE marketing_leads SET converted_case_id = NULL, updated_at = NOW()
+         WHERE phone = $1 AND converted_case_id = $2`,
+        [phoneDigits, params.id]
+      );
+    }
+    // Cascade case_notes
+    await pool.query(
+      `DELETE FROM case_notes WHERE case_id = $1 AND company_id = $2`,
+      [params.id, user.companyId]
+    );
+    await pool.end();
+  } catch (e) {
+    // Non-fatal — proceed with deletion even if PG cleanup fails.
+    console.warn(`PG cascade cleanup partial-fail for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
+  // ── Perform the cascade delete ──
+  const result = await deleteCase(user.companyId, params.id);
+  if (!result.ok) {
+    return NextResponse.json({ error: "Delete failed" }, { status: 500 });
+  }
+
+  // ── Audit log ──
+  // Captures: who deleted it, when, what was removed (counts), and the
+  // case's identifying details so it can be referenced even after the
+  // row is gone.
+  try {
+    await addAuditLog({
+      companyId: user.companyId,
+      actorUserId: user.id,
+      actorName: user.name,
+      action: "case_deleted",
+      resourceType: "case",
+      resourceId: params.id,
+      metadata: {
+        client: String(caseToDelete.client || ""),
+        formType: String(caseToDelete.formType || ""),
+        leadPhone: String(caseToDelete.leadPhone || ""),
+        assignedTo: String(caseToDelete.assignedTo || ""),
+        processingStatus: String(caseToDelete.processingStatus || ""),
+        removedSummary: JSON.stringify(result.removed || {}),
+      },
+    });
+  } catch (e) {
+    // Audit failure is non-fatal — the delete already happened and we
+    // don't want to roll back. Log to Railway so engineering can see.
+    console.warn(`Audit log failed for case_deleted ${params.id}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
+  return NextResponse.json({
+    ok: true,
+    deleted: params.id,
+    removed: result.removed,
+  });
 }

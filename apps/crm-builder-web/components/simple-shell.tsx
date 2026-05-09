@@ -649,6 +649,12 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     generated: "ai" | "template";
   }>(null);
   const [repLetterEditedBody, setRepLetterEditedBody] = useState("");
+  // Delete-case modal: holds the case ID being deleted (or null when closed).
+  // Modal also requires the staff to type the client's name to confirm before
+  // the delete button enables — guards against accidental clicks.
+  const [deleteCaseModalId, setDeleteCaseModalId] = useState<string | null>(null);
+  const [deleteCaseTypedName, setDeleteCaseTypedName] = useState("");
+  const [deleteCaseInProgress, setDeleteCaseInProgress] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   // Resizable inbox thread list — drag the divider to adjust width.
   const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
@@ -6496,6 +6502,21 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 ✏️ Edit
                               </button>
                             )}
+                            {/* Delete Case — Admin only. Opens a confirmation modal that
+                                requires the staff to type the client's name to confirm.
+                                The DELETE endpoint then cascades through messages, tasks,
+                                outbound messages, submissions, and staff notes. The
+                                Google Drive folder + WhatsApp inbox history are preserved
+                                for recovery. */}
+                            {sessionUser?.role === "Admin" && (
+                              <button
+                                onClick={() => setDeleteCaseModalId(selectedCase.id)}
+                                className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100"
+                                title="Permanently delete this case (Admin only)"
+                              >
+                                🗑️ Delete
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -12023,6 +12044,139 @@ function ClientPortal({
             )}
           </div>
         </div>
+      ), document.body)}
+
+      {/* ────────────────────────────────────────────────────────────
+           Delete Case Confirmation Modal — Admin only
+           Required staff to type the client's name to enable the
+           Delete button. Prevents accidental clicks. The DELETE
+           endpoint cascades through messages/tasks/submissions and
+           preserves the Drive folder + WhatsApp inbox history.
+         ──────────────────────────────────────────────────────────── */}
+      {typeof document !== "undefined" && deleteCaseModalId && createPortal((
+        (() => {
+          const deletingCase = cases.find(c => c.id === deleteCaseModalId);
+          if (!deletingCase) return null;
+          const clientNameNormalized = (deletingCase.client || "").trim();
+          const typedNormalized = deleteCaseTypedName.trim();
+          const namesMatch = typedNormalized.length > 0 && clientNameNormalized.toLowerCase() === typedNormalized.toLowerCase();
+          const close = () => {
+            if (deleteCaseInProgress) return;
+            setDeleteCaseModalId(null);
+            setDeleteCaseTypedName("");
+          };
+          return (
+            <div
+              style={{
+                position: "fixed",
+                top: 0, left: 0, right: 0, bottom: 0,
+                background: "rgba(0,0,0,0.7)",
+                zIndex: 999999,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "16px",
+              }}
+              onClick={close}
+            >
+              <div
+                style={{
+                  background: "white",
+                  borderRadius: "16px",
+                  padding: "24px",
+                  width: "100%",
+                  maxWidth: "520px",
+                  boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-xl">
+                    🗑️
+                  </div>
+                  <div className="flex-1">
+                    <h2 className="text-base font-bold text-slate-900">Delete this case?</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      <span className="font-semibold text-slate-700">{deletingCase.client}</span>
+                      {" · "}
+                      {deletingCase.id}
+                      {" · "}
+                      {deletingCase.formType}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 mb-4">
+                  <p className="text-xs font-bold text-red-900 mb-1">⚠️ This is permanent and cannot be undone.</p>
+                  <p className="text-[11px] text-red-800 leading-relaxed">
+                    Deleting will remove the case and all related messages, tasks, outbound messages, submissions, and staff notes.
+                    The Google Drive folder and WhatsApp message history will be <strong>preserved</strong> (they're recoverable
+                    if a deletion is later regretted).
+                  </p>
+                </div>
+
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Type the client's name to confirm:
+                  {" "}
+                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">{clientNameNormalized}</span>
+                </label>
+                <input
+                  type="text"
+                  value={deleteCaseTypedName}
+                  onChange={(e) => setDeleteCaseTypedName(e.target.value)}
+                  disabled={deleteCaseInProgress}
+                  placeholder="Type the name above..."
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300 disabled:bg-slate-100"
+                  autoFocus
+                />
+
+                <div className="flex items-center justify-between gap-3 mt-5">
+                  <button
+                    onClick={close}
+                    disabled={deleteCaseInProgress}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!namesMatch || deleteCaseInProgress) return;
+                      setDeleteCaseInProgress(true);
+                      try {
+                        const res = await apiFetch(`/cases/${deleteCaseModalId}`, {
+                          method: "DELETE",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ confirm: true }),
+                        });
+                        if (res?.ok) {
+                          // Optimistic local state update — remove the case from the list
+                          // and clear the selection so the detail panel doesn't keep showing.
+                          setCases(prev => prev.filter(c => c.id !== deleteCaseModalId));
+                          setSelectedCaseId(null);
+                          setDeleteCaseModalId(null);
+                          setDeleteCaseTypedName("");
+                          setCaseActionStatus(`✅ Case ${deleteCaseModalId} deleted permanently`);
+                          setTimeout(() => setCaseActionStatus(""), 4000);
+                        } else {
+                          const err = await res?.json().catch(() => ({}));
+                          alert(`Delete failed: ${err.error || "Unknown error"}`);
+                        }
+                      } catch (e) {
+                        alert(`Delete failed: ${(e as Error).message}`);
+                      } finally {
+                        setDeleteCaseInProgress(false);
+                      }
+                    }}
+                    disabled={!namesMatch || deleteCaseInProgress}
+                    className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${namesMatch && !deleteCaseInProgress ? "bg-red-600 hover:bg-red-700" : "bg-red-300 cursor-not-allowed"}`}
+                  >
+                    {deleteCaseInProgress ? "Deleting…" : "🗑️ Delete Permanently"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
       ), document.body)}
     </main>
   );
