@@ -68,7 +68,7 @@ OTHER:
   • WES Evaluation: $475
   • US Application: $265
   • UK Visitor Visa (from Canada): $525 + UKVI fees on client's card
-  • Australia Visitor Visa / ETA / Subclass 600: $525 CAD (Newton service fee — Australian government fees paid separately by client on their card)
+  • Australia Visitor Visa / ETA / Subclass 600: quoted on review (Newton handles these — fee depends on visa subclass + Australian gov fees on client's card)
   • E-Visa: quoted after review
   • Travel Documents: quoted after review
   • Refugee Case: $4,000 (excluding taxes)
@@ -661,7 +661,7 @@ export const SERVICES: Record<string, ServiceInfo> = {
     key: "AUSTRALIA_VISITOR_VISA",
     displayName: "Australia Visitor Visa (Subclass 600 / ETA Subclass 601)",
     category: "other",
-    feeText: "$525 CAD (Newton service fee — Australian government fees paid separately by client on their card)",
+    feeText: "Quoted after review (depends on visa subclass + Australian gov fees on client's card)",
     feeAmount: null,
     needsConsultation: false,
     eligibility: [
