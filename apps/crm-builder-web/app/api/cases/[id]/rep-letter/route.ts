@@ -491,7 +491,11 @@ function drawFooter(page: PDFPage) {
 
 // ──────────────────────────────────────────────────────────────
 // AI-powered body generation — takes a client's story and produces
-// a properly structured letter body using HEADING/BULLET markers
+// a properly structured letter body using HEADING/BULLET markers.
+//
+// The AI is given application-specific IRCC rules so it can weave
+// regulatory references, key timelines, and eligibility criteria
+// directly into the letter rather than producing generic prose.
 // ──────────────────────────────────────────────────────────────
 
 interface AIBodyParams {
@@ -509,7 +513,141 @@ interface AIBodyParams {
   programEndDate: string;
 }
 
-async function generateLetterBodyWithAI(p: AIBodyParams): Promise<string[]> {
+// Result of a single AI call: structured body + structured enclosed docs.
+// Both are arrays of strings using marker syntax. Returning them together
+// in one AI call (rather than two) keeps cost/latency low and lets the AI
+// see the docs context when writing the body, so references line up.
+interface AIBodyResult {
+  bodyLines: string[];
+  docs: string[];
+}
+
+// ──────────────────────────────────────────────────────────────
+// Per-application IRCC rules — fed to the AI so the letter weaves
+// in specific regulatory citations, deadlines, and eligibility
+// language. Each block is a "what the consultant needs the AI to
+// know" briefing — not boilerplate to copy-paste.
+//
+// Sources: canada.ca/en/immigration-refugees-citizenship, IRCC
+// program delivery instructions, R 222 / R 215 of IRPR for status,
+// IRPA s. 22 / 24 / 25 for permits.
+// ──────────────────────────────────────────────────────────────
+function getApplicationRules(formType: string): string {
+  const ft = formType.toLowerCase();
+
+  if (ft.includes("pgwp") || ft.includes("post-graduation") || ft.includes("post graduation")) {
+    return `PGWP — POST-GRADUATION WORK PERMIT — KEY RULES TO WEAVE IN:
+• One-time-only permit. Cannot be issued more than once per applicant in a lifetime.
+• Maximum length: 3 years (or matches program length if program was 8-23 months).
+• 180-day deadline: must apply within 180 days of program completion (date on official completion letter, not graduation ceremony).
+• Eligible institution: client's school must be a Designated Learning Institution (DLI) on IRCC's PGWP-eligible list.
+• Program length: ≥ 8 months (full-time). Quebec: ≥ 900 hours.
+• Status: client must have held a valid study permit at some point during the 180-day window.
+• If status has expired ≤ 90 days ago: apply with restoration ($350 + $239.75 fees).
+• If status valid: apply with implied/maintained status; client may continue working full-time per R186(w) while application is processed.
+• Field of study: for diploma/certificate grads with study permits applied for ON OR AFTER Feb 7, 2024, field of study CIP code must be on IRCC's eligible list (or be exempt).
+• Language: Bachelor's+/Master's grads must have CLB 7 (university programs); college grads CLB 5; reflect in IELTS/CELPIP scores if mentioned.
+• Form: IMM 5710 (inside Canada). Mark "Applying to Change Conditions": Yes; "Applying to Extend Stay": NO; "Applying to Change Employer": YES (this is the trick for PGWP).
+• When citing: use phrases like "as per the eligibility criteria set out by IRCC for the Post-Graduation Work Permit Program" and "in accordance with section 205(c)(ii) of the IRPR which exempts open work permits from LMIA requirements".`;
+  }
+
+  if (ft.includes("sowp") || ft.includes("spousal open work permit") || (ft.includes("open work permit") && ft.includes("spous"))) {
+    return `SOWP — SPOUSAL OPEN WORK PERMIT — KEY RULES TO WEAVE IN:
+• Spouse/common-law partner of a foreign national who holds a valid work or study permit.
+• Principal must be on TEER 0/1 (or eligible TEER 2/3 — recently restricted to specific occupations as of March 2024). Verify principal's NOC.
+• If principal is a student, must be enrolled in master's (16+ months) / doctoral / select professional program. As of March 2024, undergraduate spouses no longer qualify.
+• PGWP holder spouses: principal must hold PGWP AND be working in TEER 0/1 (or specific TEER 2/3 occupations).
+• Genuine relationship: 12-month cohabitation evidence (common-law) OR marriage certificate (legalized + translated if foreign).
+• Form: IMM 5710 inside Canada (most common). Outside Canada: IMM 1295.
+• Open work permit — no LMIA needed (R205(c)(ii) IRPA).
+• When citing: emphasize spouse-of-skilled-worker pathway under R205(c)(ii).`;
+  }
+
+  if (ft.includes("study permit extension") || (ft.includes("study permit") && (ft.includes("extend") || ft.includes("renew")))) {
+    return `STUDY PERMIT EXTENSION — KEY RULES TO WEAVE IN:
+• Apply ≥ 30 days before current permit expires (recommended).
+• If permit has expired: must apply for restoration within 90 days ($350 + $239.75) AND must not have studied without authorization.
+• Implied/maintained status (R 183(5)(6) IRPR): client may continue studying under same conditions while application processed if applied before expiry.
+• Required evidence: valid passport, current study permit, proof of continuing enrollment (Letter of Enrollment / acceptance for new program), recent transcripts, proof of tuition.
+• Form: IMM 5709.
+• If switching DLI: include new acceptance + transfer documentation.
+• When citing: reference "section 222 of IRPR governing study permit conditions" and "R 183(5)-(6) for implied status while application is pending".`;
+  }
+
+  if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
+    const isSuper = ft.includes("super visa");
+    return `${isSuper ? "SUPER VISA" : "TRV / VISITOR VISA"} — KEY RULES TO WEAVE IN:
+• Form: IMM 5257 (and Schedule 1 if applying outside Canada).
+• Dual-intent doctrine: applying for TRV does not preclude applying for permanent residence later (s. 22(2) IRPA).
+• Officer must be satisfied applicant will leave Canada at end of authorized stay (s. 22(1)(b) IRPA + R 179(b) IRPR).
+• Strong ties to home country: employment, property, family, financial commitments.
+• Funds: enough to cover trip + return. Document via bank statements, employment letter with salary, NOA, T4s.
+• Travel history: prior travel to US/UK/Schengen strengthens application.
+• Purpose: clear, time-bound. Itinerary, return ticket booking (or proof of intent), accommodation arrangements.
+${isSuper ? "• Super Visa specific: Canadian sponsor (child/grandchild) must meet LICO; 1-year medical insurance ≥ $100,000 from Canadian insurer; medical exam by panel physician; sponsor's NOA; family relationship proof." : ""}
+• When citing: reference "subsection 11(1) of IRPA" and "regulation 179 of IRPR".`;
+  }
+
+  if (ft.includes("pr card renewal") || ft.includes("pr card replacement") || (ft.includes("pr card") && !ft.includes("citizenship"))) {
+    return `PR CARD RENEWAL / REPLACEMENT — KEY RULES TO WEAVE IN:
+• 730-day residency obligation: client must have been physically present in Canada for at least 730 days within the most recent 5-year period (s. 28 IRPA).
+• Equivalency periods (count toward 730 days): each day spent abroad with Canadian-citizen spouse, employed full-time by Canadian business abroad, or accompanying PR spouse who is similarly employed.
+• Must apply from INSIDE Canada. If outside, must apply for a Permanent Resident Travel Document (PRTD) first.
+• Form: IMM 5444. Fee: $50.
+• Document checklist: PR landing document (IMM 1000 / 5292 / 5688 / COPR), 2 PR-card-specification photos (50mm × 70mm — different from work-permit photos!), secondary government ID, 3 years of CRA Notice of Assessment, address proof.
+• Travel history: every trip in last 5 years with exact dates (cross-checked against CBSA records).
+• When citing: reference "section 28 of IRPA setting out the residency obligation" and "section 31 of IRPA governing PR cards".`;
+  }
+
+  if (ft.includes("citizenship")) {
+    return `CITIZENSHIP — ADULT GRANT — KEY RULES TO WEAVE IN:
+• 1095-day physical presence rule: must have been physically in Canada for at least 1095 days in the 5 years immediately before signing the application (s. 5(1)(c)(i) Citizenship Act).
+• Pre-PR time: each day as temporary resident OR protected person before becoming PR counts as ½ day, max 365 days credit.
+• Tax filing: must have filed Canadian income tax for at least 3 of the 5 years immediately before applying (s. 5(1)(c)(iii)).
+• Language: prove CLB/NCLC level 4 in English or French (CELPIP / IELTS / TEF / TCF / approved Canadian secondary or post-secondary).
+• Knowledge test: applicants 18-54 must pass citizenship test on rights, responsibilities, history, geography, government.
+• No prohibitions: not under removal order, not charged with indictable offence, not currently incarcerated, no recent citizenship revocation.
+• Form: CIT 0002 + CIT 0177 (residence calculator). Fee: $630 ($530 + $100 right-of-citizenship).
+• When citing: reference "section 5 of the Citizenship Act setting out the requirements for a grant of citizenship".`;
+  }
+
+  if (ft.includes("spousal sponsorship") || ft.includes("spouse sponsorship") || (ft.includes("sponsorship") && (ft.includes("spous") || ft.includes("partner") || ft.includes("conjugal") || ft.includes("common law") || ft.includes("common-law")))) {
+    return `SPOUSAL SPONSORSHIP — KEY RULES TO WEAVE IN:
+• Sponsor: Canadian citizen or permanent resident, ≥ 18, residing in Canada (or showing intent to return for outland).
+• Two streams: INLAND (sponsored spouse already in Canada with valid status, eligible for SOWP after AOR) vs OUTLAND (faster, full appeal rights, sponsored spouse can travel during processing).
+• Genuineness of relationship is the central question — every doc package must establish this.
+• Forms: IMM 1344 (Application to Sponsor), IMM 0008 (Generic), IMM 5532 (Relationship Information & Sponsorship Eval), IMM 5669 (Schedule A — both parties), IMM 5406 (Additional Family — both parties).
+• Sponsor cannot be in default on previous sponsorship undertaking, child support, or social assistance (some exceptions — disability).
+• Three relationship categories: Spouse (legally married), Common-Law (12+ months continuous cohabitation), Conjugal (genuine relationship ≥ 1 yr but cannot live together due to barriers).
+• Settlement evidence: joint bank, joint lease, joint bills, photos with family/friends, communication records, travel together, statements from people who know the couple.
+• Inadmissibility: medical, criminal, security checks for sponsored spouse + family members.
+• When citing: reference "section 12(1) of IRPA — Family Class" and "regulation 130 of IRPR for sponsor eligibility".`;
+  }
+
+  if (ft.includes("express entry") || ft.includes("eapr") || ft.includes("federal skilled worker") || ft.includes("federal skilled trades") || ft.includes("canadian experience class") || ft.includes("fsw") || ft.includes("cec") || ft.includes("fst") || ft.includes("pnp") || (ft.includes("permanent residence") && !ft.includes("card"))) {
+    return `EXPRESS ENTRY — eAPR (Application for Permanent Residence) — KEY RULES TO WEAVE IN:
+• 60-day deadline from ITA: complete eAPR must be submitted within 60 days of Invitation to Apply.
+• eAPR must match Express Entry profile that earned the ITA. Any inconsistency = misrepresentation risk under IRPA s. 40 (5-year ban).
+• Programs: FSW (foreign skilled work, 1 yr in last 10), CEC (Canadian work experience, 1 yr in last 3, valid status during it), FST (skilled trades, 2 yrs experience), PNP-EE (provincial nomination linked to EE).
+• NOC: must be TEER 0, 1, 2, or 3. TEER 4/5 disqualifies.
+• Language: TRF must be ≤ 2 years old at submission (CLB 7+ for FSW, varies for others).
+• ECA: required for any foreign education claimed for CRS points (WES/IQAS/ICAS/CES/ICES/MCC/PEBC).
+• Police certificates: every country lived in 6+ months since age 18.
+• Medical: panel physician, ≤ 12 months valid.
+• Proof of funds: required for FSW + FST (not CEC, not PNP nominees) — current threshold per family size, 6 months of bank statements.
+• Forms: IMM 0008 (Generic), Schedule A (IMM 5669 — every applicant 18+), IMM 5406 (Additional Family), IMM 5562 (Travel History), IMM 5476 (Use of Rep).
+• When citing: reference "section 12(2) of IRPA — Economic Class" and the specific program "Federal Skilled Worker Class — section 75 of IRPR" / "Canadian Experience Class — section 87.1 of IRPR" / etc.`;
+  }
+
+  // Fallback — generic immigration application
+  return `GENERIC IMMIGRATION APPLICATION — KEY RULES:
+• Cite the specific application type and its governing regulation in IRPA / IRPR / Citizenship Act.
+• Address client's status and eligibility clearly.
+• List required forms by IMM number.
+• Address any inadmissibility / status issues directly.`;
+}
+
+async function generateLetterBodyWithAI(p: AIBodyParams): Promise<AIBodyResult> {
   const knownFacts: string[] = [];
   if (p.passportNo) knownFacts.push(`Passport No.: ${p.passportNo}`);
   if (p.uci) knownFacts.push(`UCI: ${p.uci}`);
@@ -519,59 +657,126 @@ async function generateLetterBodyWithAI(p: AIBodyParams): Promise<string[]> {
   if (p.permitExpiry) knownFacts.push(`Current permit expires: ${p.permitExpiry}`);
   if (p.programEndDate) knownFacts.push(`Program end date: ${p.programEndDate}`);
 
-  const systemPrompt = `You are a Regulated Canadian Immigration Consultant (RCIC) drafting the body of a formal Representative Submission Letter to IRCC (Immigration, Refugees and Citizenship Canada).
+  const applicationRules = getApplicationRules(p.formType);
+
+  const systemPrompt = `You are a Regulated Canadian Immigration Consultant (RCIC) drafting a formal Representative Submission Letter to IRCC (Immigration, Refugees and Citizenship Canada) for a ${p.formTypeFull} application.
 
 You will receive:
-- The client's specific story / situational notes from the consultant
+- The consultant's case-specific notes (which may include instructions about what to emphasize, what to omit, or how to frame certain facts)
 - The client's known facts (name, passport, institution, etc.)
-- The application type
+- A briefing of the IRCC rules and regulations governing this application type
 
-Your job: produce a polished, professional letter body that weaves the client's specific situation into an appropriate IRCC submission letter structure.
+Your job: produce a polished, persuasive, professionally-structured letter body that:
+1. Weaves the client's specific story into the proper IRCC submission letter structure
+2. Cites the relevant regulations / IRPA / IRPR / IRCC policy where appropriate
+3. Anticipates and addresses concerns the visa officer might raise
+4. Establishes eligibility CLEARLY using BULLET points where helpful
+5. Reads as a confident professional submission, not a generic template
 
-CRITICAL OUTPUT FORMAT — return ONLY a JSON array of strings. Each string is one element of the letter body, in order. Use these markers:
+═══════════════════════════════════════════════════════════════
+APPLICATION-SPECIFIC RULES TO WEAVE IN:
+═══════════════════════════════════════════════════════════════
+${applicationRules}
 
-  "HEADING:Section Title"           — produces a bold section heading with red accent bar
-  "BULLET:Bold Label:|Rest of text" — produces a bullet point with bold label
+═══════════════════════════════════════════════════════════════
+LISTEN TO THE CONSULTANT
+═══════════════════════════════════════════════════════════════
+The "CLIENT'S STORY / NOTES" field below contains instructions FROM the consultant. The consultant may say things like:
+  - "Emphasize that they had a medical leave during semester 3" → put a paragraph or bullet about it
+  - "Don't mention the visa refusal from 2019 — it's been disclosed elsewhere" → don't bring it up
+  - "Add a strong eligibility argument" → expand the eligibility section
+  - "Their employer letter is weak, please write a section explaining the duties match NOC" → write that section
+You MUST follow the consultant's directions. The consultant knows the case better than you do.
+
+If the consultant gives generic notes ("just standard PGWP letter"), use the standard structure for that application type.
+
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT — return ONLY a JSON object, no prose, no markdown
+═══════════════════════════════════════════════════════════════
+{
+  "bodyLines": [array of strings using marker syntax described below],
+  "docs":      [array of strings — the enclosed-documents list]
+}
+
+═══════════════════════════════════════════════════════════════
+BODY LINES — marker syntax
+═══════════════════════════════════════════════════════════════
+  "HEADING:Section Title"           — bold section heading with red accent bar
+  "BULLET:Bold Label:|Rest of text" — a bullet point with bold label
   "Plain paragraph text"            — any string without a marker is a body paragraph
 
-Example output:
+Example bodyLines:
 [
-  "I am writing to formally request a study permit extension on behalf of my client, Aarti (Passport No. U4471976)...",
-  "She is committed to her academic program...",
-  "HEADING:Eligibility for Study Permit Extension",
-  "As per Canadian government regulations, an inside-Canada application may be submitted if...",
-  "BULLET:Valid Study Permit:|Attached is Aarti's valid study permit.",
-  "BULLET:Confirmation of Enrollment:|We have included the confirmation of enrollment from Capilano University.",
+  "I am writing to formally request a Post-Graduation Work Permit on behalf of my client, ${p.clientName} (Passport No. U4471976), who recently completed ${p.pronoun.possessive} studies at Capilano University.",
+  "${p.clientName} successfully completed a 2-year Bachelor of Hospitality Management program on August 15, 2026, fulfilling all academic requirements with consistent full-time enrolment throughout.",
+  "HEADING:Eligibility for Post-Graduation Work Permit",
+  "${p.clientName.split(' ')[0]} meets each of the eligibility criteria set out by IRCC for the PGWP Program:",
+  "BULLET:Designated Learning Institution:|Capilano University is a DLI on IRCC's PGWP-eligible list.",
+  "BULLET:Program Length:|The program exceeds the minimum 8-month duration required under PGWP rules.",
+  "BULLET:Full-time Enrolment:|${p.pronoun.subject.charAt(0).toUpperCase() + p.pronoun.subject.slice(1)} maintained full-time student status across all required semesters.",
+  "BULLET:Application Within 180 Days:|This application is being submitted within the 180-day window from the program completion date as required by IRCC.",
+  "BULLET:Valid Status:|${p.pronoun.subject.charAt(0).toUpperCase() + p.pronoun.subject.slice(1)} continues to hold valid status under section 183(5) of IRPR while this application is being processed.",
+  "HEADING:Compliance with IRCC Requirements",
+  "All required forms and supporting documents have been completed in accordance with the eligibility criteria for the Post-Graduation Work Permit Program. The IMM 5710 has been completed indicating an open work permit application under the PGWP exemption code C43, in accordance with section 205(c)(ii) of the IRPR.",
   "HEADING:Request for Consideration",
-  "We respectfully request your prompt and favourable consideration of this application...",
+  "We respectfully request your prompt and favourable consideration of this application. ${p.clientName.split(' ')[0]} is committed to contributing to the Canadian labour market and to building a long-term future in Canada.",
   "Thank you for your attention to this matter."
 ]
 
-STRUCTURE GUIDELINES:
-1. Open with 1-2 introductory paragraphs that name the client and the application type, weaving in their specific situation from the story
-2. Add 2-4 HEADING sections that organize the eligibility argument or substantive case (e.g. "Background and Academic Journey", "Eligibility for [Permit Type]", "Compliance with IRCC Requirements", "Request for Consideration")
-3. Use BULLET points where listing eligibility criteria or supporting facts adds clarity (typically under "Eligibility" sections)
-4. Close with a polite request for favourable consideration and a thank-you paragraph
-5. Use the consultant's third-person voice — refer to "my client" and "${p.clientName}". Use the pronoun set ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive} for the client.
-6. Keep the tone formal, respectful, professional. No flowery language, no exclamation marks.
-7. Total letter body should be 6-12 entries in the array.
-8. NEVER include "Dear Sir/Madam" or "Sincerely" — those are added separately.
-9. NEVER include the document subject line — that's added separately.
-10. Weave the client's specific story (transfers, hardships, achievements, gaps, etc.) into the body naturally.
+═══════════════════════════════════════════════════════════════
+ENCLOSED DOCUMENTS — what to include
+═══════════════════════════════════════════════════════════════
+The "docs" array is the numbered list shown under "Enclosed Documents" at the end of the letter. It must reflect the SPECIFIC documents this case needs based on:
+- The application type
+- The client's specific situation as described in the consultant's notes (e.g., if the case involves restoration, include the restoration fee receipt; if SOWP, include the principal partner's permit and employment letter; if Super Visa, include the Canadian sponsor's NOA + insurance)
+- Any documents the consultant explicitly mentions in their notes
 
-Return ONLY the JSON array. No prose before or after. No markdown fences.`;
+Format: a flat array of strings, each a single document entry, properly named. Use IMM numbers + descriptive names. Example:
+
+[
+  "IMM 5710 – Application to Change Conditions or Extend Stay in Canada",
+  "IMM 5476 – Use of a Representative",
+  "Passport (bio page + all relevant pages)",
+  "Current Study Permit",
+  "Program Completion Letter from Capilano University",
+  "Official Academic Transcripts",
+  "IELTS Test Report Form (CLB 7+)",
+  "Digital Photograph (IRCC compliant)"
+]
+
+Typical doc count: 6-12 entries. Order: forms first (IMM numbers), then identity (passport), then status (permits), then evidence (transcripts, letters, financial proofs), then photos last.
+
+═══════════════════════════════════════════════════════════════
+STRUCTURE GUIDELINES (BODY)
+═══════════════════════════════════════════════════════════════
+1. Open with 1-2 introductory paragraphs naming the client + application type, weaving in their specific situation.
+2. Add 2-4 HEADING sections that organize the case logically:
+   - "Background and ${p.formTypeFull.includes("Permit") || p.formTypeFull.includes("Visa") ? "Status History" : "Application Context"}"
+   - "Eligibility for [Permit Type]" (this is the most important section — use BULLET points to enumerate)
+   - "Compliance with IRCC Requirements" (cite specific IMM forms + regulations)
+   - "Request for Consideration" (close)
+3. BULLET points should bear the regulatory weight where listing eligibility — they are visually scanned, so each one is one criterion met.
+4. Close with a polite request for favourable consideration + thank-you paragraph.
+5. Use the consultant's third-person voice — "my client", "${p.clientName}", and pronouns ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive}.
+6. Tone: formal, respectful, confident, professional. No flowery adjectives. No exclamation marks. No "I hope" / "I think" hedging.
+7. Total body: 8-15 entries in the array.
+8. NEVER include "Dear Sir/Madam" or "Sincerely" — those are added separately by the PDF builder.
+9. NEVER include the document subject line — that's added separately.
+10. If the consultant mentions specific dates / facts that contradict known facts, USE THE CONSULTANT'S VERSION (they may have updated info).
+
+Return ONLY the JSON object. No prose before or after. No markdown fences.`;
 
   const userPrompt = `APPLICATION TYPE: ${p.formTypeFull}
 CLIENT NAME: ${p.clientName}
 PRONOUN: ${p.pronoun.subject}/${p.pronoun.object}/${p.pronoun.possessive}
 
 KNOWN FACTS:
-${knownFacts.length ? knownFacts.map(f => `- ${f}`).join("\n") : "(none provided)"}
+${knownFacts.length ? knownFacts.map(f => `- ${f}`).join("\n") : "(none provided — use placeholder phrasing the consultant can fill in later)"}
 
 CLIENT'S STORY / NOTES FROM CONSULTANT:
 ${p.clientStory}
 
-Draft the letter body as a JSON array of strings using the HEADING/BULLET markers as instructed.`;
+Draft the letter as a JSON object with bodyLines (using HEADING/BULLET markers) and docs (enclosed-documents list).`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -581,8 +786,11 @@ Draft the letter body as a JSON array of strings using the HEADING/BULLET marker
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 2000,
+      // Use Sonnet for quality on this — Haiku can produce shallow output
+      // for legally-significant letters. Cost is minimal (one call per
+      // letter generation, only when staff explicitly invoke it).
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 4000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     }),
@@ -599,30 +807,42 @@ Draft the letter body as a JSON array of strings using the HEADING/BULLET marker
   // Strip any accidental markdown code fences
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
 
-  // Find JSON array in response
-  const startIdx = text.indexOf("[");
-  const endIdx = text.lastIndexOf("]");
+  // Locate the JSON OBJECT in the response. The new prompt asks for
+  // {bodyLines: [...], docs: [...]}. We're tolerant of leading/trailing
+  // prose just in case.
+  const startIdx = text.indexOf("{");
+  const endIdx = text.lastIndexOf("}");
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
-    throw new Error("AI response did not contain a JSON array");
+    throw new Error("AI response did not contain a JSON object");
   }
   const jsonStr = text.substring(startIdx, endIdx + 1);
 
-  let parsed: unknown;
+  let parsed: any;
   try {
     parsed = JSON.parse(jsonStr);
   } catch (e) {
     throw new Error("AI response was not valid JSON: " + (e as Error).message);
   }
 
-  if (!Array.isArray(parsed)) {
-    throw new Error("AI response was not an array");
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("AI response was not an object");
   }
 
-  const result = parsed.filter((s) => typeof s === "string" && s.trim().length > 0) as string[];
-  if (result.length < 3) {
-    throw new Error("AI response had too few entries");
+  const rawBody = Array.isArray(parsed.bodyLines) ? parsed.bodyLines : [];
+  const rawDocs = Array.isArray(parsed.docs) ? parsed.docs : [];
+
+  const bodyLines = rawBody
+    .filter((s: unknown) => typeof s === "string" && (s as string).trim().length > 0) as string[];
+  const docs = rawDocs
+    .filter((s: unknown) => typeof s === "string" && (s as string).trim().length > 0) as string[];
+
+  if (bodyLines.length < 3) {
+    throw new Error("AI response had too few body entries");
   }
-  return result;
+  // If AI somehow forgot docs, fall back to the static template list — the
+  // letter body alone is recoverable but we never want to ship a letter
+  // with NO enclosed-doc list.
+  return { bodyLines, docs };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -663,28 +883,44 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
     const subjectLine = getSubjectLine(formType, clientName);
-    const docs = getDocumentsList(formType);
+    // Default docs list — used only as a fallback when:
+    //   (a) staff didn't provide a story, OR
+    //   (b) AI generation fails, OR
+    //   (c) staff hasn't edited the docs but the AI didn't return any
+    const fallbackDocs = getDocumentsList(formType);
 
-    // ── Body generation: use AI if clientStory provided, otherwise fall back to template ──
+    // ── Body + docs generation: use AI if clientStory provided, else fall back to template ──
     const clientStory = String(body.clientStory || "").trim();
     const editedBodyLines: string[] | null = Array.isArray(body.editedBodyLines)
       ? body.editedBodyLines.map((l: unknown) => String(l || ""))
       : null;
+    // editedDocs — the editable enclosed-document list. Mirrors editedBodyLines:
+    // staff modifies the AI/template-generated list in the modal, sends it back
+    // here on download. If provided, we use it verbatim (no AI re-run).
+    const editedDocs: string[] | null = Array.isArray(body.editedDocs)
+      ? body.editedDocs.map((d: unknown) => String(d || "").trim()).filter((s: string) => s.length > 0)
+      : null;
     const mode = String(body.mode || "").toLowerCase();
     let bodyLines: string[];
+    let docs: string[];
 
     if (editedBodyLines && editedBodyLines.length > 0) {
-      // ── Path: client passed back edited body. Use it verbatim, no AI re-run.
+      // ── Path: staff passed back edited body. Use it verbatim, no AI re-run.
       // Filter out any completely empty trailing lines but preserve in-body blanks
       // (those become paragraph breaks).
       bodyLines = editedBodyLines;
       while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === "") {
         bodyLines = bodyLines.slice(0, -1);
       }
+      // Docs: prefer staff-edited list, otherwise the static template list.
+      // (We don't re-run AI on a download because the staff has already
+      // approved the doc list at this stage.)
+      docs = editedDocs && editedDocs.length > 0 ? editedDocs : fallbackDocs;
     } else if (clientStory && clientStory.length >= 20 && process.env.ANTHROPIC_API_KEY) {
       // Use Claude to weave the client's specific story into a properly-structured letter
+      // AND generate a tailored enclosed-doc list based on the case-specific facts.
       try {
-        bodyLines = await generateLetterBodyWithAI({
+        const aiResult = await generateLetterBodyWithAI({
           clientStory,
           clientName,
           formType,
@@ -698,26 +934,33 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           permitExpiry,
           programEndDate,
         });
+        bodyLines = aiResult.bodyLines;
+        // If AI generated docs, prefer those (case-tailored). If the AI
+        // returned an empty array (rare), fall back to the static template
+        // so we never ship a letter without an enclosed-doc list.
+        docs = aiResult.docs.length > 0 ? aiResult.docs : fallbackDocs;
       } catch (e) {
         console.warn("AI letter body generation failed, falling back to template:", (e as Error).message);
         bodyLines = getBodyParagraphs({
           clientName, pronoun, formType, passportNo, uci, institution, program,
           arrivalDate, permitExpiry, programEndDate,
         });
+        docs = fallbackDocs;
       }
     } else {
       bodyLines = getBodyParagraphs({
         clientName, pronoun, formType, passportNo, uci, institution, program,
         arrivalDate, permitExpiry, programEndDate,
       });
+      docs = fallbackDocs;
     }
 
-    // ── Preview mode: return body content as JSON for in-browser editing ──
+    // ── Preview mode: return body content + docs as JSON for in-browser editing ──
     //
     // Frontend uses this two-step flow:
-    //   1. Open modal → POST with `mode=preview` → receive JSON of body lines
-    //      Staff edits the lines in a textarea
-    //   2. Click Download → POST with `editedBodyLines` → receive PDF
+    //   1. Open modal → POST with `mode=preview` → receive JSON of body lines + docs
+    //      Staff edits the lines AND the enclosed-doc list in textareas
+    //   2. Click Download → POST with `editedBodyLines` + `editedDocs` → receive PDF
     //
     // The "header" (date, "Dear Sir/Madam,", subject) and "footer" (sign-off,
     // RCIC info, address, contact) are NOT returned because they are template-
@@ -733,6 +976,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         subject: subjectLine,
         date: today,
         bodyLines,
+        docs,
         // Echo back generation context the editor might want to display.
         generated: clientStory && clientStory.length >= 20 ? "ai" : "template",
       });

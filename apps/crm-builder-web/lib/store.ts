@@ -1475,6 +1475,11 @@ export async function updateCaseProcessing(
     finalOutcome?: "approved" | "refused" | "request_letter" | "withdrawn";
     decisionDate?: string;
     remarks?: string;
+    // aiStatus reflects where the case is in the AI-driven intake / drafting
+    // / review pipeline. Mutated by the WhatsApp intake bot when it advances
+    // the session phase, by the rep-letter / forms generators when they hand
+    // work back to humans, and by the assemble step when it ships a package.
+    aiStatus?: AiStatus;
   }
 ): Promise<CaseItem | null> {
   const store = await readStore();
@@ -1530,6 +1535,7 @@ export async function updateCaseProcessing(
       patch.remarks !== undefined
         ? (patch.remarks.trim() || undefined)
         : current.remarks,
+    aiStatus: patch.aiStatus !== undefined ? patch.aiStatus : current.aiStatus,
     stage: patch.finalOutcome ? "Decision" : nextStageFromProcessing,
     updatedAt: new Date().toISOString()
   };

@@ -1,7 +1,7 @@
 export type Role = "Admin" | "Marketing" | "Processing" | "ProcessingLead" | "Reviewer" | "Client";
 export type UserType = "staff" | "client";
 export type CaseStatus = "lead" | "active" | "under_review" | "ready" | "submitted";
-export type AiStatus = "idle" | "collecting_docs" | "waiting_client" | "drafting" | "completed";
+export type AiStatus = "idle" | "collecting_docs" | "waiting_client" | "intake_complete" | "drafting" | "completed";
 export type TaskPriority = "low" | "medium" | "high";
 export type TaskStatus = "pending" | "completed";
 export type NotificationType = "deadline" | "missing_doc" | "ai_alert";
@@ -83,6 +83,17 @@ export type PgwpIntakeData = {
   criminalHistory?: string;
   medicalHistory?: string;
   additionalNotes?: string;
+  // ── Internal metadata written by the WhatsApp intake bot ──
+  // These are not user-answer fields, but are stored alongside answers in
+  // the same blob so the bot can recover state and audit-trail intake
+  // sessions. METADATA_KEYS in store.ts is the source-of-truth list.
+  whatsappIntakePhase?: string;
+  whatsappIntakeCompletedAt?: string;
+  whatsappIntakeRecoveredAt?: string;
+  whatsappIntakeRecoveryNote?: string;
+  // Validation flags raised during intake — surfaced to staff for review
+  // (e.g. missing key field, contradictory answer, ambiguous response).
+  _intakeValidationFlags?: unknown;
 };
 
 export type Stage =

@@ -300,7 +300,7 @@ export async function setSession(phone: string, session: IntakeSession): Promise
 
 export async function clearSession(phone: string): Promise<void> {
   try {
-    const { listCases, getCase, updateCaseProcessing } = await import("@/lib/store");
+    const { listCases, getCase, updateCasePgwpIntake } = await import("@/lib/store");
     const cId = process.env.DEFAULT_COMPANY_ID || "newton";
     const cases = await listCases(cId);
     const n = phone.replace(/\D/g, "");
@@ -309,9 +309,10 @@ export async function clearSession(phone: string): Promise<void> {
       return cp && (n.endsWith(cp) || cp.endsWith(n));
     });
     if (!matched) return;
-    const intake = (matched.pgwpIntake as Record<string, string>) || {};
-    delete intake.whatsappSession;
-    await updateCaseProcessing(cId, matched.id, { pgwpIntake: intake });
+    // Clear whatsappSession from intake — use updateCasePgwpIntake (dedicated
+    // function for pgwpIntake mutations; updateCaseProcessing rejects pgwpIntake
+    // since that's a workflow-status function, not an intake-data function).
+    await updateCasePgwpIntake(cId, matched.id, { whatsappSession: "" });
   } catch { /* non-fatal */ }
 }
 
@@ -1341,15 +1342,18 @@ export async function handleIncomingReply(params: {
       session.phase = "complete";
       await setSession(phone, session);
       await sendWhatsAppText(phone, `Thank you ${session.clientName.split(" ")[0]}! 🙏 Your answers have been saved.\n\nPlease send photos of:\n📄 *Your current permit* (Study/Work Permit)\n🛂 *Your passport bio page*\n\nThis helps us auto-fill your forms accurately.\n\n— Newton Immigration Team 🍁`);
+      // updateCaseProcessing handles workflow-status (aiStatus) only.
+      // pgwpIntake mutations must go through updateCasePgwpIntake.
+      const { updateCasePgwpIntake } = await import("@/lib/store");
+      await updateCasePgwpIntake(session.companyId, session.caseId, {
+        ...session.answers,
+        whatsappIntakePhase: "complete",
+        whatsappIntakeCompletedAt: new Date().toISOString(),
+        ...(session.validationFlags && session.validationFlags.length > 0
+          ? { _intakeValidationFlags: session.validationFlags }
+          : {}),
+      });
       await updateCaseProcessing(session.companyId, session.caseId, {
-        pgwpIntake: {
-          ...session.answers,
-          whatsappIntakePhase: "complete",
-          whatsappIntakeCompletedAt: new Date().toISOString(),
-          ...(session.validationFlags && session.validationFlags.length > 0
-            ? { _intakeValidationFlags: session.validationFlags }
-            : {}),
-        },
         aiStatus: "intake_complete"
       });
       await completeIntake(session);

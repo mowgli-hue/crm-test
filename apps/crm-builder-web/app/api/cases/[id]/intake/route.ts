@@ -392,7 +392,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   let formsGenerated: string[] = [];
   try {
     const { isQuestionnaireComplete } = await import("@/lib/application-question-flows");
-    const intakeData = latest?.pgwpIntake ?? {};
+    const intakeData = (latest?.pgwpIntake ?? {}) as Record<string, string>;
     if (isQuestionnaireComplete(latest?.formType || "", intakeData)) {
       const baseUrl = process.env.NEXTAUTH_URL || `https://${request.headers.get("host")}`;
       const formRes = await fetch(`${baseUrl}/api/cases/${params.id}/generate-forms`, {

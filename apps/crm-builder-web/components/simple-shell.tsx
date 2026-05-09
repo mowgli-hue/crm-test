@@ -6923,6 +6923,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 }
                                 const data = await res.json();
                                 const bodyLines: string[] = Array.isArray(data?.bodyLines) ? data.bodyLines : [];
+                                // Enclosed-doc list: AI-generated based on the case story OR
+                                // the static template fallback. Either way, staff can edit it
+                                // in a textarea below the body before downloading.
+                                const docs: string[] = Array.isArray(data?.docs) ? data.docs : [];
                                 const subject: string = String(data?.subject || "");
                                 const todayDate: string = String(data?.date || new Date().toLocaleDateString());
                                 const generatedKind: string = data?.generated === "ai" ? "✨ AI-drafted" : "📋 Template";
@@ -6931,6 +6935,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 const panel = document.getElementById("__rep_letter_panel__");
                                 if (!panel) return;
                                 const initialBody = bodyLines.join("\n\n");
+                                // Initial doc list: one per line. Lets staff add/remove/edit
+                                // entries the same way they edit the body — paragraphs (blank
+                                // lines) are NOT used here because the doc list is a numbered
+                                // list and each line is a discrete entry.
+                                const initialDocs = docs.join("\n");
                                 const safeSubject = subject.replace(/</g, "&lt;");
                                 const safeDate = todayDate.replace(/</g, "&lt;");
                                 const safeClient = caseClient.replace(/</g, "&lt;");
@@ -6945,8 +6954,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
 
                                   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:10px;font-size:11px;color:#1e3a8a;line-height:1.5;">
-                                    📝 <strong>Edit the letter body below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited.
-                                    <br /><span style="color:#1d4ed8;">Tip: blank lines separate paragraphs.</span>
+                                    📝 <strong>Edit the letter body and enclosed-document list below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited.
+                                    <br /><span style="color:#1d4ed8;">Tip: blank lines separate paragraphs in the body. Each line in the doc list is a separate entry.</span>
                                   </div>
 
                                   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;font-size:11px;color:#334155;line-height:1.6;">
@@ -6957,15 +6966,22 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
 
                                   <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Letter body (edit anything)</label>
-                                  <textarea id="__rep_edit_body__" rows="18"
+                                  <textarea id="__rep_edit_body__" rows="16"
                                     style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;line-height:1.6;box-sizing:border-box;resize:vertical;"></textarea>
                                   <p id="__rep_edit_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
 
-                                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px;font-size:11px;color:#334155;line-height:1.6;">
+                                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:12px;font-size:11px;color:#334155;line-height:1.6;">
                                     <div style="font-style:italic;color:#64748b;">Sincerely,</div>
                                     <div style="margin-top:8px;"><strong>Navdeep Singh Sandhu</strong></div>
                                     <div>RCIC #R705964 · Newton Immigration Inc.</div>
                                     <div>8327 120 Street, Delta, BC V4C 6R1</div>
+                                  </div>
+
+                                  <div style="margin-top:16px;border-top:2px solid #f1f5f9;padding-top:12px;">
+                                    <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">📎 Enclosed Documents <span style="color:#94a3b8;font-weight:400;">— one per line, in submission order</span></label>
+                                    <textarea id="__rep_edit_docs__" rows="10"
+                                      style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:12px;line-height:1.5;box-sizing:border-box;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"></textarea>
+                                    <p id="__rep_edit_docs_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
                                   </div>
 
                                   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;">
@@ -6988,6 +7004,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 updateMeta();
                                 bodyArea.addEventListener("input", updateMeta);
 
+                                // ── Wire enclosed-docs textarea ──
+                                // One entry per line; blank lines and trailing whitespace ignored
+                                // when sending. Counter shows live entry count so staff can see
+                                // they're under/over the typical 6-12 range.
+                                const docsArea = document.getElementById("__rep_edit_docs__") as HTMLTextAreaElement;
+                                const docsMetaP = document.getElementById("__rep_edit_docs_meta__")!;
+                                docsArea.value = initialDocs;
+                                const updateDocsMeta = () => {
+                                  const lines = docsArea.value.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+                                  docsMetaP.textContent = `${lines.length} entries`;
+                                };
+                                updateDocsMeta();
+                                docsArea.addEventListener("input", updateDocsMeta);
+
                                 const closeBtn = document.getElementById("__rep_edit_close__") as HTMLButtonElement;
                                 closeBtn?.addEventListener("click", close);
 
@@ -7008,7 +7038,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   }, 50);
                                 });
 
-                                // ── Download: rebuild bodyLines from textarea + POST ──
+                                // ── Download: rebuild bodyLines + editedDocs from textareas + POST ──
                                 const downloadBtn = document.getElementById("__rep_edit_download__") as HTMLButtonElement;
                                 const editStatus = document.getElementById("__rep_edit_status__")!;
                                 downloadBtn?.addEventListener("click", async () => {
@@ -7028,6 +7058,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     return;
                                   }
 
+                                  // editedDocs: one entry per non-empty line. Blank lines stripped.
+                                  // Sent as a flat array; backend uses verbatim or falls back to
+                                  // template list if empty.
+                                  const editedDocs: string[] = docsArea.value
+                                    .split("\n")
+                                    .map(l => l.trim())
+                                    .filter(l => l.length > 0);
+
                                   downloadBtn.disabled = true;
                                   downloadBtn.textContent = "Building…";
                                   editStatus.style.display = "inline";
@@ -7038,6 +7076,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                       body: JSON.stringify({
                                         systemToken: "newton-recovery-2024",
                                         editedBodyLines,
+                                        editedDocs,
                                         pronouns: selectedPronoun,
                                       }),
                                     });
@@ -7114,7 +7153,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               } else {
                                 setCaseActionStatus(d?.error || "❌ Scan failed");
                               }
-                              setTimeout(() => setCaseActionStatus(""), 6000);
+                              // Status persists until next action — user feedback that
+                              // scan completed should stay visible (was clearing after
+                              // 6s before, which lost the result message too quickly).
                             }} className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-700 shrink-0">
                               🔍 Scan Now
                             </button>

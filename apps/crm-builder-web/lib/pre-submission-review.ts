@@ -1590,6 +1590,422 @@ export const REVIEW_SPOUSAL_SPONSORSHIP: ReviewChecklist = {
 // Resolver — pick the right checklist for a case's form type
 // ─────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────
+// Express Entry — Permanent Residence (eAPR after ITA)
+// ─────────────────────────────────────────────────────────────────────
+// This is the Application for Permanent Residence (APR) submitted through
+// the IRCC online portal AFTER receiving an Invitation to Apply (ITA).
+// Programs covered: Federal Skilled Worker (FSW), Federal Skilled Trades
+// (FST), Canadian Experience Class (CEC), and Provincial Nominee (PNP)
+// when nominated through Express Entry.
+//
+// CRITICAL TIMING: 60-day deadline from ITA to submit complete eAPR.
+// Missing the deadline = ITA expires, must re-enter the pool, may not
+// receive another ITA. This is the single most important constraint.
+//
+// CRITICAL ACCURACY: Profile information MUST match eAPR exactly. Any
+// discrepancy (work experience dates, education credentials, NOC code,
+// language scores) between the profile and the eAPR is misrepresentation
+// and triggers refusal + 5-year ban under IRPA 40.
+//
+// Sources for items below: canada.ca/en/immigration-refugees-citizenship,
+// IRCC operational manual ENF 1, Express Entry rounds of invitations
+// (latest CRS cutoffs), and field experience filing eAPRs through 2026.
+export const REVIEW_EXPRESS_ENTRY_PR: ReviewChecklist = {
+  applicationType: "Express Entry — Permanent Residence",
+  description: "Application for Permanent Residence after Invitation to Apply (ITA). 60-day deadline from ITA. Programs: FSW / FST / CEC / PNP-EE.",
+  items: [
+    // ── Status & Eligibility (CRITICAL — verify FIRST) ─────────────────
+    {
+      key: "ita_received_and_active",
+      label: "ITA received and within 60-day submission deadline",
+      description:
+        "Verify the ITA letter is in the file. Confirm the 60-day clock — IRCC starts counting " +
+        "from the day the ITA was issued (date on the letter, NOT date you opened it). Late = " +
+        "ITA expires + return to pool + may not be re-invited. If client is at risk of missing " +
+        "deadline, file what's ready by day 60 even if minor docs are missing — better than a " +
+        "missed deadline.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "program_match_profile",
+      label: "Program in eAPR matches the program in the Express Entry profile",
+      description:
+        "If profile said FSW but client wants to file under CEC (because they now have 1 yr CDN " +
+        "work experience) → THIS IS A RED FLAG. The eAPR program must match what was in the " +
+        "profile when the ITA was issued. If not, the application is at risk of rejection. " +
+        "Verify program code matches.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "crs_score_still_valid",
+      label: "Profile information still supports the CRS score that earned the ITA",
+      description:
+        "If the client has lost any points since the ITA (e.g., language test expired, work " +
+        "experience now > 3 yrs from end date, age increased into new bracket, common-law " +
+        "partner status changed, education credential issue arose), the eAPR can be REJECTED " +
+        "for misrepresentation. Run the CRS calculator with current data and verify it still " +
+        "meets or exceeds the round cut-off when the ITA was issued.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "noc_code_correct_teer",
+      label: "Primary NOC code is at TEER 0/1/2/3 (no TEER 4 or 5)",
+      description:
+        "Express Entry only accepts NOC TEER 0, 1, 2, or 3 occupations (with limited exceptions " +
+        "in PNP streams). Verify the NOC against the current 2021 TEER classification — many " +
+        "clients have older NOC 2016 codes that don't translate cleanly. Use the IRCC NOC tool " +
+        "to confirm the duties match. Wrong NOC = refusal even if duties match a valid one.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "work_experience_meets_minimum",
+      label: "Work experience meets program minimum (FSW: 1 yr foreign / CEC: 1 yr Canadian / FST: 2 yrs trades)",
+      description:
+        "FSW: 1+ year continuous full-time (or equivalent part-time) foreign work in primary NOC " +
+        "in last 10 years. CEC: 1+ year continuous full-time (or equivalent) Canadian work in " +
+        "last 3 years (must have had valid status during it). FST: 2+ years in skilled trades. " +
+        "Verify with reference letters + pay stubs + T4s. Self-employed/unpaid work doesn't " +
+        "count for FSW or CEC.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "language_test_still_valid",
+      label: "Language test results still valid (≤ 2 years old at submission AND when ITA issued)",
+      description:
+        "IELTS / CELPIP / TEF / TCF must be ≤ 2 years old AT THE TIME OF SUBMISSION. If the test " +
+        "expires between ITA issuance and submission, client must retake BEFORE submitting. The " +
+        "scores claimed in the profile must match (or exceed) what's in the new test if retaken. " +
+        "If retaken results are LOWER, CRS score may drop below cutoff = misrepresentation risk.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "ECA_for_foreign_education",
+      label: "ECA (Educational Credential Assessment) on file for ALL foreign education claimed",
+      description:
+        "If client claimed CRS points for foreign education, ECA from a designated organization " +
+        "(WES / IQAS / ICAS / CES / ICES / Medical Council / PEBC) is REQUIRED. ECA must be ≤ 5 " +
+        "years old at submission. Canadian education does NOT need ECA but does need a transcript " +
+        "+ completion letter. If client has multiple credentials, only the highest needs ECA " +
+        "but verify the highest one is the one claimed in the profile.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "dependents_listed_match_profile",
+      label: "All dependents (spouse + children) listed in eAPR match Express Entry profile",
+      description:
+        "Adding/removing dependents AFTER ITA = misrepresentation unless there's a genuine event " +
+        "(birth, marriage, divorce, death after ITA). Verify dependents in eAPR exactly match " +
+        "profile. If a dependent was non-accompanying in the profile but is now accompanying (or " +
+        "vice versa), document the reason clearly in the submission letter. NEW marriages/births " +
+        "after ITA must be declared even if non-accompanying — IRPA 51 obligation.",
+      category: "status_eligibility",
+      required: true,
+    },
+    {
+      key: "no_inadmissibility_grounds",
+      label: "No inadmissibility grounds (medical / criminal / misrep / security / financial)",
+      description:
+        "Verify: (a) medical exam will be passed (if pre-existing serious condition, discuss " +
+        "with client BEFORE submitting), (b) NO criminal record in any country (including " +
+        "DUI in some countries, expunged convictions still must be declared), (c) no prior " +
+        "refusals undeclared, (d) no immigration violations in any country. Background check " +
+        "= mandatory. If ANY concern, raise with client and consider waiver / explanation letter.",
+      category: "status_eligibility",
+      required: true,
+    },
+
+    // ── Required Documents ────────────────────────────────────────────
+    {
+      key: "passport_valid_full_processing",
+      label: "Passport valid for full processing time + 6 months (recommend ≥ 1 year remaining)",
+      description:
+        "PR cards are issued with up to 5-year validity but tied to passport for travel. If " +
+        "passport expires during processing, COPR cannot be issued without renewing. Recommend " +
+        "client renew now if < 1 year remaining. Upload bio page + every page with stamps/visas.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "police_certificates_all_countries",
+      label: "Police certificates from EVERY country lived in 6+ months since age 18",
+      description:
+        "RCMP for Canada (if been in Canada 6+ months, even if not currently here). Country-of-" +
+        "origin police cert. Plus EVERY other country lived in 6+ months consecutively since " +
+        "age 18. Must be issued ≤ 6 months before submission. If a country won't issue one, " +
+        "include an explanation letter + alternative evidence (visa records, school records).",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "medical_exam_panel_physician",
+      label: "Medical exam completed by IRCC panel physician (eMedical Information Sheet attached)",
+      description:
+        "Upfront medicals strongly recommended (avoids delay later). Use IRCC's panel physician " +
+        "list — non-panel physician medicals are REJECTED. Result valid 12 months. Upload the " +
+        "Information Sheet from the panel physician (NOT the actual medical results — those go " +
+        "directly to IRCC from the physician electronically).",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "language_test_results_uploaded",
+      label: "Language test results (TRF) uploaded — exact scores match profile",
+      description:
+        "Upload the official Test Report Form. Verify scores in eAPR match TRF exactly. If TRF " +
+        "shows different scores than profile (because of retake), update profile before " +
+        "submitting OR explain in submission letter.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "ECA_report_uploaded",
+      label: "ECA report uploaded (WES / IQAS / ICAS / etc.) for foreign education claimed",
+      description:
+        "Required for any foreign education that contributed CRS points. Must be from a " +
+        "designated organization for the credential type. Verify ECA equivalency level matches " +
+        "what was claimed in profile.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "education_documents_complete",
+      label: "Education documents — degrees / diplomas / transcripts for highest credential",
+      description:
+        "Final transcript + degree certificate / diploma for the highest education claimed. " +
+        "Canadian education: official transcript + completion letter. Foreign: original-language " +
+        "documents + certified translations. If claimed dual credentials, include both.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "work_experience_letters",
+      label: "Reference letter from EVERY employer in work experience (with full IRCC requirements)",
+      description:
+        "Must be on company letterhead, signed by HR/manager, include: client's name + position + " +
+        "employment dates + hours per week (full-time vs part-time) + duties matching NOC + " +
+        "annual salary + benefits. Pay stubs + T4s + bank deposit records if reference letter is " +
+        "weak. If self-employment is part of CEC eligibility, additional evidence needed " +
+        "(invoices, contracts, T4As, business records).",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "proof_of_funds_if_required",
+      label: "Proof of funds — if FSW or FST (NOT CEC; NOT if PNP nominee)",
+      description:
+        "FSW + FST require proof of settlement funds based on family size (current threshold ~ " +
+        "$14,690 single / ~$18,288 family of 2 — verify latest IRCC numbers). 6 MONTHS of bank " +
+        "statements showing the funds have been in the account. Funds must be liquid, " +
+        "unencumbered, available on landing. CEC and PNP-EE nominees are exempt.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "marriage_or_common_law_proof",
+      label: "Marriage certificate OR common-law cohabitation proof (if applicable)",
+      description:
+        "Marriage cert (legalized + translated if foreign). Common-law: Statutory Declaration " +
+        "of Common-Law Union (IMM 5409) + 12+ months of joint cohabitation evidence (lease, " +
+        "joint bills, joint bank, photos, communication records). Without proof, spouse may not " +
+        "be added as accompanying.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "birth_certificates_dependents",
+      label: "Birth certificates for all dependent children (with translations if foreign)",
+      description:
+        "Original-language birth cert + certified English/French translation. If the cert names " +
+        "are inconsistent with passport or any other document, include explanation. For adopted " +
+        "children, additional adoption documents required.",
+      category: "documents",
+      required: false,
+    },
+    {
+      key: "digital_photo_specs",
+      label: "Digital photos for all applicants meet IRCC PR card specs (50mm × 70mm)",
+      description:
+        "PR card photo specs are STRICTER than passport — full face, neutral expression, no " +
+        "glasses, exact dimensions, head 31-36mm. Photo must be ≤ 6 months old. Photographer " +
+        "must include date + name + address on back. Wrong specs = whole application returned. " +
+        "Upload digital version only at this stage; physical photos may be requested later.",
+      category: "documents",
+      required: true,
+    },
+    {
+      key: "translations_certified",
+      label: "All non-English/French documents have certified translations",
+      description:
+        "Translations must be by a CERTIFIED translator (member of provincial professional body) " +
+        "OR if translator is not certified, translation must include translator's affidavit + " +
+        "original. Translations are mandatory for: birth certs, marriage certs, education docs, " +
+        "police certs, work reference letters, employment records.",
+      category: "documents",
+      required: true,
+    },
+
+    // ── Forms (eAPR portal forms) ─────────────────────────────────────
+    {
+      key: "form_imm0008_generic_complete",
+      label: "IMM 0008 (Generic Application Form for Canada) — reviewed end-to-end",
+      description:
+        "All sections complete. Personal info matches passport exactly. Address history covers " +
+        "the last 10 years with no gaps. Employment history matches reference letters. NOC code " +
+        "+ duties match what was claimed in profile.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "form_schedule_a_background",
+      label: "IMM 5669 Schedule A — Background / Declaration — reviewed end-to-end (CRITICAL)",
+      description:
+        "MOST scrutinized form. Personal history MUST cover age 18 to present with NO GAPS. Every " +
+        "address, every job, every period of education or unemployment MUST be accounted for, " +
+        "month-by-month. ANY gap or inconsistency vs Schedule A in profile = misrep risk. Be " +
+        "exhaustively honest about any prior visa refusals (any country), arrests, military " +
+        "service, organization memberships. One Schedule A per applicant 18+.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "form_imm5562_supplementary_info",
+      label: "IMM 5562 Supplementary Information / Travel History — reviewed end-to-end",
+      description:
+        "List EVERY country visited in the last 10 years, all entry/exit dates, purpose. This is " +
+        "cross-checked with passport stamps and CBSA records. Missing trips = misrep. If client " +
+        "has many trips, take time to compile properly — IRCC will catch discrepancies.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "form_imm5406_additional_family",
+      label: "IMM 5406 Additional Family Information — reviewed end-to-end",
+      description:
+        "Lists ALL family members (parents, all siblings, all children) including step / half / " +
+        "adopted, even if deceased or estranged or accompanying. Must match Schedule A. Includes " +
+        "addresses + DOBs + occupations.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "form_imm5476_use_of_rep",
+      label: "IMM 5476 Use of a Representative — Newton's RCIC info correct + signed",
+      description:
+        "Sandhu/Navdeep Singh — RCIC R705964 — Newton Immigration Inc. — current address + " +
+        "phone + email. Section C/D NOT touched (handled by IRCC). Client signature collected.",
+      category: "forms",
+      required: true,
+    },
+    {
+      key: "form_imm5510_additional_dependants_optional",
+      label: "IMM 5510 Additional Dependants/Declaration — IF more than 1 dependent",
+      description:
+        "Used when there are more dependents than fit on the IMM 0008. Otherwise omit.",
+      category: "forms",
+      required: false,
+    },
+
+    // ── Submission Package & Portal ────────────────────────────────────
+    {
+      key: "all_uploads_meet_size_format",
+      label: "All uploads meet portal requirements (PDF, ≤ 4 MB each, properly named)",
+      description:
+        "IRCC PR portal limits: PDF only for forms, JPG/PNG/PDF for documents, max 4 MB per " +
+        "upload. If file too large, compress without losing quality. Naming convention: " +
+        "<DocType>_<First>_<Last>.pdf. Combine multiple pages into single PDF where field " +
+        "expects one document.",
+      category: "submission_package",
+      required: true,
+    },
+    {
+      key: "rep_submission_letter_drafted",
+      label: "Representative Submission Letter drafted and reviewed",
+      description:
+        "Cover letter from Newton explaining: client name + UCI + ITA reference, program " +
+        "(FSW/FST/CEC/PNP), confirmation that all required documents are attached, brief " +
+        "narrative of profile + why eligible, any explanations needed (gaps in employment, " +
+        "name discrepancies, refused visas, dependents not accompanying, etc.).",
+      category: "submission_package",
+      required: true,
+    },
+    {
+      key: "all_required_fields_filled",
+      label: "All required fields in every form filled — no '[blank]' or 'TBD'",
+      description:
+        "Run through every form one more time. Empty required fields = portal will block " +
+        "submission OR IRCC will send incomplete-application notice = restart. Specifically " +
+        "verify: addresses (every address with start/end dates), employment (every job with " +
+        "start/end dates + hours/week), and Schedule A signatures (one per applicant).",
+      category: "submission_package",
+      required: true,
+    },
+    {
+      key: "pnp_nomination_letter_attached",
+      label: "Provincial nomination letter attached (IF Provincial Nominee — EE stream)",
+      description:
+        "Required ONLY if client received nomination through a PNP linked to Express Entry. " +
+        "Nomination letter from the province + nomination certificate. Nomination must be " +
+        "active (not withdrawn).",
+      category: "submission_package",
+      required: false,
+    },
+
+    // ── Fees & Sign-off ────────────────────────────────────────────────
+    {
+      key: "fees_paid_correct_amount",
+      label: "Government fees paid in full — current amounts verified on canada.ca",
+      description:
+        "Processing fee + Right of Permanent Residence Fee (RPRF) + biometric fee (if " +
+        "applicable). Current totals (verify on canada.ca before paying — IRCC raises fees " +
+        "periodically): Principal applicant ~$950 (processing $625 + RPRF $575 minus possible " +
+        "biometric collected before), Spouse ~$950, Each dependent child ~$260, Biometrics " +
+        "$85/person or $170/family. RPRF is refundable if application refused.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "biometrics_completed_or_scheduled",
+      label: "Biometrics completed in last 10 years OR appointment scheduled",
+      description:
+        "If applicant gave biometrics for a previous Canadian application within 10 years, those " +
+        "are still valid (IRCC reuses them). Otherwise, biometric instruction letter (BIL) " +
+        "issued after submission and applicant has 30 days to give them. Confirm fee paid up " +
+        "front to avoid delay.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "client_signed_declarations",
+      label: "Client signed all declarations + reviewed eAPR before submit",
+      description:
+        "Every applicant 18+ signs IMM 0008 declaration + Schedule A. Client confirms in writing " +
+        "(email or signed declaration) that they reviewed the entire eAPR and that all info is " +
+        "accurate. This protects Newton if anything is later challenged. Save acknowledgment in " +
+        "the case file.",
+      category: "fees_signoff",
+      required: true,
+    },
+    {
+      key: "internal_rcic_review",
+      label: "Internal Newton review by RCIC — sign-off recorded",
+      description:
+        "An RCIC (Sandhu or other licensed consultant) personally reviewed the eAPR before " +
+        "submit. Required by CICC ethics rules. Record reviewer name + date in case notes. This " +
+        "is non-negotiable for PR applications given the stakes (5-year ban for misrep).",
+      category: "fees_signoff",
+      required: true,
+    },
+  ],
+};
+
 export function getReviewChecklist(formType: string): ReviewChecklist | null {
   const ft = String(formType || "").toLowerCase();
 
@@ -1644,6 +2060,27 @@ export function getReviewChecklist(formType: string): ReviewChecklist | null {
   ) return REVIEW_PR_CARD_RENEWAL;
 
   if (ft.includes("citizenship")) return REVIEW_CITIZENSHIP;
+
+  // Express Entry PR — match common formType strings used in Newton's CRM
+  // (Express Entry, FSW, CEC, FST, PNP-EE, eAPR, IMM0008 / Generic Application).
+  // Note: must come AFTER PR card branch above so generic "pr" doesn't
+  // collide with PR card renewal.
+  if (
+    ft.includes("express entry") ||
+    ft.includes("eapr") ||
+    ft.includes("e-apr") ||
+    ft.includes("federal skilled worker") ||
+    ft.includes("federal skilled trades") ||
+    ft.includes("canadian experience class") ||
+    ft.includes("fsw") ||
+    ft.includes("fst") ||
+    ft.includes("cec") ||
+    ft.includes("pnp") ||
+    ft.includes("provincial nominee") ||
+    ft.includes("imm0008") ||
+    ft.includes("imm 0008") ||
+    (ft.includes("permanent residence") && !ft.includes("card"))
+  ) return REVIEW_EXPRESS_ENTRY_PR;
 
   // No checklist defined yet — null means "show generic message: not yet
   // available for this application type, contact dev"

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { listCases, updateCaseProcessing } from "@/lib/store";
+import { listCases, updateCasePgwpIntake } from "@/lib/store";
 import { getQuestionPromptsForFormType } from "@/lib/application-question-flows";
 import { setSession } from "@/lib/whatsapp-ai-intake";
 
@@ -31,10 +31,12 @@ export async function POST(request: NextRequest) {
   for (const c of toReset) {
     try {
       const phone = String(c.leadPhone || "").replace(/\D/g, "");
-      // Clear old session from intake
-      const intake = { ...(c.pgwpIntake as Record<string,string> || {}) };
-      delete intake.whatsappSession;
-      await updateCaseProcessing(companyId, c.id, { pgwpIntake: intake });
+      // Clear old session from intake — must use updateCasePgwpIntake (the dedicated
+      // function for editing pgwpIntake), NOT updateCaseProcessing which is for
+      // workflow status and rejects pgwpIntake fields. Setting whatsappSession to
+      // empty string is the convention used elsewhere to mean "cleared" while
+      // preserving the surrounding intake answers.
+      await updateCasePgwpIntake(companyId, c.id, { whatsappSession: "" });
 
       // Set new AI session
       const questions = getQuestionPromptsForFormType(c.formType);

@@ -90,7 +90,7 @@ export function buildReadyPackage(caseItem: CaseItem, documents: DocumentItem[])
       email: intake.email || "",
       phone: intake.phone || ""
     },
-    imm5710FieldMap: toSnakeCaseMapping(intake),
+    imm5710FieldMap: toSnakeCaseMapping(intake as Record<string, string | undefined>),
     intake,
     documents,
     aiDraft,
