@@ -513,6 +513,13 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxMessages, setInboxMessages] = useState<Array<{id:string;phone:string;message:string;direction:string;matched_case_id:string|null;matched_case_name:string|null;is_read:boolean;created_at:string}>>([]);
   const [inboxLoaded, setInboxLoaded] = useState(false);
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
+  // 3-tab inbox view (May 2026): "active" | "submitted" | "archived"
+  // - active: kept for back-compat, default
+  // - submitted: cases where linked case.processingStatus === "submitted"
+  // - archived: maps to inboxShowArchived=true (manually archived rows only)
+  // The Active filter is the inverse of Submitted+Archived — i.e., shows
+  // threads NOT yet submitted at IRCC AND not manually archived.
+  const [inboxView, setInboxView] = useState<"active" | "submitted" | "archived">("active");
   // Global unread count — separate from inboxMessages because that state only
   // populates when staff is ON the Inbox screen. The sidebar badge needs to
   // show even before they've opened Inbox in this session, so we poll a
@@ -732,6 +739,9 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   // (auto-linker bug victims). Loaded on demand via "Scan Now" button.
   const [phoneCollisions, setPhoneCollisions] = useState<any | null>(null);
   const [phoneCollisionsLoading, setPhoneCollisionsLoading] = useState(false);
+  // One-click recovery for the auto-archive-on-submit bug — see
+  // /api/admin/unarchive-submitted/route.ts for explanation.
+  const [unarchiveSubmittedLoading, setUnarchiveSubmittedLoading] = useState(false);
   const [caseSearch, setCaseSearch] = useState("");
   // Top-header search autocomplete dropdown
   const [headerSearchFocused, setHeaderSearchFocused] = useState(false);
@@ -6003,6 +6013,49 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 </section>
               ) : null}
 
+              {/* Recover auto-archived submitted threads (May 2026 cleanup).
+                  The previous submit-route handler silently auto-archived
+                  every WhatsApp thread when a case was marked submitted.
+                  This button reverses that for ALL submitted cases at once,
+                  so threads reappear in the new Submitted tab. Safe to
+                  re-run — already-unarchived rows are untouched. */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📤 Recover Submitted Threads</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Earlier versions auto-archived inbox threads when cases were submitted.
+                        This restores them to the new Submitted tab in Inbox. Safe to re-run.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Restore all auto-archived submitted-case WhatsApp threads to the Submitted Inbox tab?")) return;
+                        setUnarchiveSubmittedLoading(true);
+                        try {
+                          const res = await apiFetch(`/admin/unarchive-submitted`, { method: "POST" });
+                          const d = await res?.json().catch(() => ({}));
+                          if (res?.ok) {
+                            alert(`✅ ${d.message || "Done."}`);
+                          } else {
+                            alert(`❌ ${d.error || "Failed"}`);
+                          }
+                        } catch (e) {
+                          alert(`❌ ${(e as Error).message}`);
+                        } finally {
+                          setUnarchiveSubmittedLoading(false);
+                        }
+                      }}
+                      disabled={unarchiveSubmittedLoading}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700"
+                    >
+                      {unarchiveSubmittedLoading ? "Restoring…" : "📤 Restore Now"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
               {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
                 <section className="rounded-xl border border-slate-200 bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -9964,13 +10017,34 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     </div>
                   </div>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => { setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${!inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>Active</button>
-                    <button onClick={() => { setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>📦 Archived</button>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">💬 Inbox</p>
-                    <p className="text-[10px] text-slate-400">{sessionUser?.role === "Processing" ? "Your clients" : "All conversations"}</p>
+                  <div className="flex items-center gap-1">
+                    {/* Three-tab inbox view (May 2026 fix):
+                        - Active: in-flight clients you're still talking to
+                        - Submitted: cases filed at IRCC, kept separate so the
+                          Active list isn't polluted, but still visible because
+                          IRCC sometimes asks for more docs (request letters,
+                          biometrics, passport request) AFTER submission.
+                        - Archived: manually-archived conversations only.
+                        Submitted membership is computed from the linked case's
+                        processingStatus === "submitted" — no DB migration. */}
+                    <button
+                      onClick={() => { setInboxView("active"); setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "active" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      Active
+                    </button>
+                    <button
+                      onClick={() => { setInboxView("submitted"); setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "submitted" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      📤 Submitted
+                    </button>
+                    <button
+                      onClick={() => { setInboxView("archived"); setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "archived" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      📦 Archived
+                    </button>
                   </div>
                   <button onClick={async () => {
                     setInboxLoaded(false);
@@ -10089,6 +10163,29 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const matchedCase = cases.find(c => { const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
                       return { phone, msgs, matchedCase };
                     }).filter(({ matchedCase }) => {
+                      // ── Tab filter (Active / Submitted / Archived) ──
+                      // Each thread's bucket is determined by the linked case's
+                      // processingStatus (or lack thereof). Computed at render
+                      // time so no DB migration is needed and the bucketing
+                      // updates instantly when a case is marked submitted.
+                      //
+                      // - active: threads whose case is NOT submitted (or has
+                      //   no case at all — orphan inbound). The default view.
+                      // - submitted: threads whose case is at processingStatus
+                      //   === "submitted". Kept separate so the Active list
+                      //   doesn't get bloated with finished filings, but
+                      //   visible because IRCC often comes back with request
+                      //   letters / biometrics / passport requests.
+                      // - archived: manual-archive only (handled by separate
+                      //   inboxShowArchived data load above).
+                      const isSubmitted = matchedCase?.processingStatus === "submitted";
+                      if (inboxView === "submitted") {
+                        if (!isSubmitted) return false;
+                      } else if (inboxView === "active") {
+                        if (isSubmitted) return false;
+                      }
+                      // (archived handled by archived=1 query param at fetch time)
+
                       // Visibility filter:
                       //   - Admin/Marketing/Reviewer/Communications: see ALL threads
                       //   - Processing staff: see only their own assigned cases
@@ -10125,7 +10222,38 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       return bLatest - aLatest;
                     });
 
-                    if (threadList.length === 0) return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
+                    if (threadList.length === 0) {
+                      // Empty state — if a search is active, give the user a
+                      // way to check the OTHER bucket (Active vs Archived).
+                      // Most common cause of "I can't find this thread" was
+                      // the auto-archive-on-submit behavior (now removed):
+                      // staff submitted a case → thread silently moved to
+                      // Archived → search in Active returned 0. Suggesting a
+                      // jump to the archived view recovers those threads.
+                      if (inboxGlobalSearch && inboxGlobalSearch.trim().length > 0) {
+                        return (
+                          <div className="py-8 px-4 text-center">
+                            <p className="text-xs text-slate-500 mb-3">
+                              No matches in <strong>{inboxShowArchived ? "Archived" : "Active"}</strong> for "{inboxGlobalSearch}"
+                            </p>
+                            <button
+                              onClick={() => {
+                                setInboxShowArchived(!inboxShowArchived);
+                                setInboxLoaded(false);
+                                setInboxThread(null);
+                              }}
+                              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700"
+                            >
+                              🔎 Search {inboxShowArchived ? "Active" : "📦 Archived"} instead
+                            </button>
+                            <p className="text-[10px] text-slate-400 mt-2">
+                              Submitted-case threads were auto-archived in older versions — many older clients live there.
+                            </p>
+                          </div>
+                        );
+                      }
+                      return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
+                    }
 
                     return threadList.map(({ phone, msgs, matchedCase }) => {
                       const unread = msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;

@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
       // the same id we used for the INSERT below. Generated once per message.
       const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
 
-      const { listCases, addMessage, updateCase, getCase } = await import("@/lib/store");
+      const { listCases, addMessage, getCase } = await import("@/lib/store");
       const cases = await listCases(COMPANY_ID);
       const n = from.replace(/\D/g, "");
 
