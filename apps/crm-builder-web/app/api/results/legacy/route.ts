@@ -260,22 +260,126 @@ export async function POST(request: NextRequest) {
       }
     }
   }
-  // Auto-notify client via WhatsApp if matched and has phone
+  // ── Auto-notification for IRCC results ──
+  //
+  // ⚠️ IMPORTANT — this used to auto-send WhatsApp messages to clients
+  // for ALL outcomes including refusals and request letters. That caused
+  // a real incident (May 2026, CASE-1415 sukhmandeep): scheduled Drive
+  // crawler detected her IRCC request letter, the endpoint auto-fired
+  // "IRCC has sent a request letter…Newton Immigration will review and
+  // contact you" — but no staff member was actually alerted. The client
+  // saw the bot's confident reply and assumed Newton was on it. Request
+  // letters have a 30-day IRCC deadline; a missed one can refuse the
+  // application.
+  //
+  // New policy:
+  //   - Approvals: still auto-send (low risk, client-positive news,
+  //     they're going to be happy regardless of timing)
+  //   - Refusals: NEVER auto-send to client. Email Sandhu + assignee
+  //     immediately (urgent — appeals/restorations have hard deadlines).
+  //   - Request letters: NEVER auto-send to client. Email Sandhu +
+  //     assignee immediately (urgent — 30-day IRCC deadline).
+  //   - Other: skip entirely (matches existing behavior).
   if (entryType === "result" && item.matchedCaseId && item.outcome !== "other") {
     try {
       const matchedCase = await getCase(companyId, item.matchedCaseId);
-      const clientPhone = matchedCase?.leadPhone || item.phone;
-      if (clientPhone && clientPhone.replace(/\D/g, "").length >= 10) {
-        const { sendWhatsAppText } = await import("@/lib/whatsapp");
-        const clientName = matchedCase?.client || item.clientName || "Client";
-        const firstName = clientName.split(" ")[0];
-        const outcomeMsg =
-          item.outcome === "approved"
-            ? `🎉 Great news ${firstName}! Your ${matchedCase?.formType || "application"} has been *APPROVED* by IRCC. Newton Immigration will contact you shortly with next steps.`
-            : item.outcome === "refused"
-            ? `Hi ${firstName}, we have received a decision on your ${matchedCase?.formType || "application"} from IRCC. Our team will review and contact you shortly to discuss your options.`
-            : `Hi ${firstName}, IRCC has sent a request letter regarding your ${matchedCase?.formType || "application"}. Newton Immigration will review and contact you with what's needed.`;
-        await sendWhatsAppText(clientPhone.replace(/\D/g, ""), outcomeMsg).catch(() => {});
+
+      // ── APPROVED: auto-send WhatsApp (low risk, positive news) ──
+      if (item.outcome === "approved") {
+        const clientPhone = matchedCase?.leadPhone || item.phone;
+        if (clientPhone && clientPhone.replace(/\D/g, "").length >= 10) {
+          const { sendWhatsAppText } = await import("@/lib/whatsapp");
+          const clientName = matchedCase?.client || item.clientName || "Client";
+          const firstName = clientName.split(" ")[0];
+          const msg = `🎉 Great news ${firstName}! Your ${matchedCase?.formType || "application"} has been *APPROVED* by IRCC. Newton Immigration will contact you shortly with next steps.`;
+          await sendWhatsAppText(clientPhone.replace(/\D/g, ""), msg).catch(() => {});
+        }
+      }
+
+      // ── REFUSAL or REQUEST LETTER: alert staff, do NOT message client ──
+      // These require human judgement + have hard deadlines. The bot
+      // should never beat a human to the client. Staff handles the
+      // outreach themselves once they've reviewed the letter.
+      else if (item.outcome === "refused" || item.outcome === "request_letter") {
+        try {
+          const { sendEmail, isEmailConfigured } = await import("@/lib/email");
+          if (isEmailConfigured()) {
+            const { listUsers } = await import("@/lib/store");
+            const users = await listUsers(companyId);
+            const assignedToKey = String(matchedCase?.assignedTo || "").toLowerCase().trim();
+            const recipients: string[] = [];
+            // Always alert Sandhu (RCIC) on refusals + request letters
+            const sandhu = users.find((u) =>
+              u.userType === "staff" &&
+              String(u.name || "").toLowerCase().includes("sandhu")
+            );
+            if (sandhu?.email) recipients.push(sandhu.email);
+            // Also alert the case's assignee if different from Sandhu
+            const assignee = users.find((u) =>
+              u.userType === "staff" &&
+              String(u.name || "").toLowerCase().trim() === assignedToKey
+            );
+            if (assignee?.email && !recipients.includes(assignee.email)) {
+              recipients.push(assignee.email);
+            }
+
+            if (recipients.length > 0) {
+              const baseUrl =
+                process.env.PUBLIC_APP_URL ||
+                process.env.NEXT_PUBLIC_APP_URL ||
+                "https://crm.newtonimmigration.com";
+              const caseUrl = `${baseUrl}/?case=${encodeURIComponent(item.matchedCaseId)}`;
+              const clientName = matchedCase?.client || item.clientName || "Client";
+              const formType = matchedCase?.formType || "application";
+              const isRefusal = item.outcome === "refused";
+              const headline = isRefusal
+                ? `🚨 IRCC REFUSAL — ${clientName}`
+                : `📨 IRCC REQUEST LETTER — ${clientName}`;
+              const urgency = isRefusal
+                ? "Refusals have appeal/reconsideration deadlines (typically 60-90 days for judicial review)."
+                : "IRCC request letters typically require a response within 30 days.";
+              const subject = `[Newton CRM] ${headline} — IMMEDIATE ACTION REQUIRED`;
+              const html = `
+<div style="background:#dc2626;padding:18px 24px;border-radius:8px 8px 0 0;">
+  <span style="color:white;font-size:18px;font-weight:bold;letter-spacing:0.5px;">${isRefusal ? "🚨 IRCC REFUSAL" : "📨 IRCC REQUEST LETTER"}</span>
+</div>
+<div style="background:#fef2f2;padding:24px;border-radius:0 0 8px 8px;border:1px solid #fecaca;border-top:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">
+  <h2 style="margin:0 0 12px;font-size:16px;color:#7f1d1d;">${headline}</h2>
+  <p style="margin:0 0 12px;font-weight:600;">
+    ${urgency}
+  </p>
+  <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #fecaca;border-radius:6px;margin:16px 0;">
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;width:40%;">Client</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${clientName}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Application Type</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${formType}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Application Number</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${item.applicationNumber || "—"}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Case ID</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;"><code>${item.matchedCaseId}</code></td></tr>
+    <tr><td style="padding:8px 12px;font-weight:600;">Assigned To</td><td style="padding:8px 12px;">${matchedCase?.assignedTo || "Unassigned"}</td></tr>
+  </table>
+  <p style="margin:0 0 16px;color:#7f1d1d;font-weight:600;">
+    ⚠️ The client has NOT been notified by the bot. Please review the letter, prepare a response strategy, and contact the client yourself.
+  </p>
+  <p style="margin:0;">
+    <a href="${caseUrl}" style="display:inline-block;background:#dc2626;color:white;padding:12px 22px;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px;">
+      Open Case in CRM →
+    </a>
+  </p>
+  <hr style="border:none;border-top:1px solid #fecaca;margin:24px 0 12px;" />
+  <p style="font-size:11px;color:#94a3b8;margin:0;">
+    This urgent alert was triggered automatically from a scheduled IRCC results scan.<br/>
+    Newton Immigration Inc. · 8327 120 Street, Delta, BC · RCIC #R705964
+  </p>
+</div>`;
+              await sendEmail({ to: recipients, subject, html });
+              console.log(`📧 ${isRefusal ? "Refusal" : "Request letter"} alert emailed to: ${recipients.join(", ")}`);
+            } else {
+              console.warn(`⚠️ ${item.outcome} for ${item.matchedCaseId} — no staff emails on file to alert`);
+            }
+          } else {
+            console.warn(`⚠️ Email not configured — staff cannot be alerted about ${item.outcome} for ${item.matchedCaseId}`);
+          }
+        } catch (e) {
+          console.error("Staff alert email failed:", e);
+        }
       }
     } catch { /* non-fatal */ }
   }
