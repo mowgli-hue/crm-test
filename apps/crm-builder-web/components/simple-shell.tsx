@@ -3027,6 +3027,17 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     if (log) setOutboundMessages((prev) => [log, ...prev]);
     if (status === "sent") return "sent";
     if (status === "provider_missing") return "provider_missing";
+    // For genuine failures, surface the real reason from Meta so staff
+    // know WHY the message didn't deliver. Most common case is the 24h
+    // service window expiring — without this alert, staff thinks the
+    // message was sent and the client's silence is a mystery.
+    const detail = String(payload?.result?.detail || "").trim();
+    if (detail) {
+      // Use setTimeout so this fires after the calling function's status
+      // updates settle; also gives a moment for any intermediate UI to
+      // show before the modal alert.
+      setTimeout(() => alert(`⚠️ WhatsApp delivery failed:\n\n${detail}`), 50);
+    }
     return "failed";
   }
 
