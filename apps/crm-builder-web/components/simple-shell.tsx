@@ -742,6 +742,10 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   // One-click recovery for the auto-archive-on-submit bug — see
   // /api/admin/unarchive-submitted/route.ts for explanation.
   const [unarchiveSubmittedLoading, setUnarchiveSubmittedLoading] = useState(false);
+  // Daily digest test trigger — manual button in Settings, runs the
+  // digest endpoint immediately for testing. Production cron hits the
+  // same endpoint at 09:00 daily.
+  const [digestRunLoading, setDigestRunLoading] = useState(false);
   const [caseSearch, setCaseSearch] = useState("");
   // Top-header search autocomplete dropdown
   const [headerSearchFocused, setHeaderSearchFocused] = useState(false);
@@ -6062,6 +6066,55 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700"
                     >
                       {unarchiveSubmittedLoading ? "Restoring…" : "📤 Restore Now"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
+              {/* Daily digest email — manually trigger to test before cron
+                  takes over. The endpoint sends one email per staff member
+                  with their stale cases (under-review >3d, no-activity >7d).
+                  In production a Railway cron hits this endpoint at 09:00
+                  daily. This button lets you test it on demand and see the
+                  exact response (who got emailed, who was skipped). */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📧 Daily Digest Email</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Sends each staff member a morning email with their stale cases (Under Review &gt;3 days, No activity &gt;7 days).
+                        Auto-runs via cron — use this button to test the digest now.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Run the daily digest right now? Each staff member with stale cases will receive an email immediately.")) return;
+                        setDigestRunLoading(true);
+                        try {
+                          const url = `/admin/digest/run?token=${encodeURIComponent("newton-recovery-2024")}`;
+                          const res = await apiFetch(url);
+                          const d = await res?.json().catch(() => ({}));
+                          if (res?.ok) {
+                            const msg = `✅ Digest run complete\n\n` +
+                              `${d.staffNotified || 0} staff emailed\n` +
+                              `${d.staffSkipped || 0} skipped (email failed)\n` +
+                              `${d.totalCasesFlagged || 0} total stale cases flagged\n\n` +
+                              ((d.details || []).map((s: any) => `  ${s.sent ? "✓" : "✗"} ${s.staff} (${s.cases} cases)`).join("\n") || "(none)");
+                            alert(msg);
+                          } else {
+                            alert(`❌ Digest failed: ${d.error || res?.status}`);
+                          }
+                        } catch (e) {
+                          alert(`❌ Digest error: ${(e as Error).message}`);
+                        } finally {
+                          setDigestRunLoading(false);
+                        }
+                      }}
+                      disabled={digestRunLoading}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700"
+                    >
+                      {digestRunLoading ? "Running…" : "📧 Send Test Digest"}
                     </button>
                   </div>
                 </section>
