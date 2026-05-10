@@ -260,128 +260,140 @@ export async function POST(request: NextRequest) {
       }
     }
   }
-  // ── Auto-notification for IRCC results ──
+  // ── Auto-notification policy: ALL ALERTS GO TO STAFF, NEVER CLIENTS ──
   //
-  // ⚠️ IMPORTANT — this used to auto-send WhatsApp messages to clients
-  // for ALL outcomes including refusals and request letters. That caused
-  // a real incident (May 2026, CASE-1415 sukhmandeep): scheduled Drive
-  // crawler detected her IRCC request letter, the endpoint auto-fired
-  // "IRCC has sent a request letter…Newton Immigration will review and
-  // contact you" — but no staff member was actually alerted. The client
-  // saw the bot's confident reply and assumed Newton was on it. Request
-  // letters have a 30-day IRCC deadline; a missed one can refuse the
-  // application.
+  // ⚠️ HISTORY: this code used to auto-send WhatsApp to clients on IRCC
+  // outcomes. That caused two real incidents:
   //
-  // New policy:
-  //   - Approvals: still auto-send (low risk, client-positive news,
-  //     they're going to be happy regardless of timing)
-  //   - Refusals: NEVER auto-send to client. Email Sandhu + assignee
-  //     immediately (urgent — appeals/restorations have hard deadlines).
-  //   - Request letters: NEVER auto-send to client. Email Sandhu +
-  //     assignee immediately (urgent — 30-day IRCC deadline).
-  //   - Other: skip entirely (matches existing behavior).
+  //   1. (May 2026) Sukhmandeep (CASE-1415) received an automated "IRCC
+  //      has sent a request letter…Newton Immigration will review and
+  //      contact you" message before any staff member knew about it.
+  //      30-day IRCC deadline could have been missed silently.
+  //
+  //   2. (May 2026) Reasoning that even "approved" auto-sends are risky:
+  //      wrong-client matches (auto-linker damage), outdated app numbers,
+  //      misclassified outcomes, or duplicate scans could all cause the
+  //      bot to congratulate a client for someone else's approval, or
+  //      worse, congratulate a refused client.
+  //
+  // New policy (firm — do not loosen without owner sign-off):
+  //   - The bot NEVER talks to clients about IRCC outcomes.
+  //   - Every detected IRCC outcome triggers an email alert to Sandhu
+  //     (RCIC) + the case's assignee.
+  //   - Staff reviews the letter, verifies the match is correct, and
+  //     contacts the client themselves — using their voice, their
+  //     timing, with the right context.
+  //   - The CRM's job is to surface, not to speak.
+  //
+  // The Wins Wall + Results dashboard already exist for staff-initiated
+  // outreach (one-click Send to Client). That stays under human control.
   if (entryType === "result" && item.matchedCaseId && item.outcome !== "other") {
     try {
       const matchedCase = await getCase(companyId, item.matchedCaseId);
-
-      // ── APPROVED: auto-send WhatsApp (low risk, positive news) ──
-      if (item.outcome === "approved") {
-        const clientPhone = matchedCase?.leadPhone || item.phone;
-        if (clientPhone && clientPhone.replace(/\D/g, "").length >= 10) {
-          const { sendWhatsAppText } = await import("@/lib/whatsapp");
-          const clientName = matchedCase?.client || item.clientName || "Client";
-          const firstName = clientName.split(" ")[0];
-          const msg = `🎉 Great news ${firstName}! Your ${matchedCase?.formType || "application"} has been *APPROVED* by IRCC. Newton Immigration will contact you shortly with next steps.`;
-          await sendWhatsAppText(clientPhone.replace(/\D/g, ""), msg).catch(() => {});
+      const { sendEmail, isEmailConfigured } = await import("@/lib/email");
+      if (!isEmailConfigured()) {
+        console.warn(`⚠️ Email not configured — staff cannot be alerted about ${item.outcome} for ${item.matchedCaseId}`);
+      } else {
+        const { listUsers } = await import("@/lib/store");
+        const users = await listUsers(companyId);
+        const assignedToKey = String(matchedCase?.assignedTo || "").toLowerCase().trim();
+        const recipients: string[] = [];
+        // Always alert Sandhu (RCIC) for every IRCC outcome
+        const sandhu = users.find((u) =>
+          u.userType === "staff" &&
+          String(u.name || "").toLowerCase().includes("sandhu")
+        );
+        if (sandhu?.email) recipients.push(sandhu.email);
+        // Also alert the case's assignee if different from Sandhu
+        const assignee = users.find((u) =>
+          u.userType === "staff" &&
+          String(u.name || "").toLowerCase().trim() === assignedToKey
+        );
+        if (assignee?.email && !recipients.includes(assignee.email)) {
+          recipients.push(assignee.email);
         }
-      }
 
-      // ── REFUSAL or REQUEST LETTER: alert staff, do NOT message client ──
-      // These require human judgement + have hard deadlines. The bot
-      // should never beat a human to the client. Staff handles the
-      // outreach themselves once they've reviewed the letter.
-      else if (item.outcome === "refused" || item.outcome === "request_letter") {
-        try {
-          const { sendEmail, isEmailConfigured } = await import("@/lib/email");
-          if (isEmailConfigured()) {
-            const { listUsers } = await import("@/lib/store");
-            const users = await listUsers(companyId);
-            const assignedToKey = String(matchedCase?.assignedTo || "").toLowerCase().trim();
-            const recipients: string[] = [];
-            // Always alert Sandhu (RCIC) on refusals + request letters
-            const sandhu = users.find((u) =>
-              u.userType === "staff" &&
-              String(u.name || "").toLowerCase().includes("sandhu")
-            );
-            if (sandhu?.email) recipients.push(sandhu.email);
-            // Also alert the case's assignee if different from Sandhu
-            const assignee = users.find((u) =>
-              u.userType === "staff" &&
-              String(u.name || "").toLowerCase().trim() === assignedToKey
-            );
-            if (assignee?.email && !recipients.includes(assignee.email)) {
-              recipients.push(assignee.email);
-            }
+        if (recipients.length > 0) {
+          const baseUrl =
+            process.env.PUBLIC_APP_URL ||
+            process.env.NEXT_PUBLIC_APP_URL ||
+            "https://crm.newtonimmigration.com";
+          const caseUrl = `${baseUrl}/?case=${encodeURIComponent(item.matchedCaseId)}`;
+          const clientName = matchedCase?.client || item.clientName || "Client";
+          const formType = matchedCase?.formType || "application";
 
-            if (recipients.length > 0) {
-              const baseUrl =
-                process.env.PUBLIC_APP_URL ||
-                process.env.NEXT_PUBLIC_APP_URL ||
-                "https://crm.newtonimmigration.com";
-              const caseUrl = `${baseUrl}/?case=${encodeURIComponent(item.matchedCaseId)}`;
-              const clientName = matchedCase?.client || item.clientName || "Client";
-              const formType = matchedCase?.formType || "application";
-              const isRefusal = item.outcome === "refused";
-              const headline = isRefusal
-                ? `🚨 IRCC REFUSAL — ${clientName}`
-                : `📨 IRCC REQUEST LETTER — ${clientName}`;
-              const urgency = isRefusal
-                ? "Refusals have appeal/reconsideration deadlines (typically 60-90 days for judicial review)."
-                : "IRCC request letters typically require a response within 30 days.";
-              const subject = `[Newton CRM] ${headline} — IMMEDIATE ACTION REQUIRED`;
-              const html = `
-<div style="background:#dc2626;padding:18px 24px;border-radius:8px 8px 0 0;">
-  <span style="color:white;font-size:18px;font-weight:bold;letter-spacing:0.5px;">${isRefusal ? "🚨 IRCC REFUSAL" : "📨 IRCC REQUEST LETTER"}</span>
+          // Per-outcome framing — color, headline, urgency reminder
+          let bannerColor = "#0B2F5C"; // default Newton navy
+          let bannerBg = "#f8fafc";
+          let bannerBorder = "#e2e8f0";
+          let bannerTextColor = "#0f172a";
+          let headline = "";
+          let urgency = "";
+          if (item.outcome === "approved") {
+            bannerColor = "#059669"; // green
+            bannerBg = "#f0fdf4";
+            bannerBorder = "#bbf7d0";
+            headline = `🎉 IRCC APPROVED — ${clientName}`;
+            urgency = "Verify the match before contacting the client. Send the approval message manually from the Wins Wall when ready.";
+          } else if (item.outcome === "refused") {
+            bannerColor = "#dc2626"; // red
+            bannerBg = "#fef2f2";
+            bannerBorder = "#fecaca";
+            bannerTextColor = "#7f1d1d";
+            headline = `🚨 IRCC REFUSAL — ${clientName}`;
+            urgency = "Refusals have appeal/reconsideration deadlines (typically 60-90 days for judicial review). Review the letter and call the client — do not send a written message first.";
+          } else if (item.outcome === "request_letter") {
+            bannerColor = "#dc2626"; // red
+            bannerBg = "#fef2f2";
+            bannerBorder = "#fecaca";
+            bannerTextColor = "#7f1d1d";
+            headline = `📨 IRCC REQUEST LETTER — ${clientName}`;
+            urgency = "IRCC request letters typically require a response within 30 days. Review the specific request and contact the client to gather what's needed.";
+          } else {
+            // Unknown outcome — still alert, just less colored
+            headline = `IRCC OUTCOME (${item.outcome}) — ${clientName}`;
+            urgency = "Unknown outcome type detected — please review.";
+          }
+
+          const subject = `[Newton CRM] ${headline} — STAFF ACTION REQUIRED`;
+          const html = `
+<div style="background:${bannerColor};padding:18px 24px;border-radius:8px 8px 0 0;">
+  <span style="color:white;font-size:18px;font-weight:bold;letter-spacing:0.5px;">${headline}</span>
 </div>
-<div style="background:#fef2f2;padding:24px;border-radius:0 0 8px 8px;border:1px solid #fecaca;border-top:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">
-  <h2 style="margin:0 0 12px;font-size:16px;color:#7f1d1d;">${headline}</h2>
+<div style="background:${bannerBg};padding:24px;border-radius:0 0 8px 8px;border:1px solid ${bannerBorder};border-top:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:${bannerTextColor};line-height:1.6;">
   <p style="margin:0 0 12px;font-weight:600;">
     ${urgency}
   </p>
-  <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #fecaca;border-radius:6px;margin:16px 0;">
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;width:40%;">Client</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${clientName}</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Application Type</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${formType}</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Application Number</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${item.applicationNumber || "—"}</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Case ID</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;"><code>${item.matchedCaseId}</code></td></tr>
+  <table style="width:100%;border-collapse:collapse;background:white;border:1px solid ${bannerBorder};border-radius:6px;margin:16px 0;">
+    <tr><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};font-weight:600;width:40%;">Client</td><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};">${clientName}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};font-weight:600;">Application Type</td><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};">${formType}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};font-weight:600;">Application Number</td><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};">${item.applicationNumber || "—"}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};font-weight:600;">Case ID</td><td style="padding:8px 12px;border-bottom:1px solid ${bannerBorder};"><code>${item.matchedCaseId}</code></td></tr>
     <tr><td style="padding:8px 12px;font-weight:600;">Assigned To</td><td style="padding:8px 12px;">${matchedCase?.assignedTo || "Unassigned"}</td></tr>
   </table>
-  <p style="margin:0 0 16px;color:#7f1d1d;font-weight:600;">
-    ⚠️ The client has NOT been notified by the bot. Please review the letter, prepare a response strategy, and contact the client yourself.
+  <p style="margin:0 0 16px;font-weight:600;">
+    ⚠️ The client has NOT been notified by the system. Verify the case match is correct, then reach out to the client yourself.
   </p>
   <p style="margin:0;">
-    <a href="${caseUrl}" style="display:inline-block;background:#dc2626;color:white;padding:12px 22px;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px;">
+    <a href="${caseUrl}" style="display:inline-block;background:${bannerColor};color:white;padding:12px 22px;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px;">
       Open Case in CRM →
     </a>
   </p>
-  <hr style="border:none;border-top:1px solid #fecaca;margin:24px 0 12px;" />
+  <hr style="border:none;border-top:1px solid ${bannerBorder};margin:24px 0 12px;" />
   <p style="font-size:11px;color:#94a3b8;margin:0;">
-    This urgent alert was triggered automatically from a scheduled IRCC results scan.<br/>
+    Triggered automatically from a scheduled IRCC results scan.<br/>
     Newton Immigration Inc. · 8327 120 Street, Delta, BC · RCIC #R705964
   </p>
 </div>`;
-              await sendEmail({ to: recipients, subject, html });
-              console.log(`📧 ${isRefusal ? "Refusal" : "Request letter"} alert emailed to: ${recipients.join(", ")}`);
-            } else {
-              console.warn(`⚠️ ${item.outcome} for ${item.matchedCaseId} — no staff emails on file to alert`);
-            }
-          } else {
-            console.warn(`⚠️ Email not configured — staff cannot be alerted about ${item.outcome} for ${item.matchedCaseId}`);
-          }
-        } catch (e) {
-          console.error("Staff alert email failed:", e);
+          await sendEmail({ to: recipients, subject, html });
+          console.log(`📧 ${item.outcome} alert emailed to: ${recipients.join(", ")} for ${item.matchedCaseId}`);
+        } else {
+          console.warn(`⚠️ ${item.outcome} for ${item.matchedCaseId} — no staff emails on file to alert`);
         }
       }
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      console.error("Staff alert email failed:", e);
+    }
   }
 
   return NextResponse.json({ item }, { status: 201 });

@@ -638,17 +638,102 @@ export async function POST(req: NextRequest) {
               });
 
               // ── STEP 5: SEND SMART ACKNOWLEDGMENT ───────────────────────
-              const { sendWhatsAppText } = await import("@/lib/whatsapp");
-              const firstName = String(matched.client || "").split(" ")[0];
-              const docLabel = properFileName.split(" - ")[1]?.replace(/\.[^.]+$/, "").replace(/ \(exp.*\)/, "") || "document";
-              let ackMsg = `✅ ${firstName}, I've saved your *${docLabel}* to your file.`;
-              if (docCategory === "passport") ackMsg += `\n\n📘 Passport details have been recorded automatically.`;
-              else if (docCategory === "study_permit" || docCategory === "work_permit") ackMsg += `\n\n📋 Permit details have been noted.`;
-              else if (docCategory === "completion_letter") ackMsg += `\n\n🎓 Completion letter received!`;
-              else if (docCategory === "transcripts") ackMsg += `\n\n📚 Transcripts received!`;
-              else if (docCategory === "language_test" || docCategory === "ielts") ackMsg += `\n\n📝 Language test result saved!`;
-              ackMsg += `\n\n— Newton Immigration Team 🍁`;
-              await sendWhatsAppText(from, ackMsg);
+              //
+              // Policy (May 2026): the auto-acknowledgement runs ONLY for
+              // cases that are still in active intake. For submitted cases
+              // we say nothing — uploads on submitted cases are typically
+              // IRCC follow-ups (request letters, biometrics confirmations,
+              // passport requests) that demand human review BEFORE any
+              // client-facing response. The bot's "got your file!" reply
+              // misled CASE-1415 (sukhmandeep) into thinking her IRCC
+              // request letter was being handled when in fact no staff
+              // had even seen it.
+              //
+              // For submitted cases, instead of an auto-reply we just save
+              // the doc silently and let staff notice via inbox + the new
+              // dashboard alerts.
+              const isSubmittedCase = matched?.processingStatus === "submitted";
+              if (!isSubmittedCase) {
+                const { sendWhatsAppText } = await import("@/lib/whatsapp");
+                const firstName = String(matched.client || "").split(" ")[0];
+                const docLabel = properFileName.split(" - ")[1]?.replace(/\.[^.]+$/, "").replace(/ \(exp.*\)/, "") || "document";
+                let ackMsg = `✅ ${firstName}, I've saved your *${docLabel}* to your file.`;
+                if (docCategory === "passport") ackMsg += `\n\n📘 Passport details have been recorded automatically.`;
+                else if (docCategory === "study_permit" || docCategory === "work_permit") ackMsg += `\n\n📋 Permit details have been noted.`;
+                else if (docCategory === "completion_letter") ackMsg += `\n\n🎓 Completion letter received!`;
+                else if (docCategory === "transcripts") ackMsg += `\n\n📚 Transcripts received!`;
+                else if (docCategory === "language_test" || docCategory === "ielts") ackMsg += `\n\n📝 Language test result saved!`;
+                ackMsg += `\n\n— Newton Immigration Team 🍁`;
+                await sendWhatsAppText(from, ackMsg);
+              } else {
+                console.log(`🤐 Skipped auto-ack for submitted case ${matched.id} (${matched.client}) — uploads on submitted cases need staff review first.`);
+
+                // Submitted-case upload = likely IRCC follow-up (request
+                // letter, biometrics, passport request, etc.) Alert staff
+                // so someone reviews the document and contacts the client.
+                // Hard deadline-driven category — failing to respond can
+                // cause refusal (e.g., 30 days for request letters).
+                try {
+                  const { sendEmail, isEmailConfigured } = await import("@/lib/email");
+                  if (isEmailConfigured()) {
+                    const { listUsers } = await import("@/lib/store");
+                    const users = await listUsers(COMPANY_ID);
+                    const recipients: string[] = [];
+                    const sandhu = users.find((u: any) =>
+                      u.userType === "staff" &&
+                      String(u.name || "").toLowerCase().includes("sandhu")
+                    );
+                    if (sandhu?.email) recipients.push(sandhu.email);
+                    const assignedToKey = String(matched.assignedTo || "").toLowerCase().trim();
+                    const assignee = users.find((u: any) =>
+                      u.userType === "staff" &&
+                      String(u.name || "").toLowerCase().trim() === assignedToKey
+                    );
+                    if (assignee?.email && !recipients.includes(assignee.email)) {
+                      recipients.push(assignee.email);
+                    }
+                    if (recipients.length > 0) {
+                      const baseUrl =
+                        process.env.PUBLIC_APP_URL ||
+                        process.env.NEXT_PUBLIC_APP_URL ||
+                        "https://crm.newtonimmigration.com";
+                      const caseUrl = `${baseUrl}/?case=${encodeURIComponent(matched.id)}`;
+                      const subject = `[Newton CRM] 📨 Client uploaded doc on SUBMITTED case — ${matched.client} — likely IRCC follow-up`;
+                      const html = `
+<div style="background:#dc2626;padding:18px 24px;border-radius:8px 8px 0 0;">
+  <span style="color:white;font-size:18px;font-weight:bold;letter-spacing:0.5px;">📨 SUBMITTED-CASE UPLOAD</span>
+</div>
+<div style="background:#fef2f2;padding:24px;border-radius:0 0 8px 8px;border:1px solid #fecaca;border-top:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#7f1d1d;line-height:1.6;">
+  <h2 style="margin:0 0 12px;font-size:16px;">Likely IRCC follow-up — needs review</h2>
+  <p style="margin:0 0 12px;">
+    <strong>${matched.client}</strong> just uploaded <strong>${properFileName}</strong> via WhatsApp on a <strong>submitted</strong> case. This is usually an IRCC request letter, biometrics confirmation, passport request, or similar follow-up. The bot did NOT auto-acknowledge to avoid misleading the client about timeline.
+  </p>
+  <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #fecaca;border-radius:6px;margin:16px 0;">
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;width:40%;">Client</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${matched.client}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Application Type</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${matched.formType || "—"}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Case ID</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;"><code>${matched.id}</code></td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #fecaca;font-weight:600;">Document</td><td style="padding:8px 12px;border-bottom:1px solid #fecaca;">${properFileName}</td></tr>
+    <tr><td style="padding:8px 12px;font-weight:600;">Assigned To</td><td style="padding:8px 12px;">${matched.assignedTo || "Unassigned"}</td></tr>
+  </table>
+  <p style="margin:0;">
+    <a href="${caseUrl}" style="display:inline-block;background:#dc2626;color:white;padding:12px 22px;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px;">
+      Open Case in CRM →
+    </a>
+  </p>
+  <hr style="border:none;border-top:1px solid #fecaca;margin:24px 0 12px;" />
+  <p style="font-size:11px;color:#94a3b8;margin:0;">
+    Triggered automatically when a doc is uploaded to a submitted case.<br/>
+    Newton Immigration Inc. · 8327 120 Street, Delta, BC · RCIC #R705964
+  </p>
+</div>`;
+                      await sendEmail({ to: recipients, subject, html });
+                      console.log(`📧 Submitted-case upload alert sent to: ${recipients.join(", ")}`);
+                    }
+                  }
+                } catch (e) {
+                  console.error("Submitted-case upload alert failed:", e);
+                }
+              }
 
               // ── STEP 6: AUTO-GENERATE PDF IF PASSPORT RECEIVED ──────────
               if (docCategory === "passport") {

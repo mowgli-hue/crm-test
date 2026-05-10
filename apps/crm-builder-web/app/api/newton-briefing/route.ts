@@ -137,17 +137,22 @@ Search sites like canada.ca/ircc, cic.gc.ca, and Canadian immigration news. Prov
     }
 
     // ── 8. CLIENT PERMIT REMINDERS ───────────────────────────────────────────
+    //
+    // Disabled May 2026 — this used to auto-send WhatsApp messages to
+    // clients at 30/14/7-day permit-expiry milestones. Same risks as the
+    // results auto-sender:
+    //   - Wrong client matched (auto-linker damage) → wrong person reminded
+    //   - Application already filed but case data stale → confusing nag
+    //   - Client already in active conversation with staff who said "we're
+    //     handling it" → bot's reminder undermines staff message
+    //
+    // New behavior: just collect the list of expiring permits in the
+    // briefing summary. Staff sees them in the daily briefing and reaches
+    // out themselves using the appropriate channel (call, WhatsApp from
+    // inbox composer, email).
+    //
+    // Empty array kept for response shape compatibility.
     const reminders: string[] = [];
-    for (const c of expiringCases) {
-      if ([30, 14, 7].includes(c.daysLeft) && c.leadPhone) {
-        const phone = String(c.leadPhone).replace(/\D/g, "");
-        const firstName = String(c.client || "").split(" ")[0];
-        try {
-          await sendWhatsAppText(phone, `Hello ${firstName}! 🍁\n\nReminder from Newton Immigration — your *${c.formType}* permit expires in *${c.daysLeft} days* on ${c.permitExpiry}.\n\nPlease contact us to discuss your options!\n📞 +1 778-723-6662\n\n— Newton Immigration Team`);
-          reminders.push(`${c.client}: ${c.daysLeft}d reminder sent`);
-        } catch(e) {}
-      }
-    }
 
     await pool.end();
     return NextResponse.json({ ok: true, briefingSent, expiringCases: expiringCases.length, recentResults: recentResults.length, staleCases: staleCases.length, urgentCases: urgentCases.length, clientReminders: reminders });

@@ -16,41 +16,20 @@ export async function POST(request: NextRequest) {
   const now = Date.now();
   const results = { portalReminders: 0, staleAlerts: 0 };
 
-  // 1. Portal reminders — clients who opened but didn't complete
+  // 1. Portal reminders — DISABLED May 2026
+  //
+  // This used to auto-send WhatsApp messages to clients who'd opened
+  // their portal but not finished filling it in. Disabled for the same
+  // reasons we killed the IRCC results auto-sender + permit-expiry
+  // reminders: bot-initiated client messages without staff review carry
+  // too much risk (wrong-client links, stale data, undermining staff
+  // who already messaged the client manually).
+  //
+  // The new daily digest emailer (/api/admin/digest/run) covers the
+  // staff-side equivalent — staff sees stuck cases and reaches out
+  // themselves. Branch left here in case the policy is revisited.
   if (body.type === "portal" || body.type === "all") {
-    const { Pool } = await import("pg");
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-    
-    for (const c of cases) {
-      if (!c.leadPhone) continue;
-      if (c.retainerSigned && Object.keys(c.pgwpIntake || {}).length > 5) continue; // already done
-      
-      // Check if they have an invite that was accepted
-      const invite = await getLatestClientInviteForCase(COMPANY_ID, c.id);
-      if (!invite || invite.status !== "accepted") continue;
-      
-      // Check last reminder — don't spam (max once every 3 days)
-      const lastReminder = await pool.query(
-        `SELECT created_at FROM whatsapp_inbox WHERE phone LIKE $1 AND message LIKE '%portal%reminder%' ORDER BY created_at DESC LIMIT 1`,
-        [`%${c.leadPhone.replace(/\D/g,"").slice(-9)}%`]
-      ).catch(() => ({ rows: [] }));
-      
-      if (lastReminder.rows.length > 0) {
-        const daysSince = (now - new Date(lastReminder.rows[0].created_at).getTime()) / (1000*60*60*24);
-        if (daysSince < 3) continue;
-      }
-      
-      const portalLink = `${BASE_URL}/invite/${invite.token}`;
-      await sendPortalReminder({
-        phone: c.leadPhone,
-        clientName: c.client,
-        formType: c.formType,
-        portalLink
-      });
-      results.portalReminders++;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    await pool.end();
+    // No-op: client-facing portal reminders are disabled.
   }
 
   // 2. Stale case email reminders — cases not updated in 7+ days
