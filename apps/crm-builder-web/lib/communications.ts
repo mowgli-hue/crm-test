@@ -129,19 +129,30 @@ async function sendViaWhatsAppCloud(target: string, message: string): Promise<Di
     let lastMessageId: string | undefined;
     for (let i = 0; i < chunks.length; i++) {
       const body = chunks.length > 1 ? `(${i + 1}/${chunks.length}) ${chunks[i]}` : chunks[i];
-      const res = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to,
-          type: "text",
-          text: { body }
-        })
-      });
+      // 15-second per-chunk timeout — see whatsapp.ts for rationale.
+      // Without this, Meta API blips hang each chunk for ~120s and a
+      // 5-chunk message could tie up the route handler for 10+ minutes.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let res: Response;
+      try {
+        res = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to,
+            type: "text",
+            text: { body }
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         // Meta error 131047: "Re-engagement message" — outside 24-hour
@@ -161,7 +172,14 @@ async function sendViaWhatsAppCloud(target: string, message: string): Promise<Di
     }
     return { ok: true, status: "sent", provider: "whatsapp_cloud", detail: lastMessageId };
   } catch (e) {
-    return { ok: false, status: "failed", provider: "whatsapp_cloud", detail: String((e as Error)?.message || e) };
+    const err = e as Error;
+    const isTimeout = err?.name === "AbortError" ||
+      String(err.message || "").includes("ETIMEDOUT") ||
+      String(err.message || "").includes("aborted");
+    const detail = isTimeout
+      ? "Meta WhatsApp API timed out (15s). Likely a Meta-side blip or Railway network issue. The message was NOT sent — please try again."
+      : String(err?.message || e);
+    return { ok: false, status: "failed", provider: "whatsapp_cloud", detail };
   }
 }
 
