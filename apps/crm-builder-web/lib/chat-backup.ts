@@ -23,6 +23,69 @@ import { getCase, addDocument } from "@/lib/store";
 import { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure, getOrCreateDriveSubfolder } from "@/lib/google-drive";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
+/**
+ * pdf-lib's StandardFonts (Helvetica family) only support the WinAnsi
+ * character set (~256 Latin-1 chars). Punjabi script (Gurmukhi),
+ * emojis, Hindi, Chinese, etc. will throw "WinAnsi cannot encode" at
+ * drawText time and abort the entire PDF.
+ *
+ * For staff-facing chat backups we don't need perfect typography of
+ * non-Latin text — we just need the PDF to BUILD so staff can see the
+ * conversation flow. The full intake data + the original message
+ * payloads are saved separately to Drive in plain text and intact.
+ *
+ * This sanitizer:
+ *   - Keeps every ASCII / Latin-1 character (basically: anything WinAnsi
+ *     can encode)
+ *   - Replaces Gurmukhi block (U+0A00–U+0A7F) with a [Punjabi] marker
+ *   - Replaces Devanagari block (U+0900–U+097F) with a [Hindi] marker
+ *   - Replaces emojis + symbols with a generic [emoji] marker
+ *   - Drops any other unsupported char silently
+ *
+ * The result is always WinAnsi-safe and drawText will never throw.
+ */
+function sanitizeForWinAnsi(input: string): string {
+  if (!input) return "";
+  // Fast path: if every char is already ASCII, no work needed.
+  let allAscii = true;
+  for (let i = 0; i < input.length; i++) {
+    if (input.charCodeAt(i) > 127) { allAscii = false; break; }
+  }
+  if (allAscii) return input;
+
+  let out = "";
+  let runMarker: string | null = null; // accumulate consecutive non-WinAnsi as one marker
+  for (const ch of input) {
+    const code = ch.codePointAt(0) ?? 0;
+    // WinAnsi-encodable range — keep as-is
+    if (code <= 0xff) {
+      if (runMarker) { out += runMarker; runMarker = null; }
+      out += ch;
+      continue;
+    }
+    // Gurmukhi (Punjabi)
+    if (code >= 0x0a00 && code <= 0x0a7f) {
+      runMarker = "[Punjabi]";
+      continue;
+    }
+    // Devanagari (Hindi)
+    if (code >= 0x0900 && code <= 0x097f) {
+      runMarker = "[Hindi]";
+      continue;
+    }
+    // Emojis / symbols block (rough heuristic — anything in supplementary
+    // planes or symbol blocks)
+    if (code >= 0x2600 || code >= 0x1f000) {
+      runMarker = "[emoji]";
+      continue;
+    }
+    // Other unsupported scripts (CJK, Arabic, etc.) — generic placeholder
+    runMarker = "[?]";
+  }
+  if (runMarker) out += runMarker;
+  return out;
+}
+
 interface InboxRow {
   id: string;
   phone: string;
@@ -45,6 +108,17 @@ export async function buildChatPdf(opts: {
   formType: string;
   messages: InboxRow[];
 }): Promise<Uint8Array> {
+  // Sanitize all opts fields up front so every drawText call downstream
+  // gets WinAnsi-safe text. Without this, a single Punjabi character in
+  // the client name aborts the entire PDF build.
+  opts = {
+    ...opts,
+    clientName: sanitizeForWinAnsi(opts.clientName || ""),
+    phone: sanitizeForWinAnsi(opts.phone || ""),
+    formType: sanitizeForWinAnsi(opts.formType || ""),
+    caseId: sanitizeForWinAnsi(opts.caseId || ""),
+  };
+
   const pdfDoc = await PDFDocument.create();
   const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -179,7 +253,11 @@ export async function buildChatPdf(opts: {
     const inbound = m.direction === "inbound";
     const bubbleMaxW = (PAGE_W - MARGIN_X * 2) * 0.70;  // 70% of content width
     const textMaxW = bubbleMaxW - 16;  // 8pt padding each side
-    const lines = wrap(m.message, fontReg, 9.5, textMaxW);
+    // Sanitize at the source so wrap()'s widthOfTextAtSize() calls don't
+    // throw on Punjabi/emojis. After this point, every downstream call
+    // operates on WinAnsi-safe text.
+    const safeMessage = sanitizeForWinAnsi(m.message || "");
+    const lines = wrap(safeMessage, fontReg, 9.5, textMaxW);
 
     // Bubble height
     const lineH = 12;
@@ -214,8 +292,10 @@ export async function buildChatPdf(opts: {
     });
 
     // Draw "from" label inside bubble top
-    const fromLabel = inbound ? `${opts.clientName.split(" ")[0]} (Client)` : "Newton";
-    const timeLabel = fmtDate(m.created_at).split(" ").slice(-1)[0];  // just HH:MM
+    // Sanitize: client name may contain Punjabi characters that Helvetica
+    // can't render and would otherwise throw "WinAnsi cannot encode".
+    const fromLabel = sanitizeForWinAnsi(inbound ? `${opts.clientName.split(" ")[0]} (Client)` : "Newton");
+    const timeLabel = sanitizeForWinAnsi(fmtDate(m.created_at).split(" ").slice(-1)[0]);  // just HH:MM
     page.drawText(fromLabel, {
       x: bubbleX + 8, y: bubbleY + bubbleH - 12,
       size: 7.5, font: fontBold, color: inbound ? rgb(0.4, 0.4, 0.4) : NEWTON_BLUE,
@@ -226,7 +306,7 @@ export async function buildChatPdf(opts: {
       size: 7.5, font: fontReg, color: TEXT_GREY,
     });
 
-    // Draw message lines
+    // Draw message lines (already WinAnsi-safe — sanitized at source above)
     let textY = bubbleY + bubbleH - 22;
     for (const line of lines) {
       page.drawText(line, {
