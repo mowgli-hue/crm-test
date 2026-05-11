@@ -122,25 +122,68 @@ export async function POST(request: NextRequest) {
       // ─── Forward the change to the target handler ───
       // We make an internal HTTP call to our own service. The downstream
       // handler will run its existing logic with the standard payload shape.
+      //
+      // Robustness (May 2026): the original implementation had NO timeout
+      // and NO retry. When Railway's internal networking hiccupped
+      // (ECONNRESET — seen in production), the inbound webhook was
+      // silently dropped: Meta thinks delivery succeeded (router returned
+      // 200), but the message never reached the actual /api/whatsapp
+      // handler. Clients would send messages that never appeared in our
+      // inbox. Now we:
+      //   1. Time out at 15s instead of hanging forever
+      //   2. Retry ONCE on ECONNRESET — these are transient TCP-level
+      //      resets, not Meta or app issues, and the downstream handler
+      //      is idempotent per Meta message ID (it dedupes on insert
+      //      conflict in whatsapp_inbox) so a retry won't double-record.
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${request.headers.get("host") || "crm.newtonimmigration.com"}`;
       const targetUrl = `${baseUrl}${target}`;
 
-      try {
-        const res = await fetch(targetUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            // Pass a header the downstream can use to recognize "internal" forward
-            "x-internal-forward": "1",
-          },
-          body: JSON.stringify(singleChangePayload),
-        });
-        routingDetails.push({ target, phoneId, status: res.status });
-        routedCount++;
-      } catch (err) {
-        routingDetails.push({ target, phoneId, status: 0, error: String(err) });
-        // Don't fail the whole webhook — log and continue
-        console.error(`[whatsapp-router] Forward to ${target} failed:`, err);
+      const forwardOnce = async (): Promise<{ status: number; error?: string }> => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          const res = await fetch(targetUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-internal-forward": "1",
+            },
+            body: JSON.stringify(singleChangePayload),
+            signal: controller.signal,
+          });
+          return { status: res.status };
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+
+      let attempt = 0;
+      let lastError: unknown = null;
+      while (attempt < 2) {
+        attempt++;
+        try {
+          const result = await forwardOnce();
+          routingDetails.push({ target, phoneId, status: result.status });
+          routedCount++;
+          lastError = null;
+          break;
+        } catch (err) {
+          lastError = err;
+          const msg = String((err as any)?.cause?.code || (err as any)?.code || err);
+          const isTransient = msg.includes("ECONNRESET") ||
+            msg.includes("ETIMEDOUT") ||
+            msg.includes("ECONNREFUSED") ||
+            String((err as any)?.name) === "AbortError";
+          if (attempt < 2 && isTransient) {
+            console.warn(`[whatsapp-router] Forward to ${target} failed (${msg}) — retrying in 500ms...`);
+            await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+          // Final failure — record and move on
+          routingDetails.push({ target, phoneId, status: 0, error: String(err).slice(0, 200) });
+          console.error(`[whatsapp-router] Forward to ${target} permanently failed after ${attempt} attempt(s):`, err);
+          break;
+        }
       }
     }
   }
