@@ -4,6 +4,7 @@ import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
+import ResultsDashboard from "@/components/results-dashboard";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -285,7 +286,12 @@ const APPLICATION_TYPES: string[] = [
   "Other"
 ];
 
-const NON_PROCESSING_APPLICATION_TYPES = new Set(["PR Consultation", "Not for Processing", "College Change"]);
+// Cases with these formTypes never get submitted to IRCC — they are admin
+// flags (PR Consultation = pre-engagement only) or short-cert programs we
+// handle via partners, not via IRCC submission. We hide them from the
+// "Mark as Submitted" dropdown and Submission Log client autocomplete so
+// staff doesn't accidentally pick them when filing a real application.
+const NON_PROCESSING_APPLICATION_TYPES = new Set(["PR Consultation", "Not for Processing", "College Change", "Webform Submission"]);
 
 const PROCESSING_ASSIGNEE_FALLBACK: string[] = [
   "Unassigned",
@@ -507,6 +513,13 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [inboxMessages, setInboxMessages] = useState<Array<{id:string;phone:string;message:string;direction:string;matched_case_id:string|null;matched_case_name:string|null;is_read:boolean;created_at:string}>>([]);
   const [inboxLoaded, setInboxLoaded] = useState(false);
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
+  // 3-tab inbox view (May 2026): "active" | "submitted" | "archived"
+  // - active: kept for back-compat, default
+  // - submitted: cases where linked case.processingStatus === "submitted"
+  // - archived: maps to inboxShowArchived=true (manually archived rows only)
+  // The Active filter is the inverse of Submitted+Archived — i.e., shows
+  // threads NOT yet submitted at IRCC AND not manually archived.
+  const [inboxView, setInboxView] = useState<"active" | "submitted" | "archived">("active");
   // Global unread count — separate from inboxMessages because that state only
   // populates when staff is ON the Inbox screen. The sidebar badge needs to
   // show even before they've opened Inbox in this session, so we poll a
@@ -660,6 +673,14 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [diagnoseCaseModalId, setDiagnoseCaseModalId] = useState<string | null>(null);
   const [diagnoseResult, setDiagnoseResult] = useState<any | null>(null);
   const [diagnoseLoading, setDiagnoseLoading] = useState(false);
+  // Link-phone-to-case modal: when staff wants to link an inbox phone to an
+  // existing case (e.g. client got a new number, or marketing-bot lead is
+  // actually an existing client). Replaces the old <select> dropdown which
+  // only showed 50 cases and had no search.
+  // Holds the phone number being linked (or null when modal closed).
+  const [linkCaseModalPhone, setLinkCaseModalPhone] = useState<string | null>(null);
+  const [linkCaseSearch, setLinkCaseSearch] = useState("");
+  const [linkCaseInProgress, setLinkCaseInProgress] = useState(false);
   const [showURPanel, setShowURPanel] = useState<string|null>(null);
   // Resizable inbox thread list — drag the divider to adjust width.
   const [inboxListWidth, setInboxListWidth] = useState<number>(() => {
@@ -714,6 +735,23 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [reviewReplyDraft, setReviewReplyDraft] = useState<Record<string, string>>({});      // per-thread reply draft
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [diagnosticsReport, setDiagnosticsReport] = useState<DiagnosticsReport | null>(null);
+  // Phone collisions admin tool — finds cases that share the same phone
+  // (auto-linker bug victims). Loaded on demand via "Scan Now" button.
+  const [phoneCollisions, setPhoneCollisions] = useState<any | null>(null);
+  const [phoneCollisionsLoading, setPhoneCollisionsLoading] = useState(false);
+  // Phone diagnostic tool — investigate a single number's WhatsApp
+  // history to debug "we sent but they didn't receive" complaints.
+  // See /api/admin/phone-diagnostic/route.ts for what it returns.
+  const [phoneDiagnosticPhone, setPhoneDiagnosticPhone] = useState("");
+  const [phoneDiagnosticLoading, setPhoneDiagnosticLoading] = useState(false);
+  const [phoneDiagnosticResult, setPhoneDiagnosticResult] = useState<any | null>(null);
+  // One-click recovery for the auto-archive-on-submit bug — see
+  // /api/admin/unarchive-submitted/route.ts for explanation.
+  const [unarchiveSubmittedLoading, setUnarchiveSubmittedLoading] = useState(false);
+  // Daily digest test trigger — manual button in Settings, runs the
+  // digest endpoint immediately for testing. Production cron hits the
+  // same endpoint at 09:00 daily.
+  const [digestRunLoading, setDigestRunLoading] = useState(false);
   const [caseSearch, setCaseSearch] = useState("");
   // Top-header search autocomplete dropdown
   const [headerSearchFocused, setHeaderSearchFocused] = useState(false);
@@ -1996,8 +2034,15 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       body: JSON.stringify({
         client: commClientName.trim(),
         formType: effectiveFormType,
-        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
-        leadEmail: commEmail.trim() || undefined,
+        // Phone clear bug fix: previously this used `commPhone.trim() ? ... : undefined`
+        // which meant a blank phone field sent `leadPhone: undefined`, omitting
+        // the field entirely from the PATCH. The backend then left the
+        // existing phone alone, so staff couldn't clear an incorrectly-set
+        // phone (e.g., the auto-linker bug victims). Now empty string is sent
+        // explicitly to clear the phone in the backend.
+        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : "",
+        // Same bug applied to email — fixing it for consistency
+        leadEmail: commEmail.trim() || "",
         totalCharges,
         irccFees,
         irccFeePayer: commIrccFeePayer,
@@ -2992,6 +3037,17 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     if (log) setOutboundMessages((prev) => [log, ...prev]);
     if (status === "sent") return "sent";
     if (status === "provider_missing") return "provider_missing";
+    // For genuine failures, surface the real reason from Meta so staff
+    // know WHY the message didn't deliver. Most common case is the 24h
+    // service window expiring — without this alert, staff thinks the
+    // message was sent and the client's silence is a mystery.
+    const detail = String(payload?.result?.detail || "").trim();
+    if (detail) {
+      // Use setTimeout so this fires after the calling function's status
+      // updates settle; also gives a moment for any intermediate UI to
+      // show before the modal alert.
+      setTimeout(() => alert(`⚠️ WhatsApp delivery failed:\n\n${detail}`), 50);
+    }
     return "failed";
   }
 
@@ -5877,6 +5933,316 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 {diagnosticsStatus ? <p className="mt-2 text-xs text-slate-700">{diagnosticsStatus}</p> : null}
               </section>
 
+              {/* Phone Collision Detector — admin-only.
+                  Finds cases that share the same phone number, which is
+                  the signature of the May 2026 auto-linker bug (since
+                  fixed). Lets staff triage and clean up duplicates by
+                  showing every affected case in one screen. Read-only —
+                  staff fixes by going into each case and editing.        */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📞 Phone Collisions</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Cases sharing the same phone number. Usually leftover from the
+                        auto-linker bug (May 2026, since fixed). Edit each case to clear
+                        the wrong phone.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setPhoneCollisionsLoading(true);
+                        try {
+                          const res = await apiFetch(`/admin/phone-collisions`, { cache: "no-store" });
+                          if (res?.ok) {
+                            const d = await res.json();
+                            setPhoneCollisions(d);
+                          } else {
+                            const err = await res?.json().catch(() => ({}));
+                            alert(`Scan failed: ${err.error || res?.status}`);
+                          }
+                        } catch (e) {
+                          alert(`Scan failed: ${(e as Error).message}`);
+                        } finally {
+                          setPhoneCollisionsLoading(false);
+                        }
+                      }}
+                      disabled={phoneCollisionsLoading}
+                      className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {phoneCollisionsLoading ? "Scanning…" : "🔎 Scan Now"}
+                    </button>
+                  </div>
+
+                  {phoneCollisions && (
+                    <div className="mt-3">
+                      {phoneCollisions.collisionGroupCount === 0 ? (
+                        <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+                          <p className="text-sm font-semibold text-emerald-900">✅ No phone collisions detected</p>
+                          <p className="text-xs text-emerald-700 mt-1">
+                            Scanned {phoneCollisions.totalCasesScanned} cases — every phone is unique.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-xs text-amber-700 font-semibold">
+                            ⚠️ {phoneCollisions.collisionGroupCount} collision group(s) — {phoneCollisions.affectedCaseCount} affected case(s) of {phoneCollisions.totalCasesScanned} scanned
+                          </p>
+                          {phoneCollisions.collisions.map((group: any) => (
+                            <div key={group.phone} className="rounded-lg border-2 border-amber-200 bg-amber-50 p-3">
+                              <p className="text-xs font-bold text-amber-900 mb-2">
+                                📞 {group.formattedPhone} — shared by {group.caseCount} cases
+                              </p>
+                              <div className="space-y-1">
+                                {group.cases.map((c: any, i: number) => (
+                                  <div key={c.id} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-xs font-bold text-slate-900 truncate">
+                                        {i === 0 && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded mr-1 font-bold">MOST RECENT</span>}
+                                        {c.client}
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 truncate">
+                                        {c.id} · {c.formType} · 👤 {c.assignedTo} · updated {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : "—"}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedCaseId(c.id);
+                                        setScreen("cases");
+                                      }}
+                                      className="text-[10px] font-bold text-blue-600 hover:underline shrink-0"
+                                    >
+                                      Open Case →
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-[10px] text-amber-800 mt-2 italic">
+                                💡 Usually the OLDER case legitimately owns this phone. Open the newer one(s) and clear the phone field.
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!phoneCollisions && !phoneCollisionsLoading && (
+                    <p className="text-xs text-slate-400 italic mt-1">Click "Scan Now" to check for duplicate phone numbers across cases.</p>
+                  )}
+                </section>
+              ) : null}
+
+              {/* Phone diagnostic — investigate a single number's WhatsApp
+                  history when staff says "we sent but they didn't receive".
+                  Shows full message log, format variants, 24h window state,
+                  and linked cases. Read-only diagnostic. */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="mb-2">
+                    <h3 className="text-base font-semibold">🔬 Phone Diagnostic</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Investigate a phone number's WhatsApp history — useful when staff says "I sent but client never received". Shows message log, last reply time, linked cases, and storage format variants.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 items-start">
+                    <input
+                      type="text"
+                      value={phoneDiagnosticPhone}
+                      onChange={(e) => setPhoneDiagnosticPhone(e.target.value)}
+                      placeholder="e.g. 17789548517 or +1 778-954-8517"
+                      className="flex-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:border-blue-400"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!phoneDiagnosticPhone.trim()) return;
+                        setPhoneDiagnosticLoading(true);
+                        setPhoneDiagnosticResult(null);
+                        try {
+                          const res = await apiFetch(`/admin/phone-diagnostic?phone=${encodeURIComponent(phoneDiagnosticPhone.trim())}`);
+                          const d = await res?.json().catch(() => ({}));
+                          if (res?.ok) {
+                            setPhoneDiagnosticResult(d);
+                          } else {
+                            alert(`Diagnostic failed: ${d.error || res?.status}`);
+                          }
+                        } catch (e) {
+                          alert(`Diagnostic error: ${(e as Error).message}`);
+                        } finally {
+                          setPhoneDiagnosticLoading(false);
+                        }
+                      }}
+                      disabled={phoneDiagnosticLoading || !phoneDiagnosticPhone.trim()}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700 shrink-0"
+                    >
+                      {phoneDiagnosticLoading ? "Searching…" : "🔍 Investigate"}
+                    </button>
+                  </div>
+
+                  {phoneDiagnosticResult && (
+                    <div className="mt-4 space-y-3">
+                      {/* Summary card */}
+                      <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs space-y-1">
+                        <div className="font-bold text-slate-900 mb-1">📊 Summary</div>
+                        <div><strong>Total messages:</strong> {phoneDiagnosticResult.summary.totalMessages} ({phoneDiagnosticResult.summary.inboundCount} inbound, {phoneDiagnosticResult.summary.outboundCount} outbound)</div>
+                        <div><strong>Last inbound:</strong> {phoneDiagnosticResult.summary.lastInboundAt ? `${new Date(phoneDiagnosticResult.summary.lastInboundAt).toLocaleString()} (${phoneDiagnosticResult.summary.hoursSinceLastInbound}h ago)` : "—"}</div>
+                        <div><strong>Last outbound:</strong> {phoneDiagnosticResult.summary.lastOutboundAt ? new Date(phoneDiagnosticResult.summary.lastOutboundAt).toLocaleString() : "—"}</div>
+                        <div>
+                          <strong>24h window:</strong>{" "}
+                          {phoneDiagnosticResult.summary.insideWindow ? (
+                            <span className="text-emerald-700 font-semibold">✅ Open (free-form sends OK)</span>
+                          ) : (
+                            <span className="text-amber-700 font-semibold">⚠️ Closed — free-form messages will be silently dropped by Meta</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Phone format variants */}
+                      {phoneDiagnosticResult.phone.formats.length > 1 && (
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs">
+                          <div className="font-bold text-amber-900 mb-1">⚠️ Multiple phone formats stored ({phoneDiagnosticResult.phone.formats.length})</div>
+                          {phoneDiagnosticResult.phone.formats.map((f: any, i: number) => (
+                            <div key={i} className="text-amber-800"><code>{f.stored}</code> — {f.count} message{f.count !== 1 ? "s" : ""}</div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Linked cases */}
+                      {phoneDiagnosticResult.matchedCases.length > 0 ? (
+                        <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs">
+                          <div className="font-bold text-blue-900 mb-1">📁 Linked cases ({phoneDiagnosticResult.matchedCases.length})</div>
+                          {phoneDiagnosticResult.matchedCases.map((c: any) => (
+                            <div key={c.id} className="text-blue-800 py-0.5">
+                              <strong>{c.id}</strong> — {c.client} ({c.formType}) · assigned to {c.assignedTo || "—"} · status: {c.processingStatus || "—"}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg bg-slate-100 border border-slate-200 p-3 text-xs text-slate-700">
+                          📁 No cases linked to this phone. (This could mean: marketing lead only, broken link from auto-linker bug, or wrong number on the case.)
+                        </div>
+                      )}
+
+                      {/* Recent messages */}
+                      <div className="rounded-lg border border-slate-200 overflow-hidden">
+                        <div className="bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">💬 Last 25 messages</div>
+                        <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                          {phoneDiagnosticResult.recentMessages.length === 0 && (
+                            <div className="px-3 py-3 text-xs text-slate-500 italic">No messages found for this phone.</div>
+                          )}
+                          {phoneDiagnosticResult.recentMessages.map((m: any) => (
+                            <div key={m.id} className="px-3 py-2 text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`font-bold ${m.direction === "inbound" ? "text-emerald-700" : "text-blue-700"}`}>
+                                  {m.direction === "inbound" ? "← Client" : "→ Newton"}
+                                </span>
+                                <span className="text-slate-400 text-[10px]">{new Date(m.created_at).toLocaleString()}</span>
+                              </div>
+                              <div className="text-slate-700 mt-0.5 break-words">{m.preview || <em className="text-slate-400">(empty)</em>}{m.full_length > 200 ? <span className="text-slate-400">… (+{m.full_length - 200} more chars)</span> : null}</div>
+                              {m.matched_case_id && <div className="text-[10px] text-slate-500 mt-0.5">linked to {m.matched_case_id} ({m.matched_case_name})</div>}
+                              {m.is_archived && <div className="text-[10px] text-amber-700 mt-0.5">📦 archived</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
+              {/* Recover auto-archived submitted threads (May 2026 cleanup).
+                  The previous submit-route handler silently auto-archived
+                  every WhatsApp thread when a case was marked submitted.
+                  This button reverses that for ALL submitted cases at once,
+                  so threads reappear in the new Submitted tab. Safe to
+                  re-run — already-unarchived rows are untouched. */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📤 Recover Submitted Threads</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Earlier versions auto-archived inbox threads when cases were submitted.
+                        This restores them to the new Submitted tab in Inbox. Safe to re-run.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Restore all auto-archived submitted-case WhatsApp threads to the Submitted Inbox tab?")) return;
+                        setUnarchiveSubmittedLoading(true);
+                        try {
+                          const res = await apiFetch(`/admin/unarchive-submitted`, { method: "POST" });
+                          const d = await res?.json().catch(() => ({}));
+                          if (res?.ok) {
+                            alert(`✅ ${d.message || "Done."}`);
+                          } else {
+                            alert(`❌ ${d.error || "Failed"}`);
+                          }
+                        } catch (e) {
+                          alert(`❌ ${(e as Error).message}`);
+                        } finally {
+                          setUnarchiveSubmittedLoading(false);
+                        }
+                      }}
+                      disabled={unarchiveSubmittedLoading}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700"
+                    >
+                      {unarchiveSubmittedLoading ? "Restoring…" : "📤 Restore Now"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
+              {/* Daily digest email — manually trigger to test before cron
+                  takes over. The endpoint sends one email per staff member
+                  with their stale cases (under-review >3d, no-activity >7d).
+                  In production a Railway cron hits this endpoint at 09:00
+                  daily. This button lets you test it on demand and see the
+                  exact response (who got emailed, who was skipped). */}
+              {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-base font-semibold">📧 Daily Digest Email</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Sends each staff member a morning email with their stale cases (Under Review &gt;3 days, No activity &gt;7 days).
+                        Auto-runs via cron — use this button to test the digest now.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Run the daily digest right now? Each staff member with stale cases will receive an email immediately.")) return;
+                        setDigestRunLoading(true);
+                        try {
+                          const url = `/admin/digest/run?token=${encodeURIComponent("newton-recovery-2024")}`;
+                          const res = await apiFetch(url);
+                          const d = await res?.json().catch(() => ({}));
+                          if (res?.ok) {
+                            const msg = `✅ Digest run complete\n\n` +
+                              `${d.staffNotified || 0} staff emailed\n` +
+                              `${d.staffSkipped || 0} skipped (email failed)\n` +
+                              `${d.totalCasesFlagged || 0} total stale cases flagged\n\n` +
+                              ((d.details || []).map((s: any) => `  ${s.sent ? "✓" : "✗"} ${s.staff} (${s.cases} cases)`).join("\n") || "(none)");
+                            alert(msg);
+                          } else {
+                            alert(`❌ Digest failed: ${d.error || res?.status}`);
+                          }
+                        } catch (e) {
+                          alert(`❌ Digest error: ${(e as Error).message}`);
+                        } finally {
+                          setDigestRunLoading(false);
+                        }
+                      }}
+                      disabled={digestRunLoading}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700"
+                    >
+                      {digestRunLoading ? "Running…" : "📧 Send Test Digest"}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
               {sessionUser?.userType === "staff" && sessionUser.role === "Admin" ? (
                 <section className="rounded-xl border border-slate-200 bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -6994,14 +7360,18 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
 
                                   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:10px;font-size:11px;color:#1e3a8a;line-height:1.5;">
-                                    📝 <strong>Edit the letter body and enclosed-document list below</strong> — every word is yours. The header (date, "To IRCC", subject), greeting, signature, and Newton letterhead are added automatically and can't be edited.
+                                    📝 <strong>Edit the subject line, body, and enclosed-document list below</strong> — every word is yours. The header (date, "To IRCC"), greeting, signature, and Newton letterhead are added automatically and can't be edited.
                                     <br /><span style="color:#1d4ed8;">Tip: blank lines separate paragraphs in the body. Each line in the doc list is a separate entry.</span>
                                   </div>
 
                                   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;font-size:11px;color:#334155;line-height:1.6;">
                                     <div><strong>Date:</strong> ${safeDate}</div>
                                     <div><strong>To:</strong> Immigration, Refugees and Citizenship Canada</div>
-                                    <div><strong>Subject:</strong> ${safeSubject}</div>
+                                    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                                      <strong style="white-space:nowrap;">Subject:</strong>
+                                      <input id="__rep_edit_subject__" type="text" value="${safeSubject}"
+                                        style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;color:#0f172a;background:white;font-family:inherit;" />
+                                    </div>
                                     <div style="margin-top:4px;font-style:italic;color:#64748b;">Dear Sir/Madam,</div>
                                   </div>
 
@@ -7106,6 +7476,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     .map(l => l.trim())
                                     .filter(l => l.length > 0);
 
+                                  // editedSubject: read the editable subject input and send to backend.
+                                  // Empty/blank → backend falls back to the formula-generated subject.
+                                  const subjectInput = document.getElementById("__rep_edit_subject__") as HTMLInputElement | null;
+                                  const editedSubject = (subjectInput?.value || "").trim();
+
                                   downloadBtn.disabled = true;
                                   downloadBtn.textContent = "Building…";
                                   editStatus.style.display = "inline";
@@ -7117,6 +7492,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                         systemToken: "newton-recovery-2024",
                                         editedBodyLines,
                                         editedDocs,
+                                        editedSubject,
                                         pronouns: selectedPronoun,
                                       }),
                                     });
@@ -8791,24 +9167,50 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const file = e.target.files?.[0];
                       if (!file) return;
                       const text = await file.text();
+                      let parsed: any;
+                      try { parsed = JSON.parse(text); } catch { alert("Invalid JSON file"); return; }
+                      // RepTrack format: { scanDate, totalScanned, results: [...] }
+                      // Legacy flat format: [...] or single { ... }
+                      // Either way, end up with a flat array of records.
                       let records: any[];
-                      try { records = JSON.parse(text); } catch { alert("Invalid JSON file"); return; }
-                      if (!Array.isArray(records)) records = [records];
+                      if (Array.isArray(parsed)) {
+                        records = parsed;
+                      } else if (parsed && Array.isArray(parsed.results)) {
+                        // RepTrack file — pull the inner results array. The
+                        // outer scanDate / totalScanned are kept as metadata
+                        // (not surfaced yet, but useful if we later log a
+                        // per-scan summary).
+                        records = parsed.results;
+                      } else if (parsed && typeof parsed === "object") {
+                        records = [parsed];
+                      } else {
+                        alert("JSON didn't contain any results");
+                        return;
+                      }
                       let added = 0, skipped = 0;
                       for (const rec of records) {
-                        const appNum = String(rec.applicationNumber || rec.app_num || rec.application_number || "").trim().toUpperCase();
+                        // RepTrack uses appNum; legacy uploads use applicationNumber.
+                        // Try every reasonable spelling so we never drop a record.
+                        const appNum = String(rec.applicationNumber || rec.appNum || rec.app_num || rec.application_number || "").trim().toUpperCase();
                         if (!appNum) { skipped++; continue; }
-                        // Try to match to a case
                         const phone = String(rec.phone || rec.phoneNumber || "").replace(/\D/g,"");
                         const name = String(rec.name || rec.clientName || rec.client_name || "").trim();
+                        // Outcome is one of: approved | refused | request_letter | other
                         const outcome = String(rec.outcome || rec.result || "other").toLowerCase();
-                        const date = String(rec.date || rec.resultDate || rec.submission_date || new Date().toISOString().slice(0,10));
+                        // Date — RepTrack writes "May 8, 2026" in dateCreated and
+                        // "2026-05-08" in date. Prefer the ISO date when present.
+                        const date = String(rec.date || rec.resultDate || rec.dateCreated || rec.submission_date || new Date().toISOString().slice(0,10));
+                        // RepTrack's "subjects" field contains the IRCC letter
+                        // types ("Biometrics Collection Letter | ..."). We pass
+                        // it through as notes so the dashboard can categorize.
+                        const notes = String(rec.subjects || rec.notes || "").slice(0, 4000);
                         const form = new FormData();
                         form.append("applicationNumber", appNum);
                         form.append("clientName", name);
                         form.append("phone", phone);
                         form.append("outcome", outcome);
-                        form.append("resultDate", date.slice(0,10));
+                        form.append("resultDate", date.length > 10 ? new Date(date).toISOString().slice(0,10) : date.slice(0,10));
+                        if (notes) form.append("notes", notes);
                         const res = await apiFetch("/results/legacy", { method: "POST", body: form });
                         if (res.ok) added++; else skipped++;
                       }
@@ -8847,6 +9249,32 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   </label>
                 </div>
               </div>
+
+              {/* ── Dashboard: hero metrics + charts + wins + red flags ─────
+                   Sits at the top of the Results screen so staff opens this
+                   page and sees Newton's daily pulse — approval rate, recent
+                   wins, refusals needing attention — before they even scroll
+                   to the work queue below.
+              */}
+              <ResultsDashboard
+                results={legacyResults as any}
+                cases={visibleCases.map(c => ({
+                  id: c.id,
+                  client: c.client,
+                  formType: c.formType,
+                  leadPhone: c.leadPhone,
+                  applicationNumber: (c as any).applicationNumber,
+                  assignedTo: c.assignedTo,
+                }))}
+                onScrollToList={() => {
+                  // Smooth scroll to the unmatched/list section below
+                  const el = document.getElementById("results-list-anchor");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              />
+
+              {/* Anchor for scroll-to-list link from the dashboard */}
+              <div id="results-list-anchor" />
 
               {/* Unmatched — collapsible */}
               {unlinkedScannerUploads.length > 0 && (
@@ -9007,7 +9435,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* ── Submission Log Sheet (TOP — main daily-use view) ── */}
               <SubmissionLogPage
                 apiFetch={apiFetch}
-                cases={visibleCases.map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
+                cases={visibleCases
+                  .filter((c) => !NON_PROCESSING_APPLICATION_TYPES.has(String(c.formType || "")))
+                  .map((c) => ({ id: c.id, client: c.client, formType: c.formType, leadPhone: c.leadPhone }))}
                 team={processingAssigneeOptions}
                 currentUser={sessionUser?.name || ""}
               />
@@ -9019,7 +9449,15 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   <select id="submit-case-select"
                     className="flex-1 min-w-[220px] rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-emerald-400">
                     <option value="">Select case...</option>
-                    {cases.filter(c => filterCasesByRole([c], viewRole, sessionUser?.name).length > 0 && c.processingStatus !== "submitted").map(c => (
+                    {cases
+                      .filter(c => filterCasesByRole([c], viewRole, sessionUser?.name).length > 0
+                              && c.processingStatus !== "submitted"
+                              // Hide non-processing form types (PR Consultation, Not for
+                              // Processing, College Change, Webform Submission) — these
+                              // are never filed at IRCC and shouldn't appear when staff
+                              // is recording a submission.
+                              && !NON_PROCESSING_APPLICATION_TYPES.has(String(c.formType || "")))
+                      .map(c => (
                       <option key={c.id} value={c.id}>{c.client} — {c.id} — {c.formType}</option>
                     ))}
                   </select>
@@ -9736,7 +10174,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       <input
                         value={inboxGlobalSearch||""}
                         onChange={e=>setInboxGlobalSearch(e.target.value)}
-                        placeholder="🔍 Search all conversations..."
+                        placeholder="🔍 Search by name, case ID, phone, message..."
                         className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-400"
                       />
                       <button
@@ -9776,13 +10214,34 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     </div>
                   </div>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => { setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${!inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>Active</button>
-                    <button onClick={() => { setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }} className={`text-xs font-bold px-2 py-1 rounded-lg ${inboxShowArchived ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}>📦 Archived</button>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">💬 Inbox</p>
-                    <p className="text-[10px] text-slate-400">{sessionUser?.role === "Processing" ? "Your clients" : "All conversations"}</p>
+                  <div className="flex items-center gap-1">
+                    {/* Three-tab inbox view (May 2026 fix):
+                        - Active: in-flight clients you're still talking to
+                        - Submitted: cases filed at IRCC, kept separate so the
+                          Active list isn't polluted, but still visible because
+                          IRCC sometimes asks for more docs (request letters,
+                          biometrics, passport request) AFTER submission.
+                        - Archived: manually-archived conversations only.
+                        Submitted membership is computed from the linked case's
+                        processingStatus === "submitted" — no DB migration. */}
+                    <button
+                      onClick={() => { setInboxView("active"); setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "active" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      Active
+                    </button>
+                    <button
+                      onClick={() => { setInboxView("submitted"); setInboxShowArchived(false); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "submitted" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      📤 Submitted
+                    </button>
+                    <button
+                      onClick={() => { setInboxView("archived"); setInboxShowArchived(true); setInboxLoaded(false); setInboxThread(null); }}
+                      className={`text-xs font-bold px-2.5 py-1 rounded-lg ${inboxView === "archived" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                    >
+                      📦 Archived
+                    </button>
                   </div>
                   <button onClick={async () => {
                     setInboxLoaded(false);
@@ -9829,14 +10288,62 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       threads[canonical] = b.msgs;
                     });
                     // Filter by global search
+                    //
+                    // Bug fix: the original filter only searched within the
+                    // inbox row data (message body, matched_case_name,
+                    // phone). When a thread had matched_case_name=null but
+                    // its phone DID match a case in the cases array,
+                    // searching for the client's name returned 0 results
+                    // even though the case was sitting right there.
+                    //
+                    // Now we also resolve each thread's matching case from
+                    // the cases array and search across:
+                    //   - phone digits (last 9 of canonical match)
+                    //   - any message body text
+                    //   - inbox-stored matched_case_name
+                    //   - case.client (the real client name on file)
+                    //   - case.id (e.g., search "1139" finds CASE-1139)
+                    //   - case.formType (search "PGWP" finds all PGWP threads)
+                    //   - case.assignedTo (search staff name)
+                    //   - case.leadPhone (search by stored phone format)
+                    //
+                    // This makes the search actually useful — staff can
+                    // type any of those and find the thread.
                     if (inboxGlobalSearch) {
-                      const q = inboxGlobalSearch.toLowerCase();
+                      const q = inboxGlobalSearch.toLowerCase().trim();
+                      const qDigits = q.replace(/\D/g, "");
+                      // Pre-build phone → case lookup using last-9-digit match
+                      // (same logic the threadList map uses below). Done once
+                      // here so we don't re-scan cases per thread.
+                      const findCaseForPhone = (phone: string) => {
+                        const mp = phone.replace(/\D/g, "");
+                        if (mp.length < 9) return null;
+                        return cases.find(c => {
+                          const cp = (c.leadPhone || "").replace(/\D/g, "");
+                          return cp && mp.slice(-9) === cp.slice(-9);
+                        }) || null;
+                      };
                       Object.keys(threads).forEach(phone => {
-                        const hasMatch = threads[phone].some(m => 
-                          m.message.toLowerCase().includes(q) || 
-                          (m.matched_case_name||"").toLowerCase().includes(q) ||
-                          phone.includes(q)
-                        );
+                        const matchedCase = findCaseForPhone(phone);
+                        const caseBlob = matchedCase
+                          ? `${matchedCase.client || ""} ${matchedCase.id || ""} ${matchedCase.formType || ""} ${matchedCase.assignedTo || ""} ${matchedCase.leadPhone || ""}`.toLowerCase()
+                          : "";
+                        // Bug fix: only do the digit-substring match when the
+                        // query actually contains digits. Otherwise empty
+                        // qDigits would falsely match every phone (since
+                        // anything.includes("") === true) — making text
+                        // searches return all threads.
+                        const phoneMatch = qDigits.length >= 3
+                          ? phone.replace(/\D/g, "").includes(qDigits)
+                          : false;
+                        const hasMatch =
+                          phone.toLowerCase().includes(q) ||
+                          phoneMatch ||
+                          caseBlob.includes(q) ||
+                          threads[phone].some(m =>
+                            (m.message || "").toLowerCase().includes(q) ||
+                            (m.matched_case_name || "").toLowerCase().includes(q)
+                          );
                         if (!hasMatch) delete threads[phone];
                       });
                     }
@@ -9853,6 +10360,40 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       const matchedCase = cases.find(c => { const cp=(c.leadPhone||"").replace(/\D/g,""); return cp && mp.slice(-9)===cp.slice(-9); });
                       return { phone, msgs, matchedCase };
                     }).filter(({ matchedCase }) => {
+                      // ── Tab filter (Active / Submitted / Archived) ──
+                      // Each thread's bucket is determined by the linked case's
+                      // processingStatus (or lack thereof). Computed at render
+                      // time so no DB migration is needed and the bucketing
+                      // updates instantly when a case is marked submitted.
+                      //
+                      // - active: threads whose case is NOT submitted (or has
+                      //   no case at all — orphan inbound). The default view.
+                      // - submitted: threads whose case is at processingStatus
+                      //   === "submitted". Kept separate so the Active list
+                      //   doesn't get bloated with finished filings, but
+                      //   visible because IRCC often comes back with request
+                      //   letters / biometrics / passport requests.
+                      // - archived: manual-archive only (handled by separate
+                      //   inboxShowArchived data load above).
+                      const isSubmitted = matchedCase?.processingStatus === "submitted";
+                      if (inboxView === "submitted") {
+                        if (!isSubmitted) return false;
+                      } else if (inboxView === "active") {
+                        if (isSubmitted) return false;
+                      }
+                      // (archived handled by archived=1 query param at fetch time)
+
+                      // Visibility filter:
+                      //   - Admin/Marketing/Reviewer/Communications: see ALL threads
+                      //   - Processing staff: see only their own assigned cases
+                      //
+                      // BUT: when an active search is in progress, ignore the
+                      // role gate. The search is the staff's explicit intent —
+                      // if they typed "1415" they want CASE-1415's thread to
+                      // appear, even if the case lost its phone link (auto-
+                      // linker damage) or they're not the assignee. Otherwise
+                      // an unmatched thread becomes invisible and undebuggable.
+                      if (inboxGlobalSearch && inboxGlobalSearch.trim().length > 0) return true;
                       if (!matchedCase) return sessionUser?.role !== "Processing";
                       if (sessionUser?.role === "Processing") return String(matchedCase.assignedTo||"").toLowerCase()===String(sessionUser?.name||"").toLowerCase();
                       return true;
@@ -9878,7 +10419,38 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       return bLatest - aLatest;
                     });
 
-                    if (threadList.length === 0) return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
+                    if (threadList.length === 0) {
+                      // Empty state — if a search is active, give the user a
+                      // way to check the OTHER bucket (Active vs Archived).
+                      // Most common cause of "I can't find this thread" was
+                      // the auto-archive-on-submit behavior (now removed):
+                      // staff submitted a case → thread silently moved to
+                      // Archived → search in Active returned 0. Suggesting a
+                      // jump to the archived view recovers those threads.
+                      if (inboxGlobalSearch && inboxGlobalSearch.trim().length > 0) {
+                        return (
+                          <div className="py-8 px-4 text-center">
+                            <p className="text-xs text-slate-500 mb-3">
+                              No matches in <strong>{inboxShowArchived ? "Archived" : "Active"}</strong> for "{inboxGlobalSearch}"
+                            </p>
+                            <button
+                              onClick={() => {
+                                setInboxShowArchived(!inboxShowArchived);
+                                setInboxLoaded(false);
+                                setInboxThread(null);
+                              }}
+                              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700"
+                            >
+                              🔎 Search {inboxShowArchived ? "Active" : "📦 Archived"} instead
+                            </button>
+                            <p className="text-[10px] text-slate-400 mt-2">
+                              Submitted-case threads were auto-archived in older versions — many older clients live there.
+                            </p>
+                          </div>
+                        );
+                      }
+                      return <p className="text-xs text-slate-400 py-8 text-center">No messages yet</p>;
+                    }
 
                     return threadList.map(({ phone, msgs, matchedCase }) => {
                       const unread = msgs.filter(m=>!m.is_read&&m.direction==="inbound").length;
@@ -10032,26 +10604,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             >
                               💾 Save
                             </button>
-                            <select defaultValue="" onChange={async e => {
-                              const cId = e.target.value; if (!cId) return;
-                              await apiFetch(`/cases/${cId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({leadPhone:phone})});
-                              // Auto-link any orphan WhatsApp docs from this phone to this case
-                              try {
-                                const linkRes = await apiFetch(`/orphan-docs`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({phone, caseId: cId})});
-                                const linkData = await linkRes?.json().catch(() => ({}));
-                                if (linkData?.linked > 0) {
-                                  setCaseActionStatus(`✅ Linked to case + filed ${linkData.linked} WhatsApp doc${linkData.linked === 1 ? "" : "s"} to Drive`);
-                                } else {
-                                  setCaseActionStatus(`✅ Linked to case ${cId}`);
-                                }
-                                setTimeout(() => setCaseActionStatus(""), 4500);
-                              } catch {}
-                              setCases(prev=>prev.map(c=>c.id===cId?{...c,leadPhone:phone}:c));
-                              setInboxMessages(prev=>prev.map(m=>m.phone===phone?{...m,matched_case_id:cId}:m));
-                            }} className="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs font-semibold text-orange-700">
-                              <option value="">⚠️ Link to existing case...</option>
-                              {cases.slice(0,50).map(c=><option key={c.id} value={c.id}>{c.client} — {c.id}</option>)}
-                            </select>
+                            <button
+                              onClick={() => {
+                                setLinkCaseModalPhone(phone);
+                                setLinkCaseSearch("");
+                              }}
+                              className="rounded-lg border border-orange-200 bg-white px-3 py-1.5 text-xs font-bold text-orange-700 hover:bg-orange-50 shrink-0"
+                              title="Link this phone to an existing case (search by name, ID, or form type)"
+                            >
+                              🔗 Link to Case…
+                            </button>
                           </div>
                         )}
                         {matchedCase && (
@@ -10274,6 +10836,47 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                     {/* Reply box */}
                     <div className="flex flex-col px-4 py-3 border-t border-slate-100 bg-white shrink-0 gap-2">
+                      {/* 24-hour service window indicator (May 2026).
+                          WhatsApp Business policy: outside 24h since the
+                          client's last inbound message, Meta SILENTLY DROPS
+                          free-form messages — the API returns 200 OK so the
+                          CRM shows green checkmarks, but the client never
+                          actually receives anything. To message again, the
+                          client must reply first OR we must use an approved
+                          template.
+
+                          This banner warns staff BEFORE they type a careful
+                          message that won't deliver. Computed locally from
+                          inboxMessages already in memory — no extra API call. */}
+                      {(() => {
+                        const lastInbound = inboxMessages
+                          .filter(m => m.phone === phone && m.direction === "inbound")
+                          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                        if (!lastInbound) {
+                          return (
+                            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                              ⚠️ <strong>This number has never messaged us.</strong> Free-form WhatsApp messages won't deliver to numbers that haven't opened a service window. Use the <em>Start New Chat</em> flow with a template message instead, or ask the client to send any message first.
+                            </div>
+                          );
+                        }
+                        const hoursAgo = (Date.now() - new Date(lastInbound.created_at).getTime()) / (1000 * 60 * 60);
+                        // 23.5h safety margin — Meta's clock isn't perfectly
+                        // aligned with ours; better to false-alarm at 23:30
+                        // than to send a message that gets silently dropped
+                        // at the 24:00 boundary.
+                        if (hoursAgo >= 23.5) {
+                          const display = hoursAgo < 48 ? `${Math.floor(hoursAgo)} hours` :
+                            hoursAgo < 24 * 14 ? `${Math.floor(hoursAgo / 24)} days` :
+                            `${Math.floor(hoursAgo / (24 * 7))} weeks`;
+                          return (
+                            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                              ⚠️ <strong>Outside 24-hour window — message may not deliver.</strong> Last reply from {clientName.split(" ")[0]} was {display} ago. Meta silently drops free-form WhatsApp messages after 24h of silence. The client must message us first, or use a pre-approved template.
+                            </div>
+                          );
+                        }
+                        // Inside window — no warning needed
+                        return null;
+                      })()}
                       {inboxAttachment[phone] && (
                         <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
                           <span className="text-sm">📎</span>
@@ -10336,7 +10939,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             : text;
                           setInboxMessages(prev=>[{id:`tmp-${Date.now()}`,phone,message:optimisticMessage,direction:"outbound",matched_case_id:matchedCase?.id||null,matched_case_name:clientName,is_read:true,created_at:new Date().toISOString()},...prev]);
                         }
-                        else { setCaseActionStatus("❌ Failed to send"); setTimeout(()=>setCaseActionStatus(""),3000); }
+                        else {
+                          // Surface Meta's actual error reason instead of a
+                          // generic "Failed to send". Common causes:
+                          //   - 131047: Outside 24h service window
+                          //   - 131026: Not a WhatsApp user
+                          //   - 131051: Unsupported message type
+                          // Knowing which one lets staff respond appropriately
+                          // (use template, fix phone, or just retry).
+                          const errBody = await res?.json().catch(() => ({}));
+                          const errMsg = String(errBody?.error || "Failed to send");
+                          const friendly =
+                            errMsg.includes("131047") || errMsg.toLowerCase().includes("re-engagement")
+                              ? "❌ 24h window expired — use template or wait for client reply"
+                              : errMsg.includes("131026")
+                                ? "❌ This number is not on WhatsApp"
+                                : `❌ ${errMsg.slice(0, 80)}`;
+                          setCaseActionStatus(friendly);
+                          setTimeout(()=>setCaseActionStatus(""),6000);
+                        }
                       }} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 shrink-0">Send</button>
                       </div>
                     </div>
@@ -12472,6 +13093,211 @@ function ClientPortal({
                     className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
                   >
                     Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+      ), document.body)}
+
+      {/* ────────────────────────────────────────────────────────────
+           Link Phone to Case Modal — searchable picker
+           Replaces the old <select> that only showed 50 cases and had no
+           search. Staff often needs to link a new phone number to an
+           existing client whose case is buried in the list (e.g., client
+           switched phones, or a marketing-bot lead is actually an existing
+           client). The old dropdown made this nearly impossible.
+           Search matches: client name, case ID, form type, current phone.
+           Result shows: client / case ID / form type / assigned-to /
+           current phone (so staff can confirm before linking).
+         ──────────────────────────────────────────────────────────── */}
+      {typeof document !== "undefined" && linkCaseModalPhone && createPortal((
+        (() => {
+          const close = () => {
+            if (linkCaseInProgress) return;
+            setLinkCaseModalPhone(null);
+            setLinkCaseSearch("");
+          };
+          const phone = linkCaseModalPhone;
+          const formattedPhone = (() => {
+            const d = String(phone).replace(/\D/g, "");
+            if (d.length === 11 && d.startsWith("1")) return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+            if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+            return phone;
+          })();
+
+          // Filter cases by search query — match name, case ID, form type, phone
+          const q = linkCaseSearch.trim().toLowerCase();
+          const filtered = q.length === 0
+            ? cases.slice(0, 30) // show first 30 by default if no search
+            : cases.filter(c => {
+                const blob = `${c.client || ""} ${c.id || ""} ${c.formType || ""} ${c.leadPhone || ""} ${c.assignedTo || ""}`.toLowerCase();
+                return blob.includes(q);
+              }).slice(0, 50);
+
+          const performLink = async (caseId: string) => {
+            setLinkCaseInProgress(true);
+            try {
+              await apiFetch(`/cases/${caseId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ leadPhone: phone }),
+              });
+              // Auto-link any orphan WhatsApp docs from this phone to this case
+              try {
+                const linkRes = await apiFetch(`/orphan-docs`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ phone, caseId }),
+                });
+                const linkData = await linkRes?.json().catch(() => ({}));
+                if (linkData?.linked > 0) {
+                  setCaseActionStatus(`✅ Linked to ${caseId} + filed ${linkData.linked} WhatsApp doc${linkData.linked === 1 ? "" : "s"} to Drive`);
+                } else {
+                  setCaseActionStatus(`✅ Linked phone to ${caseId}`);
+                }
+                setTimeout(() => setCaseActionStatus(""), 4500);
+              } catch { /* non-blocking */ }
+              setCases(prev => prev.map(c => c.id === caseId ? { ...c, leadPhone: phone } : c));
+              setInboxMessages(prev => prev.map(m => m.phone === phone ? { ...m, matched_case_id: caseId } : m));
+              setLinkCaseModalPhone(null);
+              setLinkCaseSearch("");
+            } catch (e) {
+              alert(`Link failed: ${(e as Error).message}`);
+            } finally {
+              setLinkCaseInProgress(false);
+            }
+          };
+
+          return (
+            <div
+              style={{
+                position: "fixed",
+                top: 0, left: 0, right: 0, bottom: 0,
+                background: "rgba(0,0,0,0.6)",
+                zIndex: 999999,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "16px",
+              }}
+              onClick={close}
+            >
+              <div
+                style={{
+                  background: "white",
+                  borderRadius: "16px",
+                  padding: "20px",
+                  width: "100%",
+                  maxWidth: "640px",
+                  maxHeight: "85vh",
+                  display: "flex",
+                  flexDirection: "column",
+                  boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">🔗 Link Phone to Case</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Find the client's case → phone <span className="font-mono font-semibold text-slate-700">{formattedPhone}</span> will be saved as their leadPhone.
+                    </p>
+                  </div>
+                  <button onClick={close} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+                </div>
+
+                {/* Search */}
+                <div className="relative mb-3">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={linkCaseSearch}
+                    onChange={(e) => setLinkCaseSearch(e.target.value)}
+                    placeholder="Search by client name, case ID (e.g. 1139), form type, or assigned staff…"
+                    className="w-full rounded-lg border-2 border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {q.length === 0
+                      ? `Showing first 30 of ${cases.length} cases — type to search all.`
+                      : `${filtered.length} match${filtered.length === 1 ? "" : "es"} for "${linkCaseSearch}"`}
+                  </p>
+                </div>
+
+                {/* Results list — scrollable */}
+                <div className="flex-1 overflow-y-auto -mx-2 px-2">
+                  {filtered.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <p className="text-sm text-slate-500">No cases match "{linkCaseSearch}"</p>
+                      <p className="text-xs text-slate-400 mt-1">Try a different search — case ID number alone usually works (e.g. "1139").</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {filtered.map(c => {
+                        const hasPhone = !!(c.leadPhone || "").trim();
+                        const phoneSame = (c.leadPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
+                        return (
+                          <button
+                            key={c.id}
+                            onClick={() => performLink(c.id)}
+                            disabled={linkCaseInProgress || phoneSame}
+                            className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                              phoneSame
+                                ? "border-emerald-200 bg-emerald-50 cursor-default"
+                                : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-bold text-slate-900 truncate">{c.client || "(no name)"}</p>
+                                  <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{c.id}</span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 truncate mt-0.5">{c.formType}</p>
+                                <div className="flex items-center gap-3 mt-1 text-[10px]">
+                                  {hasPhone ? (
+                                    <span className={`font-mono ${phoneSame ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
+                                      📱 {c.leadPhone}{phoneSame ? " ← same as new!" : ""}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-600">📵 no phone yet</span>
+                                  )}
+                                  {c.assignedTo && (
+                                    <span className="text-slate-500">👤 {c.assignedTo}</span>
+                                  )}
+                                </div>
+                              </div>
+                              {!phoneSame && (
+                                <span className="rounded-md bg-blue-600 text-white px-3 py-1.5 text-xs font-bold shrink-0">
+                                  Link →
+                                </span>
+                              )}
+                              {phoneSame && (
+                                <span className="rounded-md bg-emerald-100 text-emerald-700 px-3 py-1.5 text-xs font-bold shrink-0">
+                                  ✓ already linked
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-[10px] text-slate-400 italic">
+                    {linkCaseInProgress ? "⏳ Linking…" : "Click any case row to link this phone to it"}
+                  </p>
+                  <button
+                    onClick={close}
+                    disabled={linkCaseInProgress}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
                   </button>
                 </div>
               </div>

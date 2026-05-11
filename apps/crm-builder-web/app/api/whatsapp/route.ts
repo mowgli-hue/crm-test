@@ -295,15 +295,51 @@ export async function POST(req: NextRequest) {
           } catch { /* non-fatal — proceed assuming not greeted */ }
 
           if (!recentlyGreeted) {
-            // Generate a friendly, natural reply via Claude. Falls back to a
-            // safe template if the API call fails.
-            let greetingReply = "Hi! 👋 How can we help you today? Are you looking for help with a study permit, work permit, PR, or something else?";
+            // Three modes of greeting reply based on client context:
+            //
+            // (a) Unknown number, no case matched → ask what service they need
+            //     (they're a new lead — appropriate to ask)
+            //
+            // (b) Matched to a case in processing → DON'T ask what service.
+            //     We already know what they're working on; asking again makes
+            //     us look like we don't recognize them and is annoying.
+            //     Just say "Hi [name]! How can we help you today?" and let
+            //     them tell us what they need (an update, a question, etc.).
+            //     Real annoyance from Jasmeen (CASE-1338): she said "Hi" on
+            //     her active OWP case and got the marketing-style "are you
+            //     looking for study permits, work permits, PR…" prompt as if
+            //     she were a stranger.
+            //
+            // (c) Active intake session → already handled above; no greeting.
+            const clientFirstName = matched?.client ? String(matched.client).split(" ")[0] : "";
+            let greetingReply: string;
+            if (matched) {
+              // Client is in our system — friendly + recognition + open-ended
+              greetingReply = `Hi ${clientFirstName}! 👋 How can we help you today?`;
+            } else {
+              // True new lead — ask what service they need
+              greetingReply = "Hi! 👋 How can we help you today? Are you looking for help with a study permit, work permit, PR, or something else?";
+            }
 
             try {
               const apiKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
               if (apiKey) {
-                const knownClient = matched?.client ? `The client's name is ${matched.client}.` : "";
-                const sys = [
+                const knownClient = matched?.client
+                  ? `The client's name is ${matched.client} and they are an EXISTING client with case ${matched.id} for ${matched.formType}. They are NOT a new lead.`
+                  : "This is an unknown number — no matched case.";
+                const sys = matched ? [
+                  "You write a single short WhatsApp reply for Newton Immigration's auto-greeting to an EXISTING client.",
+                  "Rules:",
+                  "1. The client is already in our system with an active case. NEVER ask what service they need — we already know.",
+                  "2. Greet them by first name, then ONE short open-ended question asking how you can help today.",
+                  "3. Match the client's language (English / Hindi / Punjabi). If they used 'Sat sri akal' reply with 'Sat sri akal!' once. If English, reply in English.",
+                  "4. NEVER list service options (study permit, work permit, PR, etc.) — that's for new leads only.",
+                  "5. NEVER quote fees, dates, or processing times.",
+                  "6. NEVER promise outcomes.",
+                  "7. Maximum 2 short lines. No emoji unless client used one.",
+                  "8. Return ONLY the reply text — no labels, no quotes.",
+                  knownClient,
+                ].join("\n") : [
                   "You write a single short WhatsApp reply for Newton Immigration's auto-greeting. Rules:",
                   "1. ONE friendly sentence + ONE question asking what they need help with.",
                   "2. Match the client's language (English / Hindi / Punjabi). If they used 'Sat sri akal' reply with 'Sat sri akal!' once. If English, reply in English.",
