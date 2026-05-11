@@ -347,28 +347,54 @@ export async function DELETE(
   //   store. Cascade them here.
   // Both wrapped in try/catch so a PG failure (e.g. missing DATABASE_URL,
   // table doesn't exist yet) doesn't block the case delete from completing.
+  //
+  // Added 10-second total timeout (May 2026): without this, a hung PG
+  // connection could keep the entire DELETE request open for the Node
+  // default (~120s), blocking the actual case delete and causing the
+  // frontend to time out with no useful error. We fire-and-forget if
+  // cleanup takes >10s — the JSON-store delete is what matters.
   try {
     const phoneDigits = String(caseToDelete.leadPhone || "").replace(/\D/g, "");
     const { Pool } = await import("pg");
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
-    });
+      // Postgres statement timeout via options string — kills any query
+      // that hangs more than 10s server-side.
+      statement_timeout: 10000,
+    } as any);
+    // Wrap each cleanup query individually so one failing doesn't skip
+    // the other. Race against a 10s wall-clock too — defense in depth.
+    const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> => {
+      return Promise.race<T | null>([
+        p,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+      ]);
+    };
     if (phoneDigits) {
-      await pool.query(
-        `UPDATE marketing_leads SET converted_case_id = NULL, updated_at = NOW()
-         WHERE phone = $1 AND converted_case_id = $2`,
-        [phoneDigits, params.id]
-      );
+      await withTimeout(
+        pool.query(
+          `UPDATE marketing_leads SET converted_case_id = NULL, updated_at = NOW()
+           WHERE phone = $1 AND converted_case_id = $2`,
+          [phoneDigits, params.id]
+        ),
+        10000
+      ).catch((e) => {
+        console.warn(`marketing_leads cleanup failed for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
+      });
     }
-    // Cascade case_notes
-    await pool.query(
-      `DELETE FROM case_notes WHERE case_id = $1 AND company_id = $2`,
-      [params.id, user.companyId]
-    );
-    await pool.end();
+    await withTimeout(
+      pool.query(
+        `DELETE FROM case_notes WHERE case_id = $1 AND company_id = $2`,
+        [params.id, user.companyId]
+      ),
+      10000
+    ).catch((e) => {
+      console.warn(`case_notes cleanup failed for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
+    });
+    await pool.end().catch(() => {});
   } catch (e) {
-    // Non-fatal — proceed with deletion even if PG cleanup fails.
+    // Non-fatal — proceed with deletion even if PG cleanup fails entirely.
     console.warn(`PG cascade cleanup partial-fail for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
   }
 

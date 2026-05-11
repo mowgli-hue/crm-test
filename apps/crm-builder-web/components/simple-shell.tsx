@@ -12738,7 +12738,28 @@ function ClientPortal({
           if (!deletingCase) return null;
           const clientNameNormalized = (deletingCase.client || "").trim();
           const typedNormalized = deleteCaseTypedName.trim();
-          const namesMatch = typedNormalized.length > 0 && clientNameNormalized.toLowerCase() === typedNormalized.toLowerCase();
+          // Forgiving name match: collapse whitespace, lowercase, strip non-alphanumeric.
+          // The strict exact-match used to block deletes when the stored client name
+          // had trailing spaces, double spaces, or invisible characters from
+          // copy-paste — staff would type the visible name and the button would
+          // stay greyed out forever with no way to recover. This compares the
+          // "essence" of the name so typing "Sukhmandeep Singh" matches stored
+          // "Sukhmandeep  Singh " (extra space) or "sukhmandeep-singh".
+          const essenceOf = (s: string) =>
+            s.toLowerCase()
+              .replace(/[^a-z0-9]+/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+          const namesMatch = typedNormalized.length > 0 &&
+            essenceOf(clientNameNormalized) === essenceOf(typedNormalized);
+          // Admin escape hatch: if the case's stored name is empty/garbage
+          // (which can happen with old test data or auto-imported leads),
+          // the user couldn't ever match it. We let Admin force-delete by
+          // typing the case ID instead. This is a fallback ONLY — staff
+          // should still prefer the name match in normal cases.
+          const caseIdMatch = typedNormalized.length > 0 &&
+            essenceOf(deletingCase.id || "") === essenceOf(typedNormalized);
+          const canDelete = namesMatch || caseIdMatch;
           const close = () => {
             if (deleteCaseInProgress) return;
             setDeleteCaseModalId(null);
@@ -12797,17 +12818,31 @@ function ClientPortal({
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Type the client's name to confirm:
                   {" "}
-                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">{clientNameNormalized}</span>
+                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">{clientNameNormalized || "(no name set)"}</span>
                 </label>
+                {!clientNameNormalized && (
+                  <p className="text-[11px] text-amber-700 mb-1">
+                    ⚠️ This case has no client name. Type the case ID instead: <span className="font-mono bg-amber-50 px-1 rounded">{deletingCase.id}</span>
+                  </p>
+                )}
                 <input
                   type="text"
                   value={deleteCaseTypedName}
                   onChange={(e) => setDeleteCaseTypedName(e.target.value)}
                   disabled={deleteCaseInProgress}
-                  placeholder="Type the name above..."
+                  placeholder={clientNameNormalized ? "Type the name above..." : `Type ${deletingCase.id} to delete...`}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300 disabled:bg-slate-100"
                   autoFocus
                 />
+                {/* Subtle hint about what matched / didn't — helps staff
+                    debug typos without re-reading the whole modal. */}
+                {typedNormalized.length > 0 && !canDelete && (
+                  <p className="text-[11px] text-slate-500 mt-1 italic">
+                    {clientNameNormalized
+                      ? `Doesn't match "${clientNameNormalized}" — punctuation & extra spaces are ignored. Or type ${deletingCase.id} (case ID) instead.`
+                      : `Type the case ID exactly: ${deletingCase.id}`}
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between gap-3 mt-5">
                   <button
@@ -12819,7 +12854,7 @@ function ClientPortal({
                   </button>
                   <button
                     onClick={async () => {
-                      if (!namesMatch || deleteCaseInProgress) return;
+                      if (!canDelete || deleteCaseInProgress) return;
                       setDeleteCaseInProgress(true);
                       try {
                         const res = await apiFetch(`/cases/${deleteCaseModalId}`, {
@@ -12837,17 +12872,27 @@ function ClientPortal({
                           setCaseActionStatus(`✅ Case ${deleteCaseModalId} deleted permanently`);
                           setTimeout(() => setCaseActionStatus(""), 4000);
                         } else {
+                          // Surface backend's specific error message so staff knows
+                          // WHY delete failed instead of just "unknown error". Most
+                          // common real causes: 403 (not admin), 404 (case already
+                          // gone), 500 (DB/Drive cleanup error).
                           const err = await res?.json().catch(() => ({}));
-                          alert(`Delete failed: ${err.error || "Unknown error"}`);
+                          const status = res?.status;
+                          const detail = err.error || "Unknown error";
+                          let friendly = `Delete failed (HTTP ${status}): ${detail}`;
+                          if (status === 403) friendly = `❌ Only Admin can delete cases. You're signed in as ${sessionUser?.role || "non-Admin"}.`;
+                          else if (status === 404) friendly = `❌ Case not found. It may have been deleted already — refresh the page.`;
+                          else if (status === 400) friendly = `❌ Delete blocked: ${detail}`;
+                          alert(friendly);
                         }
                       } catch (e) {
-                        alert(`Delete failed: ${(e as Error).message}`);
+                        alert(`❌ Delete request failed: ${(e as Error).message}`);
                       } finally {
                         setDeleteCaseInProgress(false);
                       }
                     }}
-                    disabled={!namesMatch || deleteCaseInProgress}
-                    className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${namesMatch && !deleteCaseInProgress ? "bg-red-600 hover:bg-red-700" : "bg-red-300 cursor-not-allowed"}`}
+                    disabled={!canDelete || deleteCaseInProgress}
+                    className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${canDelete && !deleteCaseInProgress ? "bg-red-600 hover:bg-red-700" : "bg-red-300 cursor-not-allowed"}`}
                   >
                     {deleteCaseInProgress ? "Deleting…" : "🗑️ Delete Permanently"}
                   </button>
