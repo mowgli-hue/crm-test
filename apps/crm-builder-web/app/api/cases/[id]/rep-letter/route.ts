@@ -334,7 +334,32 @@ function sanitizeForPdf(text: string): string {
   return String(text)
     .replace(/\r/g, "")           // strip carriage returns
     .replace(/\n+/g, " ")          // newlines → spaces (caller is single-line)
-    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, ""); // other control chars
+    .replace(/\t/g, " ")           // tabs → spaces (drawText can't render tabs)
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "") // other control chars
+    // Strip anything outside the WinAnsi range that Helvetica cannot encode.
+    // This covers:
+    //   - Punjabi (Gurmukhi) U+0A00–U+0A7F
+    //   - Hindi (Devanagari) U+0900–U+097F
+    //   - CJK ideographs (mostly above U+3000)
+    //   - Emojis (U+1F000+ and U+2600+ symbols)
+    //   - Smart quotes that aren't in WinAnsi
+    // Replace with "?" so the text still has visible boundaries instead of
+    // silently shrinking, then collapse repeats.
+    .replace(/[^\x00-\xFF]/g, "?")
+    .replace(/\?{3,}/g, "??");
+}
+
+// Apply sanitizeForPdf to a multi-line block that we INTEND to preserve
+// newlines for (the body of the letter, for use with wrapText which splits on
+// \n). Strips other dangerous chars but keeps the \n structure intact.
+function sanitizeMultilineForPdf(text: string): string {
+  if (!text) return "";
+  return String(text)
+    .replace(/\r/g, "")
+    .replace(/\t/g, " ")
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "")
+    .replace(/[^\x00-\xFF\n]/g, "?")
+    .replace(/\?{3,}/g, "??");
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -1050,6 +1075,26 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     // Build PDF
+    //
+    // CRITICAL: sanitize every dynamic string before it touches drawText.
+    // pdf-lib's Helvetica/WinAnsi encoder throws on newlines, tabs, control
+    // chars, emojis, Punjabi, Hindi, CJK, etc. The CRM lets staff paste freely
+    // into the subject line, body editor, docs list, etc. — paste from email
+    // brings \n and \r, paste from Punjabi keyboards brings non-WinAnsi
+    // glyphs, etc. Without this, the whole PDF generation aborts with
+    // "WinAnsi cannot encode" and staff sees no rep letter.
+    //
+    // We sanitize ONCE here so every downstream drawText sees safe text.
+    // The two helpers behave differently:
+    //   - sanitizeForPdf collapses \n into spaces (for one-line fields)
+    //   - sanitizeMultilineForPdf preserves \n (for body content that wrapText
+    //     will split on)
+    const safeClientName = sanitizeForPdf(clientName);
+    const safeFormType = sanitizeForPdf(formType);
+    const safeSubjectLine = sanitizeForPdf(subjectLine);
+    const safeBodyLines = bodyLines.map(line => sanitizeMultilineForPdf(line));
+    const safeDocs = docs.map(d => sanitizeForPdf(d));
+
     const pdfDoc = await PDFDocument.create();
     const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -1196,13 +1241,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     drawLineText("Immigration, Refugees and Citizenship Canada", { size: 11 });
     y -= 6;
 
-    drawLineText(`Subject: ${subjectLine}`, { size: 11, bold: true });
+    drawLineText(`Subject: ${safeSubjectLine}`, { size: 11, bold: true });
     y -= 4;
 
     drawLineText("Dear Sir/Madam,", { size: 11 });
     y -= 6;
 
-    for (const para of bodyLines) {
+    for (const para of safeBodyLines) {
       if (para.startsWith("HEADING:")) {
         const headingText = para.substring("HEADING:".length).trim();
         // Reserve enough vertical space for the heading + at least one follow-up paragraph line
@@ -1356,7 +1401,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     y -= 14;
 
-    docs.forEach((doc, i) => {
+    safeDocs.forEach((doc, i) => {
       // Render as numbered list with consistent indent
       const number = `${i + 1}.`;
       const numberW = fontBold.widthOfTextAtSize(number, 10.5);
