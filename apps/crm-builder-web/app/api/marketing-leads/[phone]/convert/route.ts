@@ -52,20 +52,34 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
       [phone, newCase.id]
     );
 
-    // Auto-link any orphan WhatsApp docs from this phone to the new case
+    // Auto-link any orphan WhatsApp docs from this phone to the new case.
+    //
+    // Phone matching note (May 2026 fix): Newton stores phone numbers in many
+    // formats across the system — "17806766333", "+17806766333",
+    // "+1 778-XXX-XXXX", etc. — depending on which write path saved them.
+    // An exact-match query (WHERE phone = $1) misses docs that were stored
+    // with a different format than the convert URL's format. Match by last
+    // 9 digits instead, same approach as Phone Diagnostic.
+    const phoneDigits = phone.replace(/\D/g, "");
+    const last9 = phoneDigits.slice(-9);
     let orphansLinked = 0;
     try {
       const orphansRes = await pool.query(
-        `SELECT COUNT(*) FROM orphan_docs WHERE phone = $1 AND linked_case_id IS NULL`,
-        [phone]
+        `SELECT COUNT(*) FROM orphan_docs
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+            AND linked_case_id IS NULL`,
+        [last9]
       );
       const orphanCount = parseInt(orphansRes.rows[0]?.count || "0", 10);
       if (orphanCount > 0) {
         // Trigger the orphan-link logic via internal call
         // (We replicate the logic here to avoid an HTTP self-call which would need auth)
         const orphans = await pool.query(
-          `SELECT * FROM orphan_docs WHERE phone = $1 AND linked_case_id IS NULL ORDER BY created_at ASC`,
-          [phone]
+          `SELECT * FROM orphan_docs
+            WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+              AND linked_case_id IS NULL
+            ORDER BY created_at ASC`,
+          [last9]
         );
         const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
         const { getObjectFromS3 } = await import("@/lib/object-storage");
@@ -143,9 +157,11 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
     try {
       const mktRows = await pool.query(
         `SELECT id, message, created_at FROM marketing_inbox
-         WHERE phone = $1 AND direction = 'inbound' AND message LIKE '[doc:%'
+         WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+           AND direction = 'inbound'
+           AND message LIKE '[doc:%'
          ORDER BY created_at ASC`,
-        [phone]
+        [last9]
       );
       if (mktRows.rowCount && mktRows.rowCount > 0) {
         const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
