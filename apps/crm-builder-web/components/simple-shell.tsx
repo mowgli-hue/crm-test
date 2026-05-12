@@ -12776,8 +12776,21 @@ function ClientPortal({
          ──────────────────────────────────────────────────────────── */}
       {typeof document !== "undefined" && deleteCaseModalId && createPortal((
         (() => {
-          const deletingCase = cases.find(c => c.id === deleteCaseModalId);
-          if (!deletingCase) return null;
+          // Look up the case being deleted. First try the master `cases`
+          // array, but fall back to `selectedCase` if not found — the
+          // `cases` array can be filtered down by the active tab (All /
+          // New / Assigned / Under Review) and may not contain the case
+          // the user is currently viewing. Without this fallback, clicking
+          // Delete on a case that's filtered-out of `cases` makes the
+          // modal silently fail to open (cases.find returns undefined →
+          // IIFE returns null → no modal rendered → user sees nothing).
+          const deletingCase =
+            cases.find(c => c.id === deleteCaseModalId) ||
+            (selectedCase && selectedCase.id === deleteCaseModalId ? selectedCase : null);
+          if (!deletingCase) {
+            console.warn(`[delete-modal] No case found for id=${deleteCaseModalId}. Both cases array and selectedCase missed.`);
+            return null;
+          }
           const clientNameNormalized = (deletingCase.client || "").trim();
           const typedNormalized = deleteCaseTypedName.trim();
           // Forgiving name match: collapse whitespace, lowercase, strip non-alphanumeric.

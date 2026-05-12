@@ -337,21 +337,14 @@ function sanitizeForPdf(text: string): string {
     .replace(/\t/g, " ")           // tabs → spaces (drawText can't render tabs)
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "") // other control chars
     // Strip anything outside the WinAnsi range that Helvetica cannot encode.
-    // This covers:
-    //   - Punjabi (Gurmukhi) U+0A00–U+0A7F
-    //   - Hindi (Devanagari) U+0900–U+097F
-    //   - CJK ideographs (mostly above U+3000)
-    //   - Emojis (U+1F000+ and U+2600+ symbols)
-    //   - Smart quotes that aren't in WinAnsi
-    // Replace with "?" so the text still has visible boundaries instead of
-    // silently shrinking, then collapse repeats.
+    // Covers Punjabi (Gurmukhi), Hindi (Devanagari), CJK, emojis, etc.
+    // Replace with "?" so text still has visible boundaries, then collapse.
     .replace(/[^\x00-\xFF]/g, "?")
     .replace(/\?{3,}/g, "??");
 }
 
-// Apply sanitizeForPdf to a multi-line block that we INTEND to preserve
-// newlines for (the body of the letter, for use with wrapText which splits on
-// \n). Strips other dangerous chars but keeps the \n structure intact.
+// Same as sanitizeForPdf but preserves \n (for body text that goes through
+// wrapText which splits on \n).
 function sanitizeMultilineForPdf(text: string): string {
   if (!text) return "";
   return String(text)
@@ -1076,19 +1069,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     // Build PDF
     //
-    // CRITICAL: sanitize every dynamic string before it touches drawText.
-    // pdf-lib's Helvetica/WinAnsi encoder throws on newlines, tabs, control
-    // chars, emojis, Punjabi, Hindi, CJK, etc. The CRM lets staff paste freely
-    // into the subject line, body editor, docs list, etc. — paste from email
-    // brings \n and \r, paste from Punjabi keyboards brings non-WinAnsi
-    // glyphs, etc. Without this, the whole PDF generation aborts with
-    // "WinAnsi cannot encode" and staff sees no rep letter.
-    //
-    // We sanitize ONCE here so every downstream drawText sees safe text.
-    // The two helpers behave differently:
-    //   - sanitizeForPdf collapses \n into spaces (for one-line fields)
-    //   - sanitizeMultilineForPdf preserves \n (for body content that wrapText
-    //     will split on)
+    // Sanitize every dynamic string before it hits drawText. pdf-lib's
+    // Helvetica throws on newlines, tabs, control chars, emojis, Punjabi,
+    // Hindi, CJK, etc. CRM lets staff paste freely into subject/body/docs
+    // and email pastes bring \r\n which crashes the renderer. We sanitize
+    // ONCE here so every downstream drawText is safe.
     const safeClientName = sanitizeForPdf(clientName);
     const safeFormType = sanitizeForPdf(formType);
     const safeSubjectLine = sanitizeForPdf(subjectLine);
