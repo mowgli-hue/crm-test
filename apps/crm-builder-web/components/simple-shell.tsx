@@ -6134,9 +6134,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           {phoneDiagnosticResult.recentMessages.map((m: any) => (
                             <div key={m.id} className="px-3 py-2 text-xs">
                               <div className="flex items-center justify-between gap-2">
-                                <span className={`font-bold ${m.direction === "inbound" ? "text-emerald-700" : "text-blue-700"}`}>
-                                  {m.direction === "inbound" ? "← Client" : "→ Newton"}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`font-bold ${m.direction === "inbound" ? "text-emerald-700" : "text-blue-700"}`}>
+                                    {m.direction === "inbound" ? "← Client" : "→ Newton"}
+                                  </span>
+                                  {/* Channel badge — which pipeline (main or
+                                      marketing). Helps staff understand why
+                                      a message might be in one inbox UI but
+                                      not another. */}
+                                  {m.channel && (
+                                    <span className={`text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded ${m.channel === "marketing" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>
+                                      {m.channel}
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="text-slate-400 text-[10px]">{new Date(m.created_at).toLocaleString()}</span>
                               </div>
                               <div className="text-slate-700 mt-0.5 break-words">{m.preview || <em className="text-slate-400">(empty)</em>}{m.full_length > 200 ? <span className="text-slate-400">… (+{m.full_length - 200} more chars)</span> : null}</div>

@@ -54,25 +54,97 @@ export async function GET(req: NextRequest) {
   const last9 = digits.slice(-9);
 
   try {
-    // ── 1. All messages for this phone (last 50, both directions) ──
-    const messages = await pool.query(
-      `SELECT id, phone, direction, message, matched_case_id, matched_case_name, is_read, created_at, is_archived
-         FROM whatsapp_inbox
-        WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
-        ORDER BY created_at DESC
-        LIMIT 50`,
-      [last9]
-    );
+    // ── 1. All messages for this phone — from BOTH inbox tables ──
+    //
+    // Newton has two parallel WhatsApp pipelines:
+    //   - whatsapp_inbox     → main number, signed-in clients, case threads
+    //   - marketing_inbox    → marketing number, leads, cold outreach
+    //
+    // Each pipeline writes to its own table. A complaint like "we sent
+    // Karandeep a checklist and he didn't get it" usually comes from the
+    // marketing pipeline (cold lead, template + checklist sent), but
+    // querying only whatsapp_inbox returns zero rows and makes the
+    // diagnostic look broken when really it was looking in the wrong
+    // place.
+    //
+    // We query both, normalize the row shape, and tag each row with its
+    // source channel so the staff member can tell which pipeline a given
+    // message went through.
+    const [mainRes, marketingRes] = await Promise.all([
+      pool.query(
+        `SELECT id, phone, direction, message, matched_case_id, matched_case_name,
+                is_read, created_at, is_archived,
+                'main' AS channel
+           FROM whatsapp_inbox
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [last9]
+      ),
+      pool.query(
+        `SELECT id, phone, direction, message, NULL::text AS matched_case_id,
+                contact_name AS matched_case_name,
+                is_read, created_at, FALSE AS is_archived,
+                'marketing' AS channel
+           FROM marketing_inbox
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [last9]
+      ).catch((e) => {
+        // marketing_inbox may not exist in older deployments — don't fail
+        // the whole diagnostic if so; just report no marketing rows.
+        console.warn(`marketing_inbox query failed: ${(e as Error).message.slice(0, 100)}`);
+        return { rows: [] };
+      }),
+    ]);
+
+    // Merge + re-sort by created_at DESC, cap to 50.
+    const messages = {
+      rows: [...mainRes.rows, ...marketingRes.rows]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 50),
+    };
 
     // ── 2. Distinct phone formats stored in DB (catches format drift) ──
-    const formatsRes = await pool.query(
-      `SELECT phone, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
-         FROM whatsapp_inbox
-        WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
-        GROUP BY phone
-        ORDER BY count DESC`,
-      [last9]
-    );
+    // Also query both tables — format drift can happen on either side.
+    const [mainFmts, mktFmts] = await Promise.all([
+      pool.query(
+        `SELECT phone, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+           FROM whatsapp_inbox
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+          GROUP BY phone
+          ORDER BY count DESC`,
+        [last9]
+      ),
+      pool.query(
+        `SELECT phone, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+           FROM marketing_inbox
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+          GROUP BY phone
+          ORDER BY count DESC`,
+        [last9]
+      ).catch(() => ({ rows: [] })),
+    ]);
+    // Combine formats from both tables — same stored phone may exist in
+    // either, so dedupe by `phone` and sum counts.
+    const formatMap = new Map<string, { stored: string; count: number; firstSeen: any; lastSeen: any }>();
+    for (const r of [...mainFmts.rows, ...mktFmts.rows]) {
+      const existing = formatMap.get(r.phone);
+      if (existing) {
+        existing.count += parseInt(r.count, 10);
+        if (new Date(r.first_seen) < new Date(existing.firstSeen)) existing.firstSeen = r.first_seen;
+        if (new Date(r.last_seen) > new Date(existing.lastSeen)) existing.lastSeen = r.last_seen;
+      } else {
+        formatMap.set(r.phone, {
+          stored: r.phone,
+          count: parseInt(r.count, 10),
+          firstSeen: r.first_seen,
+          lastSeen: r.last_seen,
+        });
+      }
+    }
+    const formatsRes = { rows: Array.from(formatMap.values()).sort((a, b) => b.count - a.count) };
 
     // ── 3. Cases linked to this phone ──
     const cases = await listCases(user.companyId);
@@ -108,10 +180,10 @@ export async function GET(req: NextRequest) {
         input: rawPhone,
         last9,
         formats: formatsRes.rows.map((r) => ({
-          stored: r.phone,
-          count: parseInt(r.count, 10),
-          firstSeen: r.first_seen,
-          lastSeen: r.last_seen,
+          stored: r.stored,
+          count: r.count,
+          firstSeen: r.firstSeen,
+          lastSeen: r.lastSeen,
         })),
       },
       summary: {
@@ -128,6 +200,7 @@ export async function GET(req: NextRequest) {
       recentMessages: rows.slice(0, 25).map((r) => ({
         id: r.id,
         direction: r.direction,
+        channel: r.channel,   // 'main' or 'marketing' — which pipeline the message went through
         preview: String(r.message || "").slice(0, 200),
         full_length: String(r.message || "").length,
         matched_case_id: r.matched_case_id,
