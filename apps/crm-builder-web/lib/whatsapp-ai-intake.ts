@@ -266,6 +266,80 @@ export async function getSession(phone: string, companyId?: string): Promise<Int
   }
 }
 
+/**
+ * Find ANY active or completed intake session across ALL cases sharing this
+ * phone number. Returns the highest-priority session found, with its caseId.
+ *
+ * Bug fixed (CASE-1430 Harpreet, May 2026): the basic getSession() returns the
+ * session for the FIRST case found by leadPhone match. If a client has more
+ * than one case (e.g., a Study Permit Extension already done + a new Study
+ * Permit case just created), getSession may return the new case's empty
+ * session, the startIntakeSession idempotency guard sees no existing session,
+ * and a fresh intake fires — re-greeting the client and confusing them.
+ *
+ * Priority order (highest first):
+ *   1. complete       — fully done intake (don't re-trigger)
+ *   2. ai_chat        — mid-intake (don't re-trigger)
+ *   3. awaiting_template_reply with chatTurns > 0 — already engaged
+ *   4. awaiting_template_reply with chatTurns = 0 — fresh template (OK to retry)
+ *
+ * Returns undefined only if NO case for this phone has any session at all.
+ */
+export async function findHighestPrioritySessionForPhone(
+  phone: string,
+  companyId?: string,
+): Promise<{ session: IntakeSession; caseId: string; clientName: string; formType: string } | undefined> {
+  try {
+    const { listCases } = await import("@/lib/store");
+    const cId = companyId || process.env.DEFAULT_COMPANY_ID || "newton";
+    const cases = await listCases(cId);
+    const n = phone.replace(/\D/g, "");
+    const matched = cases.filter((c) => {
+      const cp = (c.leadPhone || "").replace(/\D/g, "");
+      return cp && (n.endsWith(cp) || cp.endsWith(n));
+    });
+    if (matched.length === 0) return undefined;
+
+    // Collect all sessions across all matching cases
+    const candidates: Array<{ session: IntakeSession; caseId: string; clientName: string; formType: string; priority: number }> = [];
+    for (const c of matched) {
+      const intake = (c.pgwpIntake || {}) as Record<string, string>;
+      const raw = intake.whatsappSession;
+      if (!raw) continue;
+      let session: IntakeSession;
+      try {
+        session = JSON.parse(raw) as IntakeSession;
+      } catch { continue; }
+      // Higher number = higher priority
+      let priority = 0;
+      if (session.phase === "complete") priority = 4;
+      else if (session.phase === "ai_chat") priority = 3;
+      else if (session.phase === "awaiting_template_reply" && (session.chatTurns || 0) > 0) priority = 2;
+      else if (session.phase === "awaiting_template_reply") priority = 1;
+      candidates.push({
+        session,
+        caseId: c.id,
+        clientName: c.client || "",
+        formType: c.formType || "",
+        priority,
+      });
+    }
+    if (candidates.length === 0) return undefined;
+    candidates.sort((a, b) => b.priority - a.priority);
+    const best = candidates[0];
+    if (candidates.length > 1) {
+      console.log(
+        `🔍 findHighestPrioritySessionForPhone: phone=${n} matched ${matched.length} cases, ` +
+        `${candidates.length} had sessions. Highest = ${best.caseId} (${best.formType}, phase=${best.session.phase}).`,
+      );
+    }
+    return { session: best.session, caseId: best.caseId, clientName: best.clientName, formType: best.formType };
+  } catch (e) {
+    console.error("findHighestPrioritySessionForPhone error:", e);
+    return undefined;
+  }
+}
+
 export async function setSession(phone: string, session: IntakeSession): Promise<void> {
   try {
     const { updateCasePgwpIntake, getCase, readStore, writeStore } = await import("@/lib/store");
@@ -442,7 +516,49 @@ export async function startIntakeSession(params: {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
   console.log(`▶️  startIntakeSession ENTRY: caseId=${caseId} phone=${phone} client="${clientName}" formType="${formType}"`);
 
-  // ── Idempotency guard ──
+  // ── PRIMARY guard (NEW, May 2026 after CASE-1430 Harpreet bug): ──
+  // Check if ANY case sharing this phone has an active or completed session.
+  // This catches the case where a duplicate/new case is created for a client
+  // who has already done intake on a different case. Without this guard, a
+  // fresh intake fires on the new case, the client gets re-greeted, and they
+  // get confused ("ignore above message sir" — actual quote from Harpreet).
+  //
+  // We block ONLY for high-priority sessions (complete, ai_chat, or
+  // already-greeted). If the existing session is a fresh awaiting_template_reply
+  // with chatTurns=0 (template sent but client hasn't replied yet), we let
+  // the new intake proceed since that's a legitimate retry scenario.
+  try {
+    const otherCaseSession = await findHighestPrioritySessionForPhone(phone, companyId);
+    if (otherCaseSession && otherCaseSession.caseId !== caseId) {
+      // Different case has a session. Decide based on priority.
+      const otherPhase = otherCaseSession.session.phase;
+      const otherTurns = otherCaseSession.session.chatTurns || 0;
+      const isHighPriority =
+        otherPhase === "complete" ||
+        otherPhase === "ai_chat" ||
+        (otherPhase === "awaiting_template_reply" && otherTurns > 0);
+      if (isHighPriority) {
+        console.warn(
+          `🛑 BLOCKING new intake for ${phone} on ${caseId} (${formType}) — ` +
+          `client already has a ${otherPhase} session on case ${otherCaseSession.caseId} ` +
+          `(${otherCaseSession.formType}). To start fresh, use the admin "Reset Intake" ` +
+          `endpoint on ${otherCaseSession.caseId} first.`,
+        );
+        return {
+          success: true,
+          skippedCount: 0,
+          recoveredCount: 0,
+          mode: "skip-other-case-has-active-session",
+          error: `Client phone ${phone} already has a ${otherPhase} session on case ${otherCaseSession.caseId} (${otherCaseSession.formType}). Reset that case's session first if you want to start over.`,
+        };
+      }
+    }
+  } catch (e) {
+    // Non-fatal — fall through to the existing same-case guard below.
+    console.warn(`[startIntakeSession] cross-case session check failed for ${phone}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
+  // ── SECONDARY guard (same-case re-trigger, original Ramandeep fix): ──
   //
   // Real bug from CASE-1399 (Ramandeep): staff clicked "Send Intake" multiple
   // times, AND auto-intake fired again on re-save. Each call here was creating

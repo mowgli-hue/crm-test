@@ -315,8 +315,23 @@ ${summaryData.text}`,
         existingIntake: ((created as any).pgwpIntake as Record<string, any>) || {},
       });
       if (result.success) {
-        console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id}) — mode=${result.mode || "?"}`);
-        await writeIntakeNote(`✅ Auto-intake started (mode: ${result.mode || "?"})${result.skippedCount ? ` · ${result.skippedCount} questions pre-filled from passport/case data` : ""}`);
+        // Differentiate between started fresh vs blocked due to existing session
+        // on a different case (Harpreet-style duplicate-case scenario).
+        if (result.mode === "skip-other-case-has-active-session") {
+          console.warn(`🛑 Skipped auto-intake for ${created.id} — duplicate phone has active session on another case. ${result.error}`);
+          await writeIntakeNote(
+            `🛑 Auto-intake SKIPPED — duplicate phone detected.\n\n` +
+            `${result.error || ""}\n\n` +
+            `What happened: this client's phone number is already associated with another case that has an active or completed intake. To avoid confusing the client with a second intake, the bot did NOT start a new one for this case.\n\n` +
+            `Staff options:\n` +
+            `1. If this case is the correct one and you want to continue: handle the client conversation manually in the inbox.\n` +
+            `2. If the OTHER case is stale and should be replaced: use the "Reset Intake" admin endpoint on it first, then click "Send Intake" here.\n` +
+            `3. If this case is a duplicate created in error: delete it.`
+          );
+        } else {
+          console.log(`📱 Auto-started WhatsApp intake for ${created.client} (${created.id}) — mode=${result.mode || "?"}`);
+          await writeIntakeNote(`✅ Auto-intake started (mode: ${result.mode || "?"})${result.skippedCount ? ` · ${result.skippedCount} questions pre-filled from passport/case data` : ""}`);
+        }
       } else {
         console.error(`Auto WA intake failed for ${created.id}: ${result.error}`);
         await writeIntakeNote(`⚠️ Auto-intake FAILED: ${result.error || "unknown error"}\n\nStaff: send a manual greeting from the case (👋 Send Greeting button), or click Send Intake to retry.`);
