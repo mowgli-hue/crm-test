@@ -517,40 +517,73 @@ export async function startIntakeSession(params: {
   console.log(`▶️  startIntakeSession ENTRY: caseId=${caseId} phone=${phone} client="${clientName}" formType="${formType}"`);
 
   // ── PRIMARY guard (NEW, May 2026 after CASE-1430 Harpreet bug): ──
-  // Check if ANY case sharing this phone has an active or completed session.
-  // This catches the case where a duplicate/new case is created for a client
-  // who has already done intake on a different case. Without this guard, a
-  // fresh intake fires on the new case, the client gets re-greeted, and they
-  // get confused ("ignore above message sir" — actual quote from Harpreet).
+  // Check if ANY OTHER case sharing this phone has an active session that
+  // would be disrupted by a fresh intake.
   //
-  // We block ONLY for high-priority sessions (complete, ai_chat, or
-  // already-greeted). If the existing session is a fresh awaiting_template_reply
-  // with chatTurns=0 (template sent but client hasn't replied yet), we let
-  // the new intake proceed since that's a legitimate retry scenario.
+  // This is nuanced — we want to BLOCK these scenarios:
+  //   - Harpreet bug: client mid-conversation on case A, new duplicate case B
+  //     created, fresh intake would re-greet and confuse them
+  //   - True duplicates: same form type case created twice (Study Permit
+  //     Extension on case A, Study Permit Extension on case B again)
+  //
+  // But we want to ALLOW these legitimate scenarios:
+  //   - Returning client: completed PGWP intake months ago on case A,
+  //     today applies for Spousal Sponsorship → new case B → intake SHOULD
+  //     start fresh
+  //   - Different family member: same phone number used by multiple family
+  //     members (parent's phone for child's case)
+  //
+  // Decision matrix:
+  //   - Other case has phase=ai_chat (mid-conversation)           → BLOCK
+  //   - Other case has phase=awaiting_template_reply, >0 turns    → BLOCK
+  //   - Other case has phase=complete, SAME formType as new case  → BLOCK (likely duplicate)
+  //   - Other case has phase=complete, DIFFERENT formType         → ALLOW (new service)
+  //   - Other case has phase=awaiting_template_reply, 0 turns     → ALLOW (template was sent but no reply, this is a retry)
   try {
     const otherCaseSession = await findHighestPrioritySessionForPhone(phone, companyId);
     if (otherCaseSession && otherCaseSession.caseId !== caseId) {
-      // Different case has a session. Decide based on priority.
       const otherPhase = otherCaseSession.session.phase;
       const otherTurns = otherCaseSession.session.chatTurns || 0;
-      const isHighPriority =
-        otherPhase === "complete" ||
-        otherPhase === "ai_chat" ||
-        (otherPhase === "awaiting_template_reply" && otherTurns > 0);
-      if (isHighPriority) {
+      const otherFormType = otherCaseSession.formType || "";
+
+      // Normalize form types for comparison: lowercase, trim, collapse spaces.
+      // Different wordings of the same form should still match (e.g.,
+      // "Study Permit Extension" vs "Study Permit Extension (Inside Canada)"
+      // are considered the same family).
+      const norm = (s: string) =>
+        s.toLowerCase().replace(/\s*\(.*?\)\s*/g, "").replace(/\s+/g, " ").trim();
+      const sameFormType = norm(otherFormType) === norm(formType);
+
+      const isMidConversation = otherPhase === "ai_chat";
+      const isAlreadyGreeted = otherPhase === "awaiting_template_reply" && otherTurns > 0;
+      const isCompletedDuplicate = otherPhase === "complete" && sameFormType;
+
+      const shouldBlock = isMidConversation || isAlreadyGreeted || isCompletedDuplicate;
+
+      if (shouldBlock) {
+        const reason = isMidConversation
+          ? `client is mid-conversation on another case (${otherCaseSession.caseId}, phase=${otherPhase})`
+          : isAlreadyGreeted
+            ? `client was already greeted on another case (${otherCaseSession.caseId})`
+            : `client already has a completed ${otherFormType} intake on case ${otherCaseSession.caseId} — this looks like a duplicate case`;
         console.warn(
-          `🛑 BLOCKING new intake for ${phone} on ${caseId} (${formType}) — ` +
-          `client already has a ${otherPhase} session on case ${otherCaseSession.caseId} ` +
-          `(${otherCaseSession.formType}). To start fresh, use the admin "Reset Intake" ` +
-          `endpoint on ${otherCaseSession.caseId} first.`,
+          `🛑 BLOCKING new intake for ${phone} on ${caseId} (${formType}) — ${reason}. ` +
+          `To start fresh, use the admin "Reset Intake" endpoint on ${otherCaseSession.caseId} first.`,
         );
         return {
           success: true,
           skippedCount: 0,
           recoveredCount: 0,
           mode: "skip-other-case-has-active-session",
-          error: `Client phone ${phone} already has a ${otherPhase} session on case ${otherCaseSession.caseId} (${otherCaseSession.formType}). Reset that case's session first if you want to start over.`,
+          error: `Skipped: ${reason}. New case is ${formType}; existing case ${otherCaseSession.caseId} is ${otherFormType}.`,
         };
+      } else if (otherPhase === "complete" && !sameFormType) {
+        // Legitimate new intake for a returning client applying for a
+        // different service. Log it so staff can see the pattern, but allow.
+        console.log(
+          `✅ Allowing new intake for ${phone} on ${caseId} (${formType}) — ` +
+          `returning client (previous case ${otherCaseSession.caseId} completed for different service: ${otherFormType}).`,
+        );
       }
     }
   } catch (e) {

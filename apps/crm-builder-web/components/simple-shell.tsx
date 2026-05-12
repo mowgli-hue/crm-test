@@ -2110,30 +2110,61 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       .map((a) => String(a.name || "").trim())
       .filter(Boolean);
     setCommCreateStatus("Creating case...");
-    const res = await apiFetch("/cases", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client: commClientName.trim(),
-        formType: effectiveFormType,
-        leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
-        leadEmail: commEmail.trim() || undefined,
-        totalCharges,
-        irccFees,
-        irccFeePayer: commIrccFeePayer,
-        familyMembers:
-          normalizedAdditionalApplicants.length > 0
-            ? normalizedAdditionalApplicants.join(", ")
-            : undefined,
-        familyTotalCharges,
-        assignedTo: commAssignedTo && commAssignedTo !== "Unassigned" ? commAssignedTo : undefined,
-        additionalNotes: commAdditionalNotes.trim() || undefined,
-        isUrgent: commUrgent,
-        dueInDays: commUrgent ? Number(commUrgentDays || 0) : undefined,
-        permitExpiryDate: commPermitExpiryDate || undefined
-      })
-    });
-    const payload = await res.json().catch(() => ({}));
+    // Helper to call /cases POST. On 409 duplicate_phone, prompt the staff
+    // member with details about the existing cases and let them decide whether
+    // to retry with force=true. Without this, staff would create duplicate
+    // cases by accident (Harpreet bug — same phone got two cases, the second
+    // one re-greeted her mid-conversation).
+    const callCreateCase = async (force: boolean) => {
+      return apiFetch("/cases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client: commClientName.trim(),
+          formType: effectiveFormType,
+          leadPhone: commPhone.trim() ? formatPhoneDisplay(commPhone) : undefined,
+          leadEmail: commEmail.trim() || undefined,
+          totalCharges,
+          irccFees,
+          irccFeePayer: commIrccFeePayer,
+          familyMembers:
+            normalizedAdditionalApplicants.length > 0
+              ? normalizedAdditionalApplicants.join(", ")
+              : undefined,
+          familyTotalCharges,
+          assignedTo: commAssignedTo && commAssignedTo !== "Unassigned" ? commAssignedTo : undefined,
+          additionalNotes: commAdditionalNotes.trim() || undefined,
+          isUrgent: commUrgent,
+          dueInDays: commUrgent ? Number(commUrgentDays || 0) : undefined,
+          permitExpiryDate: commPermitExpiryDate || undefined,
+          force,
+        })
+      });
+    };
+    let res = await callCreateCase(false);
+    let payload = await res.json().catch(() => ({}));
+    // Handle the duplicate-phone 409 → confirm with staff → retry with force.
+    if (res.status === 409 && payload?.error === "duplicate_phone") {
+      const conflicts = (payload.conflicts || []) as Array<{ id: string; client: string; formType: string; assignedTo: string | null; processingStatus: string | null }>;
+      const conflictLines = conflicts.map((c) =>
+        `• ${c.id} — ${c.client || "(no name)"} (${c.formType || "?"})${c.assignedTo ? ` · assigned to ${c.assignedTo}` : ""}${c.processingStatus ? ` · status: ${c.processingStatus}` : ""}`
+      ).join("\n");
+      const proceed = window.confirm(
+        `⚠️ Duplicate phone detected\n\n` +
+        `The phone number ${commPhone || "(empty)"} is already on ${conflicts.length} other case${conflicts.length > 1 ? "s" : ""}:\n\n` +
+        conflictLines +
+        `\n\nClick OK to create this case anyway (e.g., if it's a different family member or a returning client for a new service).\n` +
+        `Click Cancel to stop and review the existing case${conflicts.length > 1 ? "s" : ""} first.`
+      );
+      if (!proceed) {
+        setCommCreateStatus(`Cancelled — phone already on case ${conflicts[0]?.id || "another case"}. Review existing cases first.`);
+        return;
+      }
+      // User confirmed → retry with force=true
+      setCommCreateStatus("Creating case (forced after duplicate-phone confirmation)...");
+      res = await callCreateCase(true);
+      payload = await res.json().catch(() => ({}));
+    }
     if (!res.ok) {
       setCommCreateStatus(String(payload.error || "Could not create case."));
       return;

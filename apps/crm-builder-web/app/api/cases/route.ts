@@ -113,6 +113,59 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid familyTotalCharges" }, { status: 400 });
   }
 
+  // ── Duplicate-phone warning (May 2026) ──
+  //
+  // Common scenario: staff is asked about a client who already has a case
+  // (maybe handed off from a colleague, maybe the client called twice and
+  // it wasn't logged). Without this check, staff creates a new case, the
+  // bot auto-fires intake again, and the client gets re-greeted in the
+  // middle of an ongoing conversation (Harpreet bug).
+  //
+  // We do a soft check: warn the staff member that another case exists
+  // for this phone, but let them override with `?force=true` if they
+  // explicitly want to proceed (e.g., it really IS a different family
+  // member sharing a phone, or the old case is closed and this is a new
+  // application).
+  //
+  // The frontend should call this without `force`, get the 409 if duplicates
+  // exist, show a confirmation modal listing the existing cases, and then
+  // retry with `force=true` if the user confirms.
+  if (leadPhone && body?.force !== true) {
+    try {
+      const { listCases } = await import("@/lib/store");
+      const phoneDigits = String(leadPhone).replace(/\D/g, "");
+      const last9 = phoneDigits.slice(-9);
+      const existingCases = await listCases(user.companyId);
+      const conflicts = existingCases
+        .filter((c) => {
+          const cp = (c.leadPhone || "").replace(/\D/g, "");
+          return cp && cp.slice(-9) === last9;
+        })
+        .map((c) => ({
+          id: c.id,
+          client: c.client,
+          formType: c.formType,
+          assignedTo: c.assignedTo || null,
+          processingStatus: c.processingStatus || null,
+          updatedAt: c.updatedAt || null,
+        }));
+      if (conflicts.length > 0) {
+        return NextResponse.json(
+          {
+            error: "duplicate_phone",
+            message: `This phone is already associated with ${conflicts.length} other case${conflicts.length > 1 ? "s" : ""}.`,
+            conflicts,
+            hint: "Pass force=true in the request body to create this case anyway (e.g., if it's a different family member or a returning client for a new service).",
+          },
+          { status: 409 },
+        );
+      }
+    } catch (e) {
+      // Non-fatal — if duplicate check fails, fall through to normal create.
+      console.warn(`Duplicate-phone check failed: ${(e as Error).message.slice(0, 100)}`);
+    }
+  }
+
   const created = await createCase({
     companyId: user.companyId,
     client,
