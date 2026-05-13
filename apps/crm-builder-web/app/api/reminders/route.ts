@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listCases, getLatestClientInviteForCase } from "@/lib/store";
 import { sendPortalReminder, sendStaleEmailReminder } from "@/lib/whatsapp-smart-reply";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
-const SYSTEM_TOKEN = process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024";
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 const BASE_URL = process.env.NEXTAUTH_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  if (body.token !== SYSTEM_TOKEN) {
+  if (!isValidSystemToken(body.token)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

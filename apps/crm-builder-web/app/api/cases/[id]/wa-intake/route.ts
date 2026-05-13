@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -55,7 +56,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   try {
     const body = await request.json().catch(() => ({}));
     const systemToken = body?.systemToken;
-    const isSystem = systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+    const isSystem = isValidSystemToken(systemToken);
 
     if (!isSystem) {
       const user = await getCurrentUserFromRequest(request);

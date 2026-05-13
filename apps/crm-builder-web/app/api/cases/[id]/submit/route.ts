@@ -44,14 +44,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     ? new Date(body.submittedAt).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
 
+  // Lookup-table sync runs FIRST. If this fails (Postgres unavailable,
+  // schema drift, etc.), we abort BEFORE flipping the case to submitted -
+  // otherwise the case appears submitted in the JSON store but addLegacyResult
+  // and result-routing code (which both query submitted_apps_lookup) cannot
+  // find it. Idempotent: the upsert is safe to retry.
+  try {
+    await syncToLookup(caseItem, applicationNumber, date);
+  } catch (e) {
+    console.error("Submit aborted - lookup sync failed:", (e as Error).message);
+    return NextResponse.json({ error: "Failed to record submission in lookup table; case NOT marked submitted. Retry in a moment." }, { status: 503 });
+  }
+
   const updated = await updateCaseProcessing(user.companyId, params.id, {
     processingStatus: "submitted",
     applicationNumber,
     submittedAt: body.submittedAt || new Date().toISOString(),
   } as any);
-
-  // Non-fatal: sync to lookup table and Google Sheet
-  await syncToLookup(caseItem, applicationNumber, date);
   syncCaseToUnderReviewSheet({
     client: caseItem.client,
     formType: caseItem.formType,

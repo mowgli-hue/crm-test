@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listCases, listUsers } from "@/lib/store";
 import { sendEmail } from "@/lib/email";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 // Staleness thresholds — keep them as constants so easy to tune later.
 const UNDER_REVIEW_STALE_DAYS = 3;
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
   // Token check — same pattern as /api/inbox/escalate
   const token = req.headers.get("x-admin-token") ||
     new URL(req.url).searchParams.get("token");
-  if (token !== (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024")) {
+  if (!isValidSystemToken(token)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

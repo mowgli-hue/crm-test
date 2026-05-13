@@ -3,7 +3,7 @@ import { AppStore } from "@/lib/models";
 
 let pool: Pool | null = null;
 
-function getPool(): Pool {
+export function getPool(): Pool {
   const databaseUrl = String(process.env.DATABASE_URL || "").trim();
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required for postgres data backend");

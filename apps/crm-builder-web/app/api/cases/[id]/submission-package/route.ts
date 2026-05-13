@@ -17,12 +17,12 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { getCase } from "@/lib/store";
 import { assemblePgwpSubmissionPackage } from "@/lib/submission-package";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const rawBody = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const isSystemCall =
-    String(rawBody.systemToken || "").trim() ===
-    (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+    isValidSystemToken(rawBody.systemToken);
 
   const user = await getCurrentUserFromRequest(request);
   if (!user && !isSystemCall) {

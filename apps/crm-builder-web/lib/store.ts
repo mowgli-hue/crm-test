@@ -36,7 +36,7 @@ import { SUBMITTED_APPS } from "@/lib/submitted-apps";
 import { generatePgwpDraft } from "@/lib/pgwp";
 import { getStorePath } from "@/lib/storage-paths";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/security";
-import { isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres } from "@/lib/postgres-store";
+import { getPool as getSharedPool, isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres } from "@/lib/postgres-store";
 
 const STORE_PATH = getStorePath();
 const SESSION_MAX_AGE_SECONDS = Math.max(
@@ -2031,7 +2031,7 @@ export async function addDocument(input: {
 }): Promise<DocumentItem> {
   const store = await readStore();
   const doc: DocumentItem = {
-    id: `DOC-${store.documents.length + 1}`,
+    id: `DOC-${randomUUID().slice(0, 8)}`,
     companyId: input.companyId,
     caseId: input.caseId,
     name: input.name,
@@ -2127,8 +2127,10 @@ export async function addLegacyResult(input: {
   let resolvedClientName = String(input.clientName || "").trim();
   if (!resolvedPhone && appNoNorm) {
     try {
-      const { Pool } = await import("pg");
-      const _pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      // Use shared pool - creating a new Pool per call and end()-ing it leaks
+      // connections if the query throws before end() runs. Shared pool (max=5)
+      // is process-lifetime; do NOT call .end() on it.
+      const _pool = getSharedPool();
       const res = await _pool.query(
         `SELECT name, phone FROM submitted_apps_lookup WHERE app_num = $1`,
         [appNoNorm]
@@ -2139,7 +2141,7 @@ export async function addLegacyResult(input: {
           resolvedClientName = res.rows[0].name || resolvedClientName;
         }
       }
-      await _pool.end();
+      // Note: shared pool is process-lifetime; no .end() per-call.
     } catch { /* table may not exist yet */ }
   }
 

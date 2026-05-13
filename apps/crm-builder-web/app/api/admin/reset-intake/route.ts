@@ -3,11 +3,12 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listCases, updateCasePgwpIntake } from "@/lib/store";
 import { getQuestionPromptsForFormType } from "@/lib/application-question-flows";
 import { setSession } from "@/lib/whatsapp-ai-intake";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request).catch(() => null);
   const body = await request.json().catch(() => ({}));
-  const isSystem = body.systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+  const isSystem = isValidSystemToken(body.systemToken);
   if (!user && !isSystem) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const companyId = user?.companyId || process.env.DEFAULT_COMPANY_ID || "newton";

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listCases } from "@/lib/store";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 const NEWTON_KNOWLEDGE = `
 # NEWTON IMMIGRATION — COMPLETE KNOWLEDGE BASE
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
     try { user = await getCurrentUserFromRequest(request); } catch {}
     const bodyRaw = await request.json().catch(() => ({}));
     const systemToken = bodyRaw?.systemToken || request.headers.get("x-system-token");
-    if (!user && systemToken !== (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024")) {
+    if (!user && !isValidSystemToken(systemToken)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     if (!user) user = { name: "Staff", role: "Admin", companyId: process.env.DEFAULT_COMPANY_ID || "newton" } as any;

@@ -4,11 +4,12 @@ import { getCase, addDocument, updateCaseLinks } from "@/lib/store";
 import { mapIntakeToForm } from "@/lib/intake-to-form-mappers";
 import { parseIntakeWithAI, mergeAIIntoFormData } from "@/lib/intake-ai-parser";
 import { uploadFileToDriveFolder, getOrCreateDriveSubfolder } from "@/lib/google-drive";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const body = await request.json().catch(() => ({}));
-    const isSystemCall = body.systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+    const isSystemCall = isValidSystemToken(body.systemToken);
     if (!isSystemCall) {
       const user = await getCurrentUserFromRequest(request);
       if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

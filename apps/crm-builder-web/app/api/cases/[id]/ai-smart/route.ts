@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase } from "@/lib/store";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const user = await getCurrentUserFromRequest(request).catch(() => null);
   const body = await request.json().catch(() => ({}));
-  const isSystemCall = body.systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+  const isSystemCall = isValidSystemToken(body.systemToken);
   if (!user && !isSystemCall) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   
   const { action, context } = body;

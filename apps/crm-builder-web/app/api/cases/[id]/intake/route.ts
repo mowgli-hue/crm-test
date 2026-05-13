@@ -5,6 +5,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { maybeAutoRunImm5710 } from "@/lib/imm5710-runner";
 import { buildReadyPackage, writeReadyPackageToDisk } from "@/lib/ready-package";
+import { getAuthRecoveryToken, isValidSystemToken } from "@/lib/auth-recovery-token";
 import {
   getCase,
   listDocuments,
@@ -299,7 +300,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const rawBody = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   
   // Allow system token calls (backfill, auto-generation)
-  const isSystemCall = String(rawBody.systemToken || "").trim() === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+  const isSystemCall = isValidSystemToken(rawBody.systemToken);
   
   const user = await resolveRequestUser(request, params.id);
   if (!user && !isSystemCall) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -399,7 +400,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemToken: process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024",
+          systemToken: getAuthRecoveryToken(),
           intake: intakeData
         })
       }).catch(() => null);

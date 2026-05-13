@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { listCases, listUsers, addNotification } from "@/lib/store";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { Pool } from "pg";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
-const SYSTEM_TOKEN = process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024";
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    if (body.token !== SYSTEM_TOKEN) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!isValidSystemToken(body.token)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver", weekday: "long", year: "numeric", month: "long", day: "numeric" });
     const todayShort = new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver" });

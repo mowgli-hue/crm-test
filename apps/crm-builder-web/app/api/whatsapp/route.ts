@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthRecoveryToken } from "@/lib/auth-recovery-token";
+import { normalizePhone } from "@/lib/phone";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
@@ -85,7 +87,13 @@ export async function POST(req: NextRequest) {
 
     // Route marketing number to marketing webhook handler
     const incomingPhoneId = value?.metadata?.phone_number_id;
-    const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "1047138985153613";
+    const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "";
+    const MAIN_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+    if (!MARKETING_PHONE_ID || !MAIN_PHONE_ID) {
+      console.error(`[whatsapp-webhook] MISCONFIG: WHATSAPP_PHONE_NUMBER_ID=${MAIN_PHONE_ID ? "set" : "MISSING"} WHATSAPP_MARKETING_PHONE_ID=${MARKETING_PHONE_ID ? "set" : "MISSING"} - both must be set.`);
+    } else if (incomingPhoneId && incomingPhoneId !== MARKETING_PHONE_ID && incomingPhoneId !== MAIN_PHONE_ID) {
+      console.warn(`[whatsapp-webhook] Unknown phone_number_id=${incomingPhoneId}; routing as main-inbox by default.`);
+    }
     if (incomingPhoneId === MARKETING_PHONE_ID) {
       try {
         const baseUrl = process.env.NEXTAUTH_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
@@ -185,11 +193,7 @@ export async function POST(req: NextRequest) {
         // so all messages from the same contact land in ONE thread.
         // Non-NA numbers: keep digits-only as-is.
         const digits = String(from || "").replace(/\D/g, "");
-        const normalizedFrom = (digits.length === 10)
-          ? `1${digits}`                 // bare 10-digit NA number → prepend "1"
-          : digits.length === 11 && digits.startsWith("1")
-            ? digits                     // already in 1XXXXXXXXXX form
-            : digits;                    // other lengths/countries: keep as-is
+        const normalizedFrom = normalizePhone(from);
         // Auto-unarchive if client messages again after case was archived.
         // Match across phone-format variants by last 10 digits to be robust
         // against the same client messaging from a differently-formatted number.
@@ -268,8 +272,12 @@ export async function POST(req: NextRequest) {
               console.log(`🤖 Skipping auto-greeting for ${from} — has active intake session (case=${matched.id} phase=${(existingSession as any).phase || "unknown"})`);
             }
           } catch (e) {
-            // If session check fails, fall through and let auto-greeting run.
-            // Safer than silently dropping the message.
+            // Session-check failure for a MATCHED client: assume there IS
+            // an active intake to be safe. Re-greeting a matched client mid-
+            // intake (CASE-1399 / CASE-1430) is worse than briefly suppressing
+            // a greeting until the next message. Only runs when matched is set.
+            console.warn(`[whatsapp] Active-intake check failed for matched client ${matched?.id} (${from}); assuming active session.`, (e as Error).message);
+            hasActiveIntakeSession = true;
           }
         }
 
@@ -778,7 +786,7 @@ export async function POST(req: NextRequest) {
                   fetch(`${baseUrl}/api/cases/${matched.id}/generate-forms`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ systemToken: process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024" })
+                    body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
                   }).then(r => r.json()).then(d => {
                     console.log(`📄 Auto PDF after passport for ${matched.id}:`, d.generated);
                   }).catch(e => console.error("Auto PDF failed:", e));

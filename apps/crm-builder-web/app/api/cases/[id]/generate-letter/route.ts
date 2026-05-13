@@ -3,12 +3,13 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase } from "@/lib/store";
 import path from "path";
 import fs from "fs";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await getCurrentUserFromRequest(request).catch(() => null);
     const body = await request.json().catch(() => ({}));
-    if (!user && body.systemToken !== (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024")) {
+    if (!user && !isValidSystemToken(body.systemToken)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const companyId = user?.companyId || "newton";

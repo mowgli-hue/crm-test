@@ -3,6 +3,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { listCases } from "@/lib/store";
 import { Pool } from "pg";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
   const { phone, message, caseId, action, systemToken } = body;
 
   // Allow system calls from webhook with system token
-  const isSystemCall = systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+  const isSystemCall = isValidSystemToken(systemToken);
   if (!isSystemCall) {
     const user = await getCurrentUserFromRequest(request);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

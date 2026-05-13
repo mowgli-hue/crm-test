@@ -4,6 +4,7 @@ import { getCase } from "@/lib/store";
 import { PDFDocument, rgb, StandardFonts, PDFPage, PDFFont, PDFImage } from "pdf-lib";
 import fs from "fs";
 import path from "path";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
 // ──────────────────────────────────────────────────────────────
 // Newton Immigration — Representative Submission Letter generator
@@ -930,7 +931,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   try {
     const body = await request.json().catch(() => ({}));
     const systemToken = body?.systemToken;
-    const isSystem = systemToken === (process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024");
+    const isSystem = isValidSystemToken(systemToken);
 
     if (!isSystem) {
       const user = await getCurrentUserFromRequest(request);

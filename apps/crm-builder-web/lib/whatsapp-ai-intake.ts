@@ -6,6 +6,8 @@ import { resolveApplicationChecklistKey } from "@/lib/application-checklists";
 import { sendWhatsAppText, sendWhatsAppTemplate, sendDocumentChecklist } from "@/lib/whatsapp";
 import { getCase, updateCaseProcessing, addMessage } from "@/lib/store";
 import { Pool } from "pg";
+import { getAuthRecoveryToken } from "./auth-recovery-token";
+import { phoneLast10 } from "./phone";
 
 // ── Pre-answer detection ──
 // Returns a map of { questionIndex (0-based) → already-known answer } for
@@ -247,11 +249,11 @@ export async function getSession(phone: string, companyId?: string): Promise<Int
     const { listCases } = await import("@/lib/store");
     const cId = companyId || process.env.DEFAULT_COMPANY_ID || "newton";
     const cases = await listCases(cId);
-    const n = phone.replace(/\D/g, "");
-    const matched = cases.find((c) => {
-      const cp = (c.leadPhone || "").replace(/\D/g, "");
-      return cp && (n.endsWith(cp) || cp.endsWith(n));
-    });
+    // Use shared phoneLast10 for matching - works for both normalized
+    // ("16041234567") and legacy ("6041234567", "+1 (604) 123-4567") forms.
+    const last10 = phoneLast10(phone);
+    const matched = last10 ? cases.find((c) => phoneLast10(c.leadPhone) === last10) : undefined;
+    const n = phone.replace(/\D/g, "");  // kept for the log below
     console.log(`🔍 getSession: phone=${n} | matched=${matched?.client || "NONE"} | hasPgwpIntake=${!!matched?.pgwpIntake} | hasSession=${!!(matched?.pgwpIntake as any)?.whatsappSession}`);
     if (!matched) return undefined;
     const intake = (matched.pgwpIntake || {}) as Record<string, string>;
@@ -377,11 +379,11 @@ export async function clearSession(phone: string): Promise<void> {
     const { listCases, getCase, updateCasePgwpIntake } = await import("@/lib/store");
     const cId = process.env.DEFAULT_COMPANY_ID || "newton";
     const cases = await listCases(cId);
-    const n = phone.replace(/\D/g, "");
-    const matched = cases.find((c) => {
-      const cp = (c.leadPhone || "").replace(/\D/g, "");
-      return cp && (n.endsWith(cp) || cp.endsWith(n));
-    });
+    // Use shared phoneLast10 for matching - works for both normalized
+    // ("16041234567") and legacy ("6041234567", "+1 (604) 123-4567") forms.
+    const last10 = phoneLast10(phone);
+    const matched = last10 ? cases.find((c) => phoneLast10(c.leadPhone) === last10) : undefined;
+    const n = phone.replace(/\D/g, "");  // kept for the log below
     if (!matched) return;
     // Clear whatsappSession from intake — use updateCasePgwpIntake (dedicated
     // function for pgwpIntake mutations; updateCaseProcessing rejects pgwpIntake
@@ -1600,7 +1602,7 @@ async function completeIntake(session: IntakeSession): Promise<void> {
       fetch(`${appUrl}/api/cases/${session.caseId}/generate-forms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ systemToken: process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024" })
+        body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
       }).catch(e => console.error("Auto PDF failed:", e));
 
       // Save intake answers as a text PDF in Drive
@@ -1666,7 +1668,7 @@ ${answersText}`, "utf-8");
         const res = await fetch(`${appUrl}/api/cases/${session.caseId}/generate-forms`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ systemToken: process.env.AUTH_RECOVERY_TOKEN || "newton-recovery-2024" })
+          body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
         });
         if (res.ok) {
           const d = await res.json();

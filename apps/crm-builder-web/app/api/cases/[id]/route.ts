@@ -371,27 +371,37 @@ export async function DELETE(
         new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
       ]);
     };
-    if (phoneDigits) {
+    // Wrap the two cleanup queries in a single transaction so a partial-failure
+    // does not leave an inconsistent intermediate state. Both queries are
+    // best-effort (the surrounding try/catch keeps the case-delete itself going)
+    // but within their own scope they should be atomic.
+    const client = await pool.connect();
+    try {
+      await withTimeout(client.query("BEGIN"), 5000);
+      if (phoneDigits) {
+        await withTimeout(
+          client.query(
+            `UPDATE marketing_leads SET converted_case_id = NULL, updated_at = NOW()
+             WHERE phone = $1 AND converted_case_id = $2`,
+            [phoneDigits, params.id]
+          ),
+          10000
+        );
+      }
       await withTimeout(
-        pool.query(
-          `UPDATE marketing_leads SET converted_case_id = NULL, updated_at = NOW()
-           WHERE phone = $1 AND converted_case_id = $2`,
-          [phoneDigits, params.id]
+        client.query(
+          `DELETE FROM case_notes WHERE case_id = $1 AND company_id = $2`,
+          [params.id, user.companyId]
         ),
         10000
-      ).catch((e) => {
-        console.warn(`marketing_leads cleanup failed for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
-      });
+      );
+      await withTimeout(client.query("COMMIT"), 5000);
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      console.warn(`PG cascade cleanup TX rolled back for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
+    } finally {
+      client.release();
     }
-    await withTimeout(
-      pool.query(
-        `DELETE FROM case_notes WHERE case_id = $1 AND company_id = $2`,
-        [params.id, user.companyId]
-      ),
-      10000
-    ).catch((e) => {
-      console.warn(`case_notes cleanup failed for ${params.id}: ${(e as Error).message.slice(0, 100)}`);
-    });
     await pool.end().catch(() => {});
   } catch (e) {
     // Non-fatal — proceed with deletion even if PG cleanup fails entirely.
