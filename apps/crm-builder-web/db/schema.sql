@@ -199,3 +199,10 @@ create table if not exists auth_rate_limits (
   window_started_at timestamptz not null default now(),
   blocked_until timestamptz
 );
+
+-- S2-9 (added 2026-05-13): indexes speeding up store.ts query patterns.
+create index if not exists idx_documents_case on documents(company_id, case_id, created_at desc);
+create index if not exists idx_documents_version_group on documents(company_id, version_group_id);
+create index if not exists idx_notifications_user_read on notifications(company_id, user_id, read);
+create index if not exists idx_tasks_case_status on tasks(company_id, case_id, status);
+create index if not exists idx_cases_lead_phone on cases(company_id, lead_phone);

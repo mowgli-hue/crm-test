@@ -27,7 +27,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { sendWhatsAppText, sendWhatsAppMedia } from "@/lib/whatsapp";
-import { addMessage } from "@/lib/store";
+import { addMessage, getCase } from "@/lib/store";
 import { putObjectToS3, isS3StorageEnabled, normalizeFilename } from "@/lib/object-storage";
 
 type AttachmentInput = { name: string; type: string; data: string };
@@ -123,10 +123,18 @@ export async function POST(request: NextRequest) {
       const normalizedPhone = digits.length === 10 ? `1${digits}`
                               : digits.length === 11 && digits.startsWith("1") ? digits
                               : digits;
+      // Look up matched_case_name so the inbox row shows the linked client name
+      let _matchedCaseName: string | null = null;
+      if (caseId) {
+        try {
+          const c = await getCase(user.companyId, caseId);
+          if (c) _matchedCaseName = c.client || null;
+        } catch { /* non-fatal */ }
+      }
       await pool.query(
-        `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, is_read, created_at)
-         VALUES ($1, $2, $3, 'outbound', $4, TRUE, NOW())`,
-        [inboxMsgId, normalizedPhone, docPlaceholder, caseId || null]
+        `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read, created_at)
+         VALUES ($1, $2, $3, 'outbound', $4, $5, TRUE, NOW())`,
+        [inboxMsgId, normalizedPhone, docPlaceholder, caseId || null, _matchedCaseName]
       );
       await pool.end();
     } catch (e) {
@@ -175,10 +183,17 @@ export async function POST(request: NextRequest) {
     const normalizedPhone = digits.length === 10 ? `1${digits}`
                             : digits.length === 11 && digits.startsWith("1") ? digits
                             : digits;
+    let _matchedCaseName2: string | null = null;
+    if (caseId) {
+      try {
+        const c = await getCase(user.companyId, caseId);
+        if (c) _matchedCaseName2 = c.client || null;
+      } catch { /* non-fatal */ }
+    }
     await pool.query(
-      `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, is_read, created_at)
-       VALUES ($1, $2, $3, 'outbound', $4, TRUE, NOW())`,
-      [`WA-OUT-${Date.now()}`, normalizedPhone, message, caseId || null]
+      `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read, created_at)
+       VALUES ($1, $2, $3, 'outbound', $4, $5, TRUE, NOW())`,
+      [`WA-OUT-${Date.now()}`, normalizedPhone, message, caseId || null, _matchedCaseName2]
     );
     await pool.end();
   } catch { /* non-fatal */ }

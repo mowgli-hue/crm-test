@@ -150,16 +150,23 @@ async function scanInboxForBatchedAnswers(phone: string, maxQuestions: number): 
   }
 }
 
-// Send message AND save to inbox so it shows in chat
+// Send message AND save to inbox. On failure, the inbox row is prefixed
+// with [SEND FAILED: reason] so staff see the failure instead of a clean
+// message that was actually rejected by Meta.
 async function sendAndSave(phone: string, message: string, caseId: string | null, caseName: string | null): Promise<void> {
-  await sendWhatsAppText(phone, message);
+  const sendResult = await sendWhatsAppText(phone, message);
+  const ok = sendResult && sendResult.success !== false;
+  if (!ok) {
+    console.error(`[whatsapp-intake] sendAndSave: Meta rejected message to ${phone} (case=${caseId}): ${sendResult?.error || "unknown error"}`);
+  }
+  const displayMessage = ok ? message : ("[SEND FAILED: " + String(sendResult?.error || "unknown").slice(0, 80) + "] " + message);
   try {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
     await pool.query(
       `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read, created_at)
        VALUES ($1, $2, $3, 'outbound', $4, $5, TRUE, NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [`WA-OUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, phone, message, caseId, caseName]
+      [`WA-OUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, phone, displayMessage, caseId, caseName]
     );
     await pool.end();
   } catch { /* non-fatal */ }
@@ -614,7 +621,11 @@ export async function startIntakeSession(params: {
   // upgrade to ai_chat and send first batch directly. Unsticks Ramandeep-type
   // cases without staff needing to do anything else.
   try {
-    const existing = await getSession(phone, companyId);
+    // Use findHighestPrioritySessionForPhone (not plain getSession) so the
+    // same-case guard sees the HIGHEST-priority session across all cases
+    // sharing this phone.
+    const existingMatch = await findHighestPrioritySessionForPhone(phone, companyId);
+    const existing = existingMatch?.session;
     if (existing && existing.phase !== "awaiting_template_reply") {
       console.log(`🔁 Skipping startIntakeSession for ${phone} — session already active (phase=${existing.phase} chatTurns=${existing.chatTurns}). Use admin reset endpoint to start over.`);
       return { success: true, skippedCount: 0, recoveredCount: 0, mode: "skip-already-active" };

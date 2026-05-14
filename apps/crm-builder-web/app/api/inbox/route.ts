@@ -98,27 +98,27 @@ export async function PATCH(request: NextRequest) {
   const { id, phone, action } = body;
   await ensureTable();
   
+  // Load all messages for specific phone thread
+  if (action === "thread" && phone) {
+    const result = await pool.query(
+      `SELECT * FROM whatsapp_inbox WHERE phone = $1 ORDER BY created_at ASC`,
+      [phone]
+    );
+    return NextResponse.json({ messages: result.rows });
+  }
+
+  // Save name for unknown number
+  if (action === "saveName" && phone && body.name) {
+    const cleanPhone = phone.replace(/\D/g, "");
+    await pool.query(
+      `UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone LIKE $2 OR phone = $3`,
+      [body.name, `%${cleanPhone.slice(-9)}`, cleanPhone]
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // Archive all messages for this phone
   if (action === "archive" && phone) {
-    // Archive all messages for this phone
-    // Load all messages for specific phone
-    if (action === "thread" && phone) {
-      const result = await pool.query(
-        `SELECT * FROM whatsapp_inbox WHERE phone = $1 ORDER BY created_at ASC`,
-        [phone]
-      );
-      return NextResponse.json({ messages: result.rows });
-    }
-
-    // Save name for unknown number
-    if (action === "saveName" && phone && body.name) {
-      const cleanPhone = phone.replace(/\D/g, "");
-      await pool.query(
-        `UPDATE whatsapp_inbox SET matched_case_name = $1 WHERE phone LIKE $2 OR phone = $3`,
-        [body.name, `%${cleanPhone.slice(-9)}`, cleanPhone]
-      );
-      return NextResponse.json({ ok: true });
-    }
-
     await pool.query(`UPDATE whatsapp_inbox SET is_archived = TRUE WHERE phone = $1`, [phone]);
     return NextResponse.json({ ok: true, action: "archived" });
   }

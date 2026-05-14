@@ -116,8 +116,8 @@ export async function POST(request: NextRequest) {
 
       // Update all messages for this phone with the new name
       await pool.query(
-        `UPDATE marketing_inbox SET contact_name = $2 WHERE phone = $1`,
-        [phone, cleanName || null]
+        `UPDATE marketing_inbox SET contact_name = $2 WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1`,
+        [String(phone).replace(/\D/g, "").slice(-9), cleanName || null]
       );
 
       // Upsert lead row
@@ -135,8 +135,8 @@ export async function POST(request: NextRequest) {
       const { phone } = body;
       if (!phone) return NextResponse.json({ error: "Missing phone" }, { status: 400 });
       await pool.query(
-        `UPDATE marketing_inbox SET is_read = TRUE WHERE phone = $1 AND direction = 'inbound'`,
-        [phone]
+        `UPDATE marketing_inbox SET is_read = TRUE WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1 AND direction = 'inbound'`,
+        [String(phone).replace(/\D/g, "").slice(-9)]
       );
       return NextResponse.json({ ok: true });
     }
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     if (action === "deleteThread") {
       const { phone } = body;
       if (!phone) return NextResponse.json({ error: "Missing phone" }, { status: 400 });
-      await pool.query(`DELETE FROM marketing_inbox WHERE phone = $1`, [phone]);
+      await pool.query(`DELETE FROM marketing_inbox WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1`, [String(phone).replace(/\D/g, "").slice(-9)]);
       // Don't delete the lead — staff might want history of converted leads
       return NextResponse.json({ ok: true });
     }
@@ -311,8 +311,8 @@ export async function POST(request: NextRequest) {
 
     // Mark inbound as read since staff just replied
     await pool.query(
-      `UPDATE marketing_inbox SET is_read = TRUE WHERE phone = $1 AND direction = 'inbound'`,
-      [phone]
+      `UPDATE marketing_inbox SET is_read = TRUE WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1 AND direction = 'inbound'`,
+      [String(phone).replace(/\D/g, "").slice(-9)]
     );
 
     // Auto-advance lead stage from "new" -> "contacted" once staff replies
