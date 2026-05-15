@@ -36,6 +36,8 @@ import { isValidSystemToken } from "@/lib/auth-recovery-token";
 // Staleness thresholds — keep them as constants so easy to tune later.
 const UNDER_REVIEW_STALE_DAYS = 3;
 const NO_CLIENT_REPLY_STALE_DAYS = 7;
+// Cases open this many days without being submitted to IRCC trigger a reminder.
+const NOT_SUBMITTED_STALE_DAYS = parseInt(process.env.NOT_SUBMITTED_STALE_DAYS || "14", 10);
 
 function daysAgo(iso: string | undefined | null): number {
   if (!iso) return Infinity; // no timestamp = "very stale"
@@ -76,6 +78,7 @@ export async function GET(req: NextRequest) {
     staff: { name: string; email: string; role: string };
     underReviewStale: typeof cases;
     noClientReplyStale: typeof cases;
+    notSubmittedStale: typeof cases;
   };
   const buckets = new Map<string, DigestBucket>();
 
@@ -88,7 +91,7 @@ export async function GET(req: NextRequest) {
     const ensureBucket = () => {
       let b = buckets.get(staff.email);
       if (!b) {
-        b = { staff, underReviewStale: [], noClientReplyStale: [] };
+        b = { staff, underReviewStale: [], noClientReplyStale: [], notSubmittedStale: [] };
         buckets.set(staff.email, b);
       }
       return b;
@@ -110,6 +113,15 @@ export async function GET(req: NextRequest) {
     ) {
       ensureBucket().noClientReplyStale.push(c);
     }
+
+    // Trigger 3: case never submitted - opened N+ days ago, still not submitted.
+    // Uses createdAt so chatty-but-stalled cases still surface.
+    if (
+      c.processingStatus !== "submitted" &&
+      daysAgo(c.createdAt) > NOT_SUBMITTED_STALE_DAYS
+    ) {
+      ensureBucket().notSubmittedStale.push(c);
+    }
   }
 
   // ── Build + send emails per bucket ──
@@ -122,10 +134,10 @@ export async function GET(req: NextRequest) {
 
   for (const bucket of buckets.values()) {
     const totalCases =
-      bucket.underReviewStale.length + bucket.noClientReplyStale.length;
+      bucket.underReviewStale.length + bucket.noClientReplyStale.length + bucket.notSubmittedStale.length;
     if (totalCases === 0) continue; // skip silent staff with no stale cases
 
-    const renderCaseList = (cs: typeof cases, kind: "review" | "reply") =>
+    const renderCaseList = (cs: typeof cases, kind: "review" | "reply" | "notsub") =>
       cs
         .slice(0, 25) // cap the list — if someone has 50+ stale cases, show first 25
         .map((c) => {
@@ -133,6 +145,8 @@ export async function GET(req: NextRequest) {
           const url = `${baseUrl}/?case=${encodeURIComponent(c.id)}`;
           const tag = kind === "review"
             ? `🟠 ${days}d in review`
+            : kind === "notsub"
+            ? `⏳ ${days}d unsubmitted`
             : `🔇 ${days}d quiet`;
           return `
             <tr>
@@ -173,6 +187,16 @@ export async function GET(req: NextRequest) {
          <p style="margin:0 0 8px;font-size:12px;color:#64748b;">These cases haven't moved in a week. Consider following up with the client.</p>
          <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
            ${renderCaseList(bucket.noClientReplyStale, "reply")}
+         </table>`
+      : ""
+  }
+
+  ${
+    bucket.notSubmittedStale.length > 0
+      ? `<h3 style="margin:20px 0 8px;font-size:14px;color:#7c2d12;">⏳ Your cases not submitted in ${NOT_SUBMITTED_STALE_DAYS}+ days</h3>
+         <p style="margin:0 0 8px;font-size:12px;color:#64748b;">These cases were opened but never submitted to IRCC. Push them to submission or close them if no longer active.</p>
+         <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
+           ${renderCaseList(bucket.notSubmittedStale, "notsub")}
          </table>`
       : ""
   }
