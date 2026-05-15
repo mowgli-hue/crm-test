@@ -1355,6 +1355,40 @@ export async function handleIncomingReply(params: {
         const currentAnswer = session.answers[`q${qIndex + 1}`] || "";
         const retries = session.validationRetries || {};
         const retryCount = retries[String(qIndex)] || 0;
+
+        // STUCK-LOOP DETECTION (Danu fix, May 2026):
+        // Batch parser captured answers but the CURRENT question is still
+        // empty - the client is using global/wrong-section numbering. With
+        // retryCount>=1 and empty currentAnswer, validateAnswer would loop
+        // the no-answer reply forever. Recover with clarifying re-prompt;
+        // after 2 retries, escalate to staff and freeze the session.
+        if (!currentAnswer && retryCount >= 2) {
+          console.warn(`[whatsapp-intake] Escalating ${phone} - stuck on q${qIndex + 1} after ${retryCount} retries with empty currentAnswer`);
+          await sendAndSave(
+            phone,
+            "Thanks for your patience. Our team will follow up with you shortly to make sure we have everything right. No need to reply right now - we will reach out.",
+            session.caseId,
+            session.clientName
+          );
+          (session as any).escalatedAt = new Date().toISOString();
+          (session as any).escalationReason = `Stuck on q${qIndex + 1} after ${retryCount} retries (empty currentAnswer)`;
+          await setSession(phone, session);
+          return;
+        }
+        if (!currentAnswer && answersCaptured > 0) {
+          // Re-prompt explicitly so client sees which question is pending
+          retries[String(qIndex)] = retryCount + 1;
+          session.validationRetries = retries;
+          await setSession(phone, session);
+          await sendAndSave(
+            phone,
+            `Thanks for those answers. I still need this one:\n\n*Question ${qIndex + 1}:* ${currentQuestion}`,
+            session.caseId,
+            session.clientName
+          );
+          return;
+        }
+
         const result = validateAnswer(currentQuestion, currentAnswer, retryCount);
 
         if (result.ok === false) {

@@ -512,6 +512,9 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [teamUsers, setTeamUsers] = useState<TeamUserItem[]>([]);
   const [inboxMessages, setInboxMessages] = useState<Array<{id:string;phone:string;message:string;direction:string;matched_case_id:string|null;matched_case_name:string|null;is_read:boolean;created_at:string}>>([]);
   const [inboxLoaded, setInboxLoaded] = useState(false);
+  // Separate error state so we can show a banner instead of silently rendering
+  // an empty inbox when the fetch fails (network blip / 500 / etc.)
+  const [inboxError, setInboxError] = useState<string>("");
   const [inboxShowArchived, setInboxShowArchived] = useState(false);
   // 3-tab inbox view (May 2026): "active" | "submitted" | "archived"
   // - active: kept for back-compat, default
@@ -1136,6 +1139,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
 
     // Initial fetch
     setInboxLoaded(false);
+    setInboxError("");
     apiFetch(`/inbox${archivedQS}`, { cache: "no-store" })
       .then(r => r?.json())
       .then(d => {
@@ -1143,7 +1147,12 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
         setInboxMessages(d?.messages || []);
         setInboxLoaded(true);
       })
-      .catch(() => { if (!cancelled) setInboxLoaded(true); });
+      .catch((e) => {
+        if (cancelled) return;
+        setInboxLoaded(true);
+        setInboxError(String((e as Error)?.message || "Failed to load inbox"));
+        console.error("Inbox fetch failed:", e);
+      });
 
     // Keep refreshing every 5s until tab/screen changes
     const t = setInterval(() => {
@@ -2324,24 +2333,29 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     }
 
     setChatStatus("Sending...");
-    const res = await apiFetch(`/cases/${targetCaseId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, mode })
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setChatStatus(String(payload.error || "Could not send message."));
-      return;
+    try {
+      const res = await apiFetch(`/cases/${targetCaseId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, mode })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setChatStatus(String(payload.error || "Could not send message."));
+        return;
+      }
+      setMessages((prev) => {
+        const next = [...prev];
+        if (payload.message) next.push(payload.message as MessageItem);
+        if (payload.aiMessage) next.push(payload.aiMessage as MessageItem);
+        return next;
+      });
+      setChatText("");
+      setChatStatus("Sent.");
+    } catch (e) {
+      setChatStatus("Network error - please retry.");
+      console.error("sendMessage error:", e);
     }
-    setMessages((prev) => {
-      const next = [...prev];
-      if (payload.message) next.push(payload.message as MessageItem);
-      if (payload.aiMessage) next.push(payload.aiMessage as MessageItem);
-      return next;
-    });
-    setChatText("");
-    setChatStatus("Sent.");
   }
 
   async function addDocument(event: FormEvent<HTMLFormElement>) {
@@ -2375,27 +2389,32 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       return;
     }
     setResultUploadStatus("Uploading result...");
-    const formData = new FormData();
-    formData.append("file", resultUploadFile);
-    formData.append("name", resultUploadName.trim() || resultUploadFile.name);
-    formData.append("category", "result");
-    const res = await apiFetch(`/cases/${targetCase.id}/documents`, {
-      method: "POST",
-      body: formData
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setResultUploadStatus(String(payload.error || "Could not upload result."));
-      return;
+    try {
+      const formData = new FormData();
+      formData.append("file", resultUploadFile);
+      formData.append("name", resultUploadName.trim() || resultUploadFile.name);
+      formData.append("category", "result");
+      const res = await apiFetch(`/cases/${targetCase.id}/documents`, {
+        method: "POST",
+        body: formData
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResultUploadStatus(String(payload.error || "Could not upload result."));
+        return;
+      }
+      if (payload.document) {
+        setDocuments((prev) => [...prev, payload.document as DocumentItem]);
+      }
+      setSelectedCaseId(targetCase.id);
+      await loadCaseDetail(targetCase.id);
+      setResultUploadFile(null);
+      setResultUploadName("");
+      setResultUploadStatus(`Result uploaded for ${targetCase.id} and available in client portal.`);
+    } catch (e) {
+      setResultUploadStatus("Network error during upload - please retry.");
+      console.error("uploadResultDocument error:", e);
     }
-    if (payload.document) {
-      setDocuments((prev) => [...prev, payload.document as DocumentItem]);
-    }
-    setSelectedCaseId(targetCase.id);
-    await loadCaseDetail(targetCase.id);
-    setResultUploadFile(null);
-    setResultUploadName("");
-    setResultUploadStatus(`Result uploaded for ${targetCase.id} and available in client portal.`);
   }
 
   async function saveCaseResultDecision() {
@@ -2409,24 +2428,29 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
       return;
     }
     setResultDecisionStatus("Saving decision...");
-    const res = await apiFetch(`/cases/${targetCase.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        finalOutcome: resultOutcome,
-        decisionDate: resultDecisionDate.trim() || undefined,
-        remarks: resultRemarks.trim() || undefined
-      })
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setResultDecisionStatus(String(payload.error || "Could not save result decision."));
-      return;
+    try {
+      const res = await apiFetch(`/cases/${targetCase.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finalOutcome: resultOutcome,
+          decisionDate: resultDecisionDate.trim() || undefined,
+          remarks: resultRemarks.trim() || undefined
+        })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResultDecisionStatus(String(payload.error || "Could not save result decision."));
+        return;
+      }
+      const updated = payload.case as CaseItem;
+      setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setSelectedCaseId(updated.id);
+      setResultDecisionStatus(`Saved result for ${updated.id}.`);
+    } catch (e) {
+      setResultDecisionStatus("Network error - please retry.");
+      console.error("saveCaseResultDecision error:", e);
     }
-    const updated = payload.case as CaseItem;
-    setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-    setSelectedCaseId(updated.id);
-    setResultDecisionStatus(`Saved result for ${updated.id}.`);
   }
 
   function buildResultMessage(caseItem: CaseItem) {
