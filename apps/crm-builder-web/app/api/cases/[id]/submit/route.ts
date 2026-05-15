@@ -3,6 +3,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase, updateCaseProcessing } from "@/lib/store";
 import { appendToSubmittedSheet, syncCaseToUnderReviewSheet } from "@/lib/google-drive";
 import { Pool } from "pg";
+import { notifyCaseEvent } from "@/lib/case-notifications";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -61,6 +62,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     applicationNumber,
     submittedAt: body.submittedAt || new Date().toISOString(),
   } as any);
+  // Notify team that the case has been submitted to IRCC
+  await notifyCaseEvent({
+    companyId: user.companyId,
+    caseId: params.id,
+    event: {
+      type: "submission_complete",
+      applicationNumber,
+      submittedAt: body.submittedAt || new Date().toISOString(),
+    },
+  });
   syncCaseToUnderReviewSheet({
     client: caseItem.client,
     formType: caseItem.formType,

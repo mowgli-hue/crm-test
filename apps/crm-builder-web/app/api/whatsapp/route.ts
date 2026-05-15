@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthRecoveryToken } from "@/lib/auth-recovery-token";
 import { normalizePhone } from "@/lib/phone";
+import { notifyCaseEvent } from "@/lib/case-notifications";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
@@ -679,6 +680,17 @@ export async function POST(req: NextRequest) {
                 uploadedBy: matched.client || "Client (WhatsApp)",
                 status: "received",
                 link: finalLink
+              });
+              // Email the team about the doc upload (URGENT if case is already submitted)
+              await notifyCaseEvent({
+                companyId: COMPANY_ID,
+                caseId: matched.id,
+                event: {
+                  type: "doc_uploaded",
+                  docName: String(properFileName || "document"),
+                  docKind: msgType,
+                  isSubmittedCase: String((caseItem as any)?.processingStatus || "") === "submitted",
+                },
               });
 
               // ── STEP 5: SEND SMART ACKNOWLEDGMENT ───────────────────────

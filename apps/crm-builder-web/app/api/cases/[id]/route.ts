@@ -5,6 +5,7 @@ import { canStaffAccessCase } from "@/lib/rbac";
 import { buildCaseFolderNameWithApp, createCaseDriveStructure, extractDriveFolderId, syncCaseToUnderReviewSheet } from "@/lib/google-drive";
 import { addAuditLog, deleteCase, getCase, resolveCaseDriveRootLink, updateCaseLinks, updateCaseProcessing, updateCaseProfile, updateCaseStage } from "@/lib/store";
 import { boundedText } from "@/lib/validation";
+import { notifyCaseEvent } from "@/lib/case-notifications";
 
 export async function PATCH(
   request: NextRequest,
@@ -193,6 +194,17 @@ export async function PATCH(
     });
     // Notify when case is reassigned
     if (assignedTo && assignedTo !== (currentCase as any).assignedTo) {
+      // Email the team about the reassignment
+      await notifyCaseEvent({
+        companyId: user.companyId,
+        caseId: updated.id,
+        event: {
+          type: "reassigned",
+          previousAssignee: (currentCase as any).assignedTo || null,
+          newAssignee: assignedTo,
+          changedBy: user.name,
+        },
+      });
       try {
         const { listUsers, addNotification } = await import("@/lib/store");
         const allUsers = await listUsers(user.companyId);

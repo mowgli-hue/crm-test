@@ -15,6 +15,7 @@ import { boundedText, isReasonablePhone, isValidEmail, normalizeEmail, normalize
 import { startIntakeSession } from "@/lib/whatsapp-ai-intake";
 import { isWhatsAppConfigured } from "@/lib/whatsapp";
 import { Pool } from "pg";
+import { notifyCaseEvent } from "@/lib/case-notifications";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -182,6 +183,13 @@ export async function POST(request: NextRequest) {
     familyMembers,
     familyTotalCharges,
     assignedTo
+  });
+  // Send case_created notification email to team@newtonimmigration.com
+  // Non-fatal: any failure is logged inside notifyCaseEvent and ignored.
+  await notifyCaseEvent({
+    companyId: user.companyId,
+    caseId: created.id,
+    event: { type: "case_created", createdBy: user.name },
   });
   // Sync to client sheet
   appendToAllCasesSheet({
@@ -372,6 +380,17 @@ ${summaryData.text}`,
         // on a different case (Harpreet-style duplicate-case scenario).
         if (result.mode === "skip-other-case-has-active-session") {
           console.warn(`🛑 Skipped auto-intake for ${created.id} — duplicate phone has active session on another case. ${result.error}`);
+          // Email the team so they investigate the duplicate-case situation
+          await notifyCaseEvent({
+            companyId: user.companyId,
+            caseId: created.id,
+            event: {
+              type: "intake_skipped",
+              skipMode: "skip-other-case-has-active-session",
+              skipReason: String(result.error || "duplicate phone has active session on another case"),
+              phone: created.leadPhone || undefined,
+            },
+          });
           await writeIntakeNote(
             `🛑 Auto-intake SKIPPED — duplicate phone detected.\n\n` +
             `${result.error || ""}\n\n` +
