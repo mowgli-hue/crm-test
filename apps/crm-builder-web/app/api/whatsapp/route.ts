@@ -327,7 +327,7 @@ export async function POST(req: NextRequest) {
               greetingReply = `Hi ${clientFirstName}! 👋 How can we help you today?`;
             } else {
               // True new lead — ask what service they need
-              greetingReply = "Hi! 👋 How can we help you today? Are you looking for help with a study permit, work permit, PR, or something else?";
+              greetingReply = "Hi! 👋 Welcome to Newton Immigration. Could you share your name (and case ID if you have one) so our team can look up your file? Our team will get back to you shortly.";
             }
 
             try {
@@ -354,7 +354,7 @@ export async function POST(req: NextRequest) {
                   "2. Match the client's language (English / Hindi / Punjabi). If they used 'Sat sri akal' reply with 'Sat sri akal!' once. If English, reply in English.",
                   "3. NEVER quote fees, dates, or processing times.",
                   "4. NEVER promise outcomes.",
-                  "5. Mention service categories briefly: study permit, work permit, PR, LMIA, visit visa.",
+                  "5. Do NOT mention or list service categories. The main number is for existing processing clients - never push a marketing-style menu at them.",
                   "6. Maximum 2 short lines. No emoji unless client used one.",
                   "7. Return ONLY the reply text — no labels, no quotes.",
                 ].join("\n");
@@ -995,7 +995,7 @@ If you have a case ID or application number handy, sharing it will help us respo
             } else if (extracted.isGreeting || text.length < 20) {
               await sendWhatsAppText(from, `${greeting} 🍁 Welcome to Newton Immigration.
 
-How can we help you today? Please share your name and what service you need (work permit, study permit, PR, etc.) and our team will assist you.
+Thanks for reaching out. Our team has received your message and will get back to you shortly. If you have a case ID or application number, sharing it will help us respond faster.
 
 — Newton Immigration Team`);
             } else {
