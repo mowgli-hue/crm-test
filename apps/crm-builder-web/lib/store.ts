@@ -335,7 +335,10 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
       };
     }),
     sessions: raw.sessions ?? [],
-    invites: raw.invites ?? []
+    invites: raw.invites ?? [],
+    webForms: raw.webForms ?? [],
+    prConsultations: raw.prConsultations ?? [],
+    submissions: raw.submissions ?? []
   };
 }
 
