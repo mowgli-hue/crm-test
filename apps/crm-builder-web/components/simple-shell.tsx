@@ -6883,6 +6883,33 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="text-base font-bold text-slate-900">{selectedCase.client}</p>
                                 {isUrgentCase(selectedCase) && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">🔴 URGENT</span>}
+                                {(() => {
+                                  const intake: any = (selectedCase as any).pgwpIntake;
+                                  const raw = intake?.whatsappSession;
+                                  if (!raw) {
+                                    return <span title="No intake session yet" className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">⚪ No intake</span>;
+                                  }
+                                  try {
+                                    const s = JSON.parse(raw);
+                                    if (s.escalatedAt) {
+                                      return <span title={"Escalated: " + (s.escalationReason || "stuck")} className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">🚨 Stuck</span>;
+                                    }
+                                    if (s.phase === "complete") {
+                                      return <span title="Intake complete" className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">🔵 Intake done</span>;
+                                    }
+                                    if (s.phase === "ai_chat") {
+                                      return <span title={"Mid-intake conversation, turn " + (s.chatTurns||0)} className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">🟢 Active intake</span>;
+                                    }
+                                    if (s.phase === "awaiting_template_reply") {
+                                      return (s.chatTurns||0) > 0
+                                        ? <span title="Template sent, client engaged" className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">🟡 Awaiting reply</span>
+                                        : <span title="Template sent, no reply yet" className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">🟡 Template sent</span>;
+                                    }
+                                    return <span title={"Phase: " + s.phase} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">⚪ {s.phase}</span>;
+                                  } catch {
+                                    return <span title="Invalid intake state" className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">🔴 Invalid</span>;
+                                  }
+                                })()}
                               </div>
                               <p className="text-xs text-slate-400 mt-0.5">{selectedCase.id} · {selectedCase.formType} · {selectedCase.leadPhone || "No phone"}</p>
                             </div>
@@ -6910,6 +6937,31 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               <option value="submitted">Submitted</option>
                               <option value="other">Other</option>
                             </select>
+                            <button
+                              onClick={async () => {
+                                if (!confirm("Reset intake session for " + selectedCase.client + "? This clears the bot’s progress so a fresh intake can be sent.")) return;
+                                try {
+                                  const res = await apiFetch("/admin/reset-intake", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ caseId: selectedCase.id }),
+                                  });
+                                  if (res?.ok) {
+                                    alert("Intake reset for " + selectedCase.client + ". Click Send Intake to restart.");
+                                    // Refresh cases so the badge updates
+                                    const refreshed = await apiFetch("/cases").then((r) => r?.json()).catch(() => null);
+                                    if (refreshed?.cases) setCases(refreshed.cases as CaseItem[]);
+                                  } else {
+                                    const d = await res?.json().catch(() => ({}));
+                                    alert("Reset failed: " + (d?.error || "unknown"));
+                                  }
+                                } catch (e) {
+                                  alert("Reset failed: " + ((e as Error).message || "network error"));
+                                }
+                              }}
+                              className="rounded-full bg-purple-100 px-2.5 py-1 text-xs font-bold text-purple-800 hover:bg-purple-200"
+                              title="Reset bot intake session (lets staff restart the intake from scratch)"
+                            >🔄 Reset Intake</button>
                             {selectedCase.processingStatus === "under_review" && (
                               <button onClick={() => setShowURPanel(selectedCase.id)}
                                 className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-200">

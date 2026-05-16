@@ -14,8 +14,13 @@ export async function POST(request: NextRequest) {
   const companyId = user?.companyId || process.env.DEFAULT_COMPANY_ID || "newton";
   const cases = await listCases(companyId);
 
-  // Find cases with old bulk sessions OR no session but have a phone
-  const toReset = cases.filter((c: any) => {
+  // Single-case mode: if caller passed body.caseId, reset only that case.
+  // Without this, the staff Reset-Intake button on the case header would
+  // bulk-reset every case in the system.
+  const targetCaseId = String(body.caseId || "").trim();
+  const toReset = targetCaseId
+    ? cases.filter((c: any) => c.id === targetCaseId)
+    : cases.filter((c: any) => {
     const phone = String(c.leadPhone || "").replace(/\D/g, "");
     if (!phone) return false;
     if (c.processingStatus === "submitted") return false; // skip submitted
