@@ -47,7 +47,7 @@ export async function classifyMessage(input: {
 
   // Fast pre-checks before paying for an LLM call.
   // Pure acks/emojis: ignore (don't reply at all — would be spammy).
-  const tinyAcks = /^(ok|okay|k|kk|hmm|hm|👍|🙏|✅|👌|thanks|thank you|thx|ty|noted|got it|sure|yep|yup|done|received|ji|haa|ਹਾਂ|ਜੀ|ਠੀਕ|ji|theek)\.?\s*$/i;
+  const tinyAcks = /^(hi|hello|hey|good morning|good evening|good afternoon|hola|salam|sat sri akal|ssa|ok|okay|k|kk|hmm|hm|👍|🙏|✅|👌|thanks|thank you|thx|ty|noted|got it|sure|yep|yup|done|received|ji|haa|ਹਾਂ|ਜੀ|ਠੀਕ|ji|theek)!?\.?\s*$/i;
   if (tinyAcks.test(text)) {
     return { route: "ignore", reason: "tiny acknowledgement — no reply needed" };
   }
@@ -157,6 +157,9 @@ export async function generateReply(input: {
     "9. Do NOT use emojis unless the client used one in their last message.",
     "10. Tone: warm, professional, plain. No robotic phrasing like 'Thank you for your message'. Just write like a friendly team member.",
     "11. Sign off ONLY when it feels natural (don't always add '— Newton Team'). For short acks, no sign-off.",
+    "12. DO NOT ask the client unsolicited questions about their application status, progress, documents, or timeline. NEVER write things like 'How is it going with your application?' or 'Any questions about your case?' or 'How can we help?'. The client reached out to US, not the other way around. Respond to what they said, then stop.",
+    "13. If the client message is small talk (greetings, well wishes, casual remarks) and there is nothing actionable to respond to, write a single short acknowledgement (e.g. 'Hi! Hope you are doing well.' or 'Thanks for the message, our team is on it.') and STOP. No follow-up question.",
+    "14. NEVER suggest the client do something, send something, check something, or update something unless they explicitly asked what to do next. The team decides next steps, not the bot.",
     "",
     "Return ONLY the reply text. No labels, no quotes, no preamble.",
   ].join("\n");
