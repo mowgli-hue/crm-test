@@ -668,6 +668,9 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   // Delete-case modal: holds the case ID being deleted (or null when closed).
   // Modal also requires the staff to type the client's name to confirm before
   // the delete button enables — guards against accidental clicks.
+  const [auditModalCaseId, setAuditModalCaseId] = useState<string | null>(null);
+  const [auditModalLogs, setAuditModalLogs] = useState<Array<{ id: string; createdAt: string; actorName: string; action: string; metadata?: Record<string, string> | null }> | null>(null);
+  const [auditModalError, setAuditModalError] = useState<string | null>(null);
   const [deleteCaseModalId, setDeleteCaseModalId] = useState<string | null>(null);
   const [deleteCaseTypedName, setDeleteCaseTypedName] = useState("");
   const [deleteCaseInProgress, setDeleteCaseInProgress] = useState(false);
@@ -6962,6 +6965,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               className="rounded-full bg-purple-100 px-2.5 py-1 text-xs font-bold text-purple-800 hover:bg-purple-200"
                               title="Reset bot intake session (lets staff restart the intake from scratch)"
                             >🔄 Reset Intake</button>
+                            <button
+                              onClick={() => { setAuditModalCaseId(selectedCase.id); setAuditModalLogs(null); setAuditModalError(null); }}
+                              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                              title="View audit log for this case (who created/modified/reassigned/submitted)"
+                            >📜 Audit Log</button>
                             {selectedCase.processingStatus === "under_review" && (
                               <button onClick={() => setShowURPanel(selectedCase.id)}
                                 className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-200">
@@ -12211,6 +12219,64 @@ ${aiResult.text}`, addedBy:"AI"})
          endpoint cascades through messages/tasks/submissions and
          preserves the Drive folder + WhatsApp inbox history.
        ──────────────────────────────────────────────────────────── */}
+      {/* Audit Log Modal */}
+      {typeof document !== "undefined" && auditModalCaseId && createPortal((
+        (() => {
+          if (!auditModalLogs && !auditModalError) {
+            setTimeout(async () => {
+              try {
+                const res = await apiFetch(`/cases/${auditModalCaseId}/audit`, { method: "GET" });
+                if (res?.ok) {
+                  const data = await res.json();
+                  setAuditModalLogs(data?.logs || []);
+                } else {
+                  setAuditModalError("Failed to load audit log (HTTP " + (res?.status || "?") + ")");
+                }
+              } catch (e) {
+                setAuditModalError("Network error: " + ((e as Error).message || "unknown"));
+              }
+            }, 0);
+          }
+          const close = () => { setAuditModalCaseId(null); setAuditModalLogs(null); setAuditModalError(null); };
+          return (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 999998, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={close}>
+              <div style={{ background: "white", borderRadius: "16px", padding: "20px", width: "100%", maxWidth: "640px", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }} onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-base font-bold text-slate-900">📜 Audit Log {auditModalCaseId}</h2>
+                  <button onClick={close} className="text-slate-400 hover:text-slate-700 text-xl font-bold">×</button>
+                </div>
+                {auditModalError && (<div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{auditModalError}</div>)}
+                {!auditModalError && auditModalLogs === null && (<p className="text-xs text-slate-500 italic">Loading audit entries…</p>)}
+                {auditModalLogs && auditModalLogs.length === 0 && (<p className="text-xs text-slate-500">No audit entries found for this case yet.</p>)}
+                {auditModalLogs && auditModalLogs.length > 0 && (
+                  <div className="overflow-y-auto flex-1" style={{ minHeight: 0 }}>
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-50 border-b border-slate-200"><tr>
+                        <th className="text-left px-2 py-1.5 font-bold text-slate-600">When</th>
+                        <th className="text-left px-2 py-1.5 font-bold text-slate-600">Actor</th>
+                        <th className="text-left px-2 py-1.5 font-bold text-slate-600">Action</th>
+                        <th className="text-left px-2 py-1.5 font-bold text-slate-600">Details</th>
+                      </tr></thead>
+                      <tbody>
+                        {auditModalLogs.map((log) => (
+                          <tr key={log.id} className="border-b border-slate-100">
+                            <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{new Date(log.createdAt).toLocaleString()}</td>
+                            <td className="px-2 py-1.5 font-semibold text-slate-700">{log.actorName || "system"}</td>
+                            <td className="px-2 py-1.5 text-slate-700">{log.action}</td>
+                            <td className="px-2 py-1.5 text-slate-500 font-mono text-[10px]">{log.metadata ? JSON.stringify(log.metadata).slice(0, 80) : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="mt-4 flex justify-end"><button onClick={close} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700">Close</button></div>
+              </div>
+            </div>
+          );
+        })()
+      ), document.body)}
+
     {typeof document !== "undefined" && deleteCaseModalId && createPortal((
       (() => {
         // Look up the case being deleted. First try the master `cases`
