@@ -2,6 +2,7 @@ import { Role } from "@/lib/models";
 
 export type AppScreen =
   | "dashboard"
+  | "admin-dashboard"
   | "cases"
   | "communications"
   | "results"
@@ -24,7 +25,7 @@ export type AppScreen =
 // Each role only sees what they need
 const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Admin sees everything
-  Admin: ["dashboard", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
+  Admin: ["dashboard", "admin-dashboard", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
 
   // Marketing creates cases, tracks leads, logs calls, sees accounting + PR consultations
   Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "newton-ai"],

@@ -2,6 +2,7 @@
 import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
+import AdminDashboardPage from "@/components/admin-dashboard-page";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
 import ResultsDashboard from "@/components/results-dashboard";
@@ -381,6 +382,7 @@ type DiagnosticsReport = {
 
 const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={16} /> },
+  { id: "admin-dashboard", label: "Admin Dashboard", icon: <span>🛡️</span> },
   { id: "cases", label: "Cases", icon: <ClipboardList size={16} /> },
   { id: "communications", label: "New Case", icon: <UserPlus size={16} /> },
   { id: "results", label: "Results", icon: <BarChart2 size={16} /> },
@@ -5257,6 +5259,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               </section>
             ) : screen === "marketing-leads" ? (
               <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
+            ) : screen === "admin-dashboard" ? (
+              <AdminDashboardPage apiFetch={apiFetch} onOpenCase={(id: string) => { setSelectedCaseId(id); setScreen("cases"); }} />
             ) : screen === "marketing-dashboard" ? (
               <MarketingDashboard apiFetch={apiFetch} onNavigate={(s: any) => setScreen(s)} />
             ) : screen === "web-forms" ? (
