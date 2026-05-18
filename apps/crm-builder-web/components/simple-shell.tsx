@@ -3,6 +3,7 @@ import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
 import AdminDashboardPage from "@/components/admin-dashboard-page";
+import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
 import ResultsDashboard from "@/components/results-dashboard";
@@ -9101,11 +9102,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       onClick={async () => {
                         setImportRunning(true);
                         setImportStatus("Creating team accounts...");
-                        const team = [{"name": "Rajwinder", "role": "Processing"}, {"name": "Avneet", "role": "Processing"}, {"name": "Ramandeep", "role": "Processing"}, {"name": "Simi", "role": "Processing"}, {"name": "Sukhman", "role": "Marketing"}, {"name": "Rapneet", "role": "Admin"}, {"name": "Manisha", "role": "Processing"}, {"name": "Serbleen", "role": "Marketing"}, {"name": "Akanksha", "role": "Marketing"}, {"name": "Neha", "role": "Marketing"}, {"name": "Manpreet", "role": "Marketing"}];
+                        const team = NEWTON_TEAM_MEMBERS.map((m) => ({ name: m.name, email: m.email, role: m.role }));
                         let created = 0, skipped = 0;
                         for (const member of team) {
                           try {
-                            const email = `${member.name.toLowerCase()}@newtonimmigration.com`;
+                            const email = member.email;
                             const res = await apiFetch("/users/invite", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -9120,7 +9121,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             else skipped++;
                           } catch { skipped++; }
                         }
-                        setImportStatus(`✓ Done! ${created} accounts created, ${skipped} skipped (already exist). Login: name@newtonimmigration.com / Newton_123`);
+                        setImportStatus(`✓ Done! ${created} accounts created, ${skipped} skipped (already exist). Login: each member uses their *.newtonimmigration@gmail.com address / Newton_123`);
                         setImportRunning(false);
                       }}
                       disabled={importRunning}
