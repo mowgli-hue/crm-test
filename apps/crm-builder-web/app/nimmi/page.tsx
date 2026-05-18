@@ -3,18 +3,27 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Nimmi admin page — standalone, doesn't depend on simple-shell.
+ * Nimmi admin page — with Convert to Case buttons.
  *
  * URL: /nimmi
  * Auth: relies on existing fd_session cookie (CRM session)
- *
- * If the user isn't signed in to CRM, the API calls will 401 and we
- * show a "please sign in to CRM first" message.
- *
- * Newton team can bookmark this URL or you can add a sidebar link later.
  */
 
 type Tab = 'signups' | 'callbacks' | 'intakes' | 'documents';
+
+const COMMON_FORM_TYPES = [
+  'PGWP',
+  'Study Permit Extension',
+  'Express Entry',
+  'PNP',
+  'Spousal Sponsorship',
+  'Visitor Visa',
+  'Super Visa',
+  'PR Card Renewal',
+  'Citizenship',
+  'PR Strategy Consultation',
+  'Work Permit',
+];
 
 interface SignupRow {
   id: number;
@@ -83,16 +92,14 @@ export default function NimmiAdminPage() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#fafaf9', color: '#111', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      {/* Top nav */}
       <nav style={{ background: 'white', borderBottom: '1px solid #e5e5e5', padding: '1rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '1.35rem', fontWeight: 500 }}>Nimmi</span>
-          <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', padding: '0.2rem 0.5rem', background: '#0e5550', color: 'white', borderRadius: '4px', textTransform: 'uppercase' }}>Newton Admin</span>
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', padding: '0.2rem 0.5rem', background: '#2563eb', color: 'white', borderRadius: '4px', textTransform: 'uppercase' }}>Newton Admin</span>
         </div>
         <a href="/" style={{ fontSize: '0.85rem', color: '#525252', textDecoration: 'none' }}>← Back to CRM</a>
       </nav>
 
-      {/* Tabs */}
       <div style={{ background: 'white', borderBottom: '1px solid #e5e5e5', padding: '0 1.5rem', display: 'flex', gap: '0.25rem', overflowX: 'auto' }}>
         <TabBtn active={tab === 'signups'} onClick={() => setTab('signups')}>Signups</TabBtn>
         <TabBtn active={tab === 'callbacks'} onClick={() => setTab('callbacks')}>Callbacks</TabBtn>
@@ -126,7 +133,7 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
         fontWeight: 500,
         background: 'transparent',
         border: 'none',
-        borderBottom: active ? '2px solid #0e5550' : '2px solid transparent',
+        borderBottom: active ? '2px solid #2563eb' : '2px solid transparent',
         color: active ? '#111' : '#737373',
         cursor: 'pointer',
       }}
@@ -136,12 +143,168 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
   );
 }
 
+// ─── CONVERT DIALOG ──────────────────────────────────────────
+
+function ConvertDialog({
+  rowName,
+  defaultFormType,
+  onClose,
+  onConvert,
+}: {
+  rowName: string;
+  defaultFormType?: string;
+  onClose: () => void;
+  onConvert: (formType: string, assignedTo: string) => Promise<void>;
+}) {
+  const [formType, setFormType] = useState(defaultFormType || 'PR Strategy Consultation');
+  const [customFormType, setCustomFormType] = useState('');
+  const [assignedTo, setAssignedTo] = useState('Unassigned');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConvert() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const finalFormType = formType === '__custom' ? customFormType.trim() : formType;
+      if (!finalFormType) {
+        setError('Please pick or type a form type');
+        setSubmitting(false);
+        return;
+      }
+      await onConvert(finalFormType, assignedTo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '1.75rem',
+          width: '100%',
+          maxWidth: '440px',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.25)',
+        }}
+      >
+        <h2 style={{ margin: '0 0 0.4rem', fontSize: '1.2rem', fontWeight: 600 }}>
+          Convert to Case
+        </h2>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.88rem', color: '#525252' }}>
+          Creating a real CRM case for <strong>{rowName}</strong>
+        </p>
+
+        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>
+          Form type
+        </label>
+        <select
+          value={formType}
+          onChange={(e) => setFormType(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '0.6rem 0.75rem',
+            border: '1px solid #d4d4d4',
+            borderRadius: '6px',
+            fontSize: '0.9rem',
+            marginBottom: '0.85rem',
+            background: 'white',
+          }}
+        >
+          {COMMON_FORM_TYPES.map((ft) => (
+            <option key={ft} value={ft}>{ft}</option>
+          ))}
+          <option value="__custom">Custom…</option>
+        </select>
+
+        {formType === '__custom' && (
+          <input
+            type="text"
+            value={customFormType}
+            onChange={(e) => setCustomFormType(e.target.value)}
+            placeholder="Custom form type"
+            style={{
+              width: '100%',
+              padding: '0.6rem 0.75rem',
+              border: '1px solid #d4d4d4',
+              borderRadius: '6px',
+              fontSize: '0.9rem',
+              marginBottom: '0.85rem',
+            }}
+          />
+        )}
+
+        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>
+          Assign to
+        </label>
+        <input
+          type="text"
+          value={assignedTo}
+          onChange={(e) => setAssignedTo(e.target.value)}
+          placeholder="Unassigned"
+          style={{
+            width: '100%',
+            padding: '0.6rem 0.75rem',
+            border: '1px solid #d4d4d4',
+            borderRadius: '6px',
+            fontSize: '0.9rem',
+            marginBottom: '1.25rem',
+          }}
+        />
+
+        {error && (
+          <p style={{ fontSize: '0.82rem', color: '#9a2e10', marginBottom: '0.85rem' }}>
+            {error}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            style={{ padding: '0.6rem 1rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConvert}
+            disabled={submitting}
+            style={{ padding: '0.6rem 1rem', border: 'none', background: '#0a0a0a', color: 'white', borderRadius: '6px', cursor: submitting ? 'wait' : 'pointer', fontSize: '0.88rem', fontWeight: 500 }}
+          >
+            {submitting ? 'Converting…' : 'Create case →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── SIGNUPS ─────────────────────────────────────────────────
 
 function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
   const [rows, setRows] = useState<SignupRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'handled'>('all');
+  const [convertingRow, setConvertingRow] = useState<SignupRow | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -162,6 +325,19 @@ function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handled }),
     });
+    void refresh();
+  }
+
+  async function handleConvert(row: SignupRow, formType: string, assignedTo: string) {
+    const res = await fetch(`/api/nimmi/signups/${row.id}/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formType, assignedTo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Convert failed');
+    setConvertingRow(null);
+    alert(`✓ Created case ${data.case_id}`);
     void refresh();
   }
 
@@ -188,7 +364,7 @@ function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
               <Th>Email</Th>
               <Th>Phone</Th>
               <Th>Status</Th>
-              <Th></Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -202,7 +378,11 @@ function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td>{r.email}</Td>
                 <Td>{r.phone || '—'}</Td>
                 <Td>
-                  {r.handled ? (
+                  {r.converted_case_id ? (
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+                      → {r.converted_case_id}
+                    </span>
+                  ) : r.handled ? (
                     <span style={{ fontSize: '0.75rem', background: '#dff4ec', color: '#0a6e54', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
                       ✓ Handled
                     </span>
@@ -213,15 +393,33 @@ function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
                   )}
                 </Td>
                 <Td>
-                  <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
-                    {r.handled ? 'Mark pending' : 'Mark handled'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    {!r.converted_case_id && (
+                      <button
+                        onClick={() => setConvertingRow(r)}
+                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        Convert to Case
+                      </button>
+                    )}
+                    <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
+                      {r.handled ? 'Mark pending' : 'Mark handled'}
+                    </button>
+                  </div>
                 </Td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {convertingRow && (
+        <ConvertDialog
+          rowName={[convertingRow.first_name, convertingRow.last_name].filter(Boolean).join(' ') || convertingRow.email}
+          onClose={() => setConvertingRow(null)}
+          onConvert={(formType, assignedTo) => handleConvert(convertingRow, formType, assignedTo)}
+        />
+      )}
     </div>
   );
 }
@@ -232,6 +430,7 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
   const [rows, setRows] = useState<CallbackRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'done'>('all');
+  const [convertingRow, setConvertingRow] = useState<CallbackRow | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -252,6 +451,19 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    void refresh();
+  }
+
+  async function handleConvert(row: CallbackRow, formType: string, assignedTo: string) {
+    const res = await fetch(`/api/nimmi/callbacks/${row.id}/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formType, assignedTo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Convert failed');
+    setConvertingRow(null);
+    alert(`✓ Created case ${data.case_id}`);
     void refresh();
   }
 
@@ -277,10 +489,10 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
               <Th>Name</Th>
               <Th>Phone</Th>
               <Th>Service</Th>
-              <Th>Preferred time</Th>
+              <Th>Time</Th>
               <Th>Message</Th>
               <Th>Status</Th>
-              <Th></Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -294,27 +506,52 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td>{r.phone || r.email || '—'}</Td>
                 <Td>{r.service_slug || '—'}</Td>
                 <Td>{r.preferred_time || '—'}</Td>
-                <Td style={{ maxWidth: 220 }}>{r.message || '—'}</Td>
+                <Td style={{ maxWidth: 200 }}>{r.message || '—'}</Td>
                 <Td>
-                  <select value={r.status} onChange={(e) => markStatus(r.id, e.target.value)} style={{ fontSize: '0.78rem', padding: '0.25rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white' }}>
-                    <option value="pending">Pending</option>
-                    <option value="contacted">Contacted</option>
-                    <option value="done">Done</option>
-                    <option value="no_answer">No answer</option>
-                  </select>
+                  {r.converted_case_id ? (
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+                      → {r.converted_case_id}
+                    </span>
+                  ) : (
+                    <select value={r.status} onChange={(e) => markStatus(r.id, e.target.value)} style={{ fontSize: '0.78rem', padding: '0.25rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white' }}>
+                      <option value="pending">Pending</option>
+                      <option value="contacted">Contacted</option>
+                      <option value="done">Done</option>
+                      <option value="no_answer">No answer</option>
+                    </select>
+                  )}
                 </Td>
                 <Td>
-                  {r.phone && (
-                    <a href={`tel:${r.phone}`} style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', border: '1px solid #0e5550', background: '#0e5550', color: 'white', borderRadius: '4px', textDecoration: 'none' }}>
-                      📞 Call
-                    </a>
-                  )}
+                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    {r.phone && (
+                      <a href={`tel:${r.phone}`} style={{ fontSize: '0.78rem', padding: '0.3rem 0.55rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '4px', textDecoration: 'none', color: '#0a0a0a' }}>
+                        📞
+                      </a>
+                    )}
+                    {!r.converted_case_id && (
+                      <button
+                        onClick={() => setConvertingRow(r)}
+                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        Convert
+                      </button>
+                    )}
+                  </div>
                 </Td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {convertingRow && (
+        <ConvertDialog
+          rowName={[convertingRow.first_name, convertingRow.last_name].filter(Boolean).join(' ') || convertingRow.phone || convertingRow.email || 'Lead'}
+          defaultFormType={convertingRow.service_slug ? slugToFormType(convertingRow.service_slug) : undefined}
+          onClose={() => setConvertingRow(null)}
+          onConvert={(formType, assignedTo) => handleConvert(convertingRow, formType, assignedTo)}
+        />
+      )}
     </div>
   );
 }
@@ -325,6 +562,7 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
   const [rows, setRows] = useState<IntakeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'eligible' | 'ineligible'>('all');
+  const [convertingRow, setConvertingRow] = useState<IntakeRow | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -345,6 +583,19 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handled }),
     });
+    void refresh();
+  }
+
+  async function handleConvert(row: IntakeRow, formType: string, assignedTo: string) {
+    const res = await fetch(`/api/nimmi/intakes/${row.id}/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formType, assignedTo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Convert failed');
+    setConvertingRow(null);
+    alert(`✓ Created case ${data.case_id}`);
     void refresh();
   }
 
@@ -372,7 +623,7 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
               <Th>Service</Th>
               <Th>Result</Th>
               <Th>Status</Th>
-              <Th></Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -393,22 +644,45 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
                   )}
                 </Td>
                 <Td>
-                  {r.handled ? (
+                  {r.converted_case_id ? (
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+                      → {r.converted_case_id}
+                    </span>
+                  ) : r.handled ? (
                     <span style={{ fontSize: '0.75rem', color: '#0a6e54' }}>✓ Handled</span>
                   ) : (
                     <span style={{ fontSize: '0.75rem', color: '#854d0e' }}>! Pending</span>
                   )}
                 </Td>
                 <Td>
-                  <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
-                    {r.handled ? 'Mark pending' : 'Mark handled'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    {!r.converted_case_id && (
+                      <button
+                        onClick={() => setConvertingRow(r)}
+                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        Convert
+                      </button>
+                    )}
+                    <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
+                      {r.handled ? 'Pending' : 'Handled'}
+                    </button>
+                  </div>
                 </Td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {convertingRow && (
+        <ConvertDialog
+          rowName={[convertingRow.first_name, convertingRow.last_name].filter(Boolean).join(' ') || convertingRow.email || 'Lead'}
+          defaultFormType={slugToFormType(convertingRow.service_slug)}
+          onClose={() => setConvertingRow(null)}
+          onConvert={(formType, assignedTo) => handleConvert(convertingRow, formType, assignedTo)}
+        />
+      )}
     </div>
   );
 }
@@ -465,7 +739,7 @@ function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
         </table>
 
         <p style={{ padding: '1rem', fontSize: '0.78rem', color: '#737373', fontStyle: 'italic', background: '#fafaf9', borderTop: '1px solid #f5f5f4' }}>
-          Note: To download a document, a Newton specialist signs in to Nimmi and clicks "Download" on the document detail page. Direct download from CRM coming soon.
+          Note: Direct download from CRM coming soon. For now, sign in to Nimmi to download the actual file.
         </p>
       </div>
     </div>
@@ -473,6 +747,21 @@ function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────
+
+function slugToFormType(slug: string): string {
+  const map: Record<string, string> = {
+    pgwp: 'PGWP',
+    'study-permit-extension': 'Study Permit Extension',
+    'express-entry': 'Express Entry',
+    pnp: 'PNP',
+    'spousal-sponsorship-inside': 'Spousal Sponsorship',
+    'visitor-visa': 'Visitor Visa',
+    'pr-card-renewal': 'PR Card Renewal',
+    citizenship: 'Citizenship',
+    consultation: 'PR Strategy Consultation',
+  };
+  return map[slug] || slug;
+}
 
 function Th({ children }: { children: React.ReactNode }) {
   return <th style={{ padding: '0.75rem 1rem', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#737373' }}>{children}</th>;
@@ -500,9 +789,9 @@ function FilterBar({ options, value, onChange, count, loading }: {
               padding: '0.4rem 0.85rem',
               fontSize: '0.82rem',
               fontWeight: 500,
-              background: value === opt.value ? '#111' : 'white',
+              background: value === opt.value ? '#0a0a0a' : 'white',
               color: value === opt.value ? 'white' : '#525252',
-              border: '1px solid ' + (value === opt.value ? '#111' : '#d4d4d4'),
+              border: '1px solid ' + (value === opt.value ? '#0a0a0a' : '#d4d4d4'),
               borderRadius: '6px',
               cursor: 'pointer',
             }}
