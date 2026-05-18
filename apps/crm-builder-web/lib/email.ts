@@ -22,7 +22,8 @@
 
 import nodemailer from "nodemailer";
 
-let cachedTransport: ReturnType<typeof nodemailer.createTransport> | null = null;
+// Type as any because nodemailer.createTransport returns different types for pool vs non-pool configs.
+let cachedTransport: any = null;
 
 function getFromAddress(): string {
   return process.env.GMAIL_FROM_EMAIL
@@ -46,6 +47,17 @@ function getTransport() {
       user: getFromAddress(),
       pass: password,
     },
+    // Connection pooling + rate limiting
+    // ----------------------------------
+    // Without pool, nodemailer opens a new TLS+AUTH handshake per email.
+    // Gmail blocks after ~10 auth attempts in a short window with the
+    // 454-4.7.0 "Too many login attempts" error. Pooling keeps one
+    // connection alive so AUTH only runs once.
+    pool: true,
+    maxConnections: 1,    // single concurrent connection
+    maxMessages: 100,     // close + reopen after 100 messages (Gmail per-conn limit)
+    rateDelta: 1000,      // throttle window: 1 second
+    rateLimit: 4,         // max 4 emails per second (Gmail SMTP cap is around 14)
   });
   return cachedTransport;
 }
