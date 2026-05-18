@@ -681,17 +681,11 @@ export async function POST(req: NextRequest) {
                 status: "received",
                 link: finalLink
               });
-              // Email the team about the doc upload (URGENT if case is already submitted)
-              await notifyCaseEvent({
-                companyId: COMPANY_ID,
-                caseId: matched.id,
-                event: {
-                  type: "doc_uploaded",
-                  docName: String(properFileName || "document"),
-                  docKind: msgType,
-                  isSubmittedCase: String((caseItem as any)?.processingStatus || "") === "submitted",
-                },
-              });
+              // doc_uploaded email notification disabled by user request (May 2026)
+              // - Was firing on every client doc upload, which created inbox noise.
+              // - Doc activity is already visible in the inbox + case detail.
+              // - To re-enable: restore the notifyCaseEvent call here, or add an
+              //   isSubmittedCase-only branch if only urgent-case alerts are wanted.
 
               // ── STEP 5: SEND SMART ACKNOWLEDGMENT ───────────────────────
               //
