@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { PaymentsTab } from './PaymentsTab';
 
 /**
  * Nimmi admin page — with Convert to Case + Download buttons.
@@ -9,7 +10,7 @@ import { useEffect, useState } from 'react';
  * Auth: relies on existing fd_session cookie (CRM session)
  */
 
-type Tab = 'signups' | 'callbacks' | 'intakes' | 'documents';
+type Tab = 'signups' | 'callbacks' | 'intakes' | 'documents' | 'payments';
 
 const COMMON_FORM_TYPES = [
   'PGWP',
@@ -105,6 +106,7 @@ export default function NimmiAdminPage() {
         <TabBtn active={tab === 'callbacks'} onClick={() => setTab('callbacks')}>Callbacks</TabBtn>
         <TabBtn active={tab === 'intakes'} onClick={() => setTab('intakes')}>Eligibility</TabBtn>
         <TabBtn active={tab === 'documents'} onClick={() => setTab('documents')}>Documents</TabBtn>
+        <TabBtn active={tab === 'payments'} onClick={() => setTab('payments')}>Payments</TabBtn>
       </div>
 
       {authError && (
@@ -118,6 +120,7 @@ export default function NimmiAdminPage() {
         {tab === 'callbacks' && <CallbacksTab onAuthError={() => setAuthError(true)} />}
         {tab === 'intakes' && <IntakesTab onAuthError={() => setAuthError(true)} />}
         {tab === 'documents' && <DocumentsTab onAuthError={() => setAuthError(true)} />}
+        {tab === 'payments' && <PaymentsTab />}
       </main>
     </div>
   );
