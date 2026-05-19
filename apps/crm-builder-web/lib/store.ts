@@ -1757,6 +1757,31 @@ export async function addInvoice(
   return store.cases[idx];
 }
 
+// Update a user's email in place. Match by exact name OR by current email
+// (case-insensitive). Returns the updated user, or null if no match.
+export async function updateUserEmail(args: {
+  companyId: string;
+  name?: string;
+  currentEmail?: string;
+  newEmail: string;
+}): Promise<AppUser | null> {
+  const store = await readStore();
+  const targetName = String(args.name || "").trim().toLowerCase();
+  const targetEmail = String(args.currentEmail || "").trim().toLowerCase();
+  const newEmail = String(args.newEmail || "").trim();
+  if (!newEmail || !/@/.test(newEmail)) return null;
+  const idx = store.users.findIndex((u) => {
+    if (u.companyId !== args.companyId) return false;
+    if (targetName && String(u.name).trim().toLowerCase() === targetName) return true;
+    if (targetEmail && String(u.email).trim().toLowerCase() === targetEmail) return true;
+    return false;
+  });
+  if (idx === -1) return null;
+  store.users[idx] = { ...store.users[idx], email: newEmail };
+  await writeStore(store);
+  return store.users[idx];
+}
+
 export async function listUsers(companyId: string): Promise<AppUser[]> {
   const store = await readStore();
   return store.users.filter((u) => u.companyId === companyId && u.userType === "staff");
