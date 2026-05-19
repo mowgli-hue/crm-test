@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Nimmi admin page — with Convert to Case buttons.
+ * Nimmi admin page — with Convert to Case + Download buttons.
  *
  * URL: /nimmi
  * Auth: relies on existing fd_session cookie (CRM session)
@@ -207,32 +207,18 @@ function ConvertDialog({
           boxShadow: '0 25px 50px rgba(0,0,0,0.25)',
         }}
       >
-        <h2 style={{ margin: '0 0 0.4rem', fontSize: '1.2rem', fontWeight: 600 }}>
-          Convert to Case
-        </h2>
+        <h2 style={{ margin: '0 0 0.4rem', fontSize: '1.2rem', fontWeight: 600 }}>Convert to Case</h2>
         <p style={{ margin: '0 0 1.25rem', fontSize: '0.88rem', color: '#525252' }}>
           Creating a real CRM case for <strong>{rowName}</strong>
         </p>
 
-        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>
-          Form type
-        </label>
+        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>Form type</label>
         <select
           value={formType}
           onChange={(e) => setFormType(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '0.6rem 0.75rem',
-            border: '1px solid #d4d4d4',
-            borderRadius: '6px',
-            fontSize: '0.9rem',
-            marginBottom: '0.85rem',
-            background: 'white',
-          }}
+          style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #d4d4d4', borderRadius: '6px', fontSize: '0.9rem', marginBottom: '0.85rem', background: 'white' }}
         >
-          {COMMON_FORM_TYPES.map((ft) => (
-            <option key={ft} value={ft}>{ft}</option>
-          ))}
+          {COMMON_FORM_TYPES.map((ft) => <option key={ft} value={ft}>{ft}</option>)}
           <option value="__custom">Custom…</option>
         </select>
 
@@ -242,54 +228,24 @@ function ConvertDialog({
             value={customFormType}
             onChange={(e) => setCustomFormType(e.target.value)}
             placeholder="Custom form type"
-            style={{
-              width: '100%',
-              padding: '0.6rem 0.75rem',
-              border: '1px solid #d4d4d4',
-              borderRadius: '6px',
-              fontSize: '0.9rem',
-              marginBottom: '0.85rem',
-            }}
+            style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #d4d4d4', borderRadius: '6px', fontSize: '0.9rem', marginBottom: '0.85rem' }}
           />
         )}
 
-        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>
-          Assign to
-        </label>
+        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, marginBottom: '0.4rem' }}>Assign to</label>
         <input
           type="text"
           value={assignedTo}
           onChange={(e) => setAssignedTo(e.target.value)}
           placeholder="Unassigned"
-          style={{
-            width: '100%',
-            padding: '0.6rem 0.75rem',
-            border: '1px solid #d4d4d4',
-            borderRadius: '6px',
-            fontSize: '0.9rem',
-            marginBottom: '1.25rem',
-          }}
+          style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #d4d4d4', borderRadius: '6px', fontSize: '0.9rem', marginBottom: '1.25rem' }}
         />
 
-        {error && (
-          <p style={{ fontSize: '0.82rem', color: '#9a2e10', marginBottom: '0.85rem' }}>
-            {error}
-          </p>
-        )}
+        {error && <p style={{ fontSize: '0.82rem', color: '#9a2e10', marginBottom: '0.85rem' }}>{error}</p>}
 
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            style={{ padding: '0.6rem 1rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem' }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleConvert}
-            disabled={submitting}
-            style={{ padding: '0.6rem 1rem', border: 'none', background: '#0a0a0a', color: 'white', borderRadius: '6px', cursor: submitting ? 'wait' : 'pointer', fontSize: '0.88rem', fontWeight: 500 }}
-          >
+          <button onClick={onClose} disabled={submitting} style={{ padding: '0.6rem 1rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem' }}>Cancel</button>
+          <button onClick={handleConvert} disabled={submitting} style={{ padding: '0.6rem 1rem', border: 'none', background: '#0a0a0a', color: 'white', borderRadius: '6px', cursor: submitting ? 'wait' : 'pointer', fontSize: '0.88rem', fontWeight: 500 }}>
             {submitting ? 'Converting…' : 'Create case →'}
           </button>
         </div>
@@ -379,28 +335,17 @@ function SignupsTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td>{r.phone || '—'}</Td>
                 <Td>
                   {r.converted_case_id ? (
-                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                      → {r.converted_case_id}
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>→ {r.converted_case_id}</span>
                   ) : r.handled ? (
-                    <span style={{ fontSize: '0.75rem', background: '#dff4ec', color: '#0a6e54', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                      ✓ Handled
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#dff4ec', color: '#0a6e54', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>✓ Handled</span>
                   ) : (
-                    <span style={{ fontSize: '0.75rem', background: '#fef3c7', color: '#854d0e', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                      ! New
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#fef3c7', color: '#854d0e', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>! New</span>
                   )}
                 </Td>
                 <Td>
                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                     {!r.converted_case_id && (
-                      <button
-                        onClick={() => setConvertingRow(r)}
-                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
-                      >
-                        Convert to Case
-                      </button>
+                      <button onClick={() => setConvertingRow(r)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}>Convert to Case</button>
                     )}
                     <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
                       {r.handled ? 'Mark pending' : 'Mark handled'}
@@ -509,9 +454,7 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td style={{ maxWidth: 200 }}>{r.message || '—'}</Td>
                 <Td>
                   {r.converted_case_id ? (
-                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                      → {r.converted_case_id}
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>→ {r.converted_case_id}</span>
                   ) : (
                     <select value={r.status} onChange={(e) => markStatus(r.id, e.target.value)} style={{ fontSize: '0.78rem', padding: '0.25rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white' }}>
                       <option value="pending">Pending</option>
@@ -524,17 +467,10 @@ function CallbacksTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     {r.phone && (
-                      <a href={`tel:${r.phone}`} style={{ fontSize: '0.78rem', padding: '0.3rem 0.55rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '4px', textDecoration: 'none', color: '#0a0a0a' }}>
-                        📞
-                      </a>
+                      <a href={`tel:${r.phone}`} style={{ fontSize: '0.78rem', padding: '0.3rem 0.55rem', border: '1px solid #d4d4d4', background: 'white', borderRadius: '4px', textDecoration: 'none', color: '#0a0a0a' }}>📞</a>
                     )}
                     {!r.converted_case_id && (
-                      <button
-                        onClick={() => setConvertingRow(r)}
-                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
-                      >
-                        Convert
-                      </button>
+                      <button onClick={() => setConvertingRow(r)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}>Convert</button>
                     )}
                   </div>
                 </Td>
@@ -645,9 +581,7 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
                 </Td>
                 <Td>
                   {r.converted_case_id ? (
-                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                      → {r.converted_case_id}
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>→ {r.converted_case_id}</span>
                   ) : r.handled ? (
                     <span style={{ fontSize: '0.75rem', color: '#0a6e54' }}>✓ Handled</span>
                   ) : (
@@ -657,12 +591,7 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td>
                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                     {!r.converted_case_id && (
-                      <button
-                        onClick={() => setConvertingRow(r)}
-                        style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
-                      >
-                        Convert
-                      </button>
+                      <button onClick={() => setConvertingRow(r)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #2563eb', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}>Convert</button>
                     )}
                     <button onClick={() => markHandled(r.id, !r.handled)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.7rem', border: '1px solid #d4d4d4', borderRadius: '4px', background: 'white', cursor: 'pointer' }}>
                       {r.handled ? 'Pending' : 'Handled'}
@@ -687,11 +616,12 @@ function IntakesTab({ onAuthError }: { onAuthError: () => void }) {
   );
 }
 
-// ─── DOCUMENTS ───────────────────────────────────────────────
+// ─── DOCUMENTS (NOW WITH DOWNLOAD BUTTON) ────────────────────
 
 function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
   const [rows, setRows] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -704,6 +634,27 @@ function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
   }
 
   useEffect(() => { void refresh(); }, []);
+
+  async function handleDownload(row: DocumentRow) {
+    setDownloadingId(row.id);
+    try {
+      const res = await fetch(`/api/nimmi/documents/${row.id}/download`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Download failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+      if (data.downloadUrl) {
+        window.open(data.downloadUrl, '_blank');
+      } else {
+        alert('No download URL returned');
+      }
+    } catch (err) {
+      alert(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
 
   return (
     <div>
@@ -719,11 +670,12 @@ function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
               <Th>Category</Th>
               <Th>Filename</Th>
               <Th>Note</Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: '#737373' }}>No documents shared yet.</td></tr>
+              <tr><td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: '#737373' }}>No documents shared yet.</td></tr>
             )}
             {rows.map((r) => (
               <tr key={r.id} style={{ borderTop: '1px solid #f5f5f4' }}>
@@ -733,14 +685,28 @@ function DocumentsTab({ onAuthError }: { onAuthError: () => void }) {
                 <Td><code style={{ fontSize: '0.78rem' }}>{r.category || 'general'}</code></Td>
                 <Td>{r.display_name || r.original_filename || '—'}</Td>
                 <Td style={{ maxWidth: 220 }}>{r.share_note || '—'}</Td>
+                <Td>
+                  <button
+                    onClick={() => handleDownload(r)}
+                    disabled={downloadingId === r.id}
+                    style={{
+                      fontSize: '0.78rem',
+                      padding: '0.3rem 0.8rem',
+                      border: '1px solid #2563eb',
+                      background: downloadingId === r.id ? '#dbeafe' : '#2563eb',
+                      color: downloadingId === r.id ? '#1e40af' : 'white',
+                      borderRadius: '4px',
+                      cursor: downloadingId === r.id ? 'wait' : 'pointer',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {downloadingId === r.id ? 'Loading…' : '↓ Download'}
+                  </button>
+                </Td>
               </tr>
             ))}
           </tbody>
         </table>
-
-        <p style={{ padding: '1rem', fontSize: '0.78rem', color: '#737373', fontStyle: 'italic', background: '#fafaf9', borderTop: '1px solid #f5f5f4' }}>
-          Note: Direct download from CRM coming soon. For now, sign in to Nimmi to download the actual file.
-        </p>
       </div>
     </div>
   );
