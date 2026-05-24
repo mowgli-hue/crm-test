@@ -985,6 +985,16 @@ export async function handleIncomingReply(params: {
 
   const text = message.trim();
 
+  // ── Escalation guard ──
+  // If this session was already escalated to staff (client complained,
+  // confused, or asked for a human), the bot STAYS SILENT on all further
+  // messages so it never talks over the staff member now handling the
+  // conversation. Staff clears it via the Reset Intake button.
+  if ((session as any).escalatedAt) {
+    console.log(`[intake] ${phone} session is escalated (${(session as any).escalationReason || "no reason"}); staying silent.`);
+    return;
+  }
+
   // Phase: waiting for template reply → send first batch via shared helper
   if (session.phase === "awaiting_template_reply") {
     await sendFirstBatchAndAdvance(session);
@@ -996,6 +1006,60 @@ export async function handleIncomingReply(params: {
     const qIndex = session.chatTurns;
     const currentQuestion = session.questions[qIndex];
     const firstName = session.clientName.split(" ")[0];
+
+    // ── Complaint / confusion / escalation detection (runs FIRST) ──
+    // Real bug (Faria, BOWP): an EXISTING client said "I dont know what
+    // youre talking about... you have all the information... confirm with
+    // your manager" and the bot replied "Got it! I still need answers" —
+    // ignoring her protest and plowing ahead. That damages trust badly.
+    //
+    // If the client is clearly NOT answering but pushing back, confused,
+    // or asking for a human, we STOP the intake, send a calm de-escalation,
+    // flag the case for staff, and mark the session escalated so the bot
+    // goes silent until a human resets it.
+    if (text && text.length > 8) {
+      const lc = text.toLowerCase();
+      const escalationPatterns: RegExp[] = [
+        /(don.?t|do not) know what (you|u).{0,4}(talking|asking|mean)/i,
+        /(doesn.?t|does not|not) mak\w* (any )?sense/i,
+        /(confirm|check|speak|talk).{0,20}(manager|supervisor|senior|rcic|sandhu|consultant)/i,
+        /(already (applied|did|submitted|gave|sent|provided)|you (already )?have (all )?(my|the) (info|information|details|documents))/i,
+        /(why (are|r) (you|u) asking|this is (wrong|a mistake|weird|strange)|something.{0,3}wrong)/i,
+        /(didn.?t (ask|sign up) for this|i did not ask|stop (asking|messaging|sending))/i,
+        /(talk|speak|connect|put me).{0,15}(human|person|someone|agent|real)/i,
+        /(call me|give me a call|can (you|someone) call)/i,
+        /(this is (frustrating|annoying|ridiculous)|fed up|not happy|unhappy|complain)/i,
+      ];
+      // Guard: don't fire if the message ALSO contains numbered answers
+      // (e.g. "1. No 2. Married") — that's a real answer, not a complaint.
+      const looksLikeNumberedAnswers = /(^|\s)\d{1,2}\s*[.)\-:]/.test(text);
+      const isEscalation = !looksLikeNumberedAnswers && escalationPatterns.some((re) => re.test(lc));
+      if (isEscalation) {
+        console.warn(`[intake] Escalation detected for ${phone} (case ${session.caseId}): "${text.slice(0, 80)}"`);
+        (session as any).escalatedAt = new Date().toISOString();
+        (session as any).escalationReason = `Client pushback/confusion during intake: "${text.slice(0, 120)}"`;
+        await setSession(phone, session);
+        // Calm de-escalation — acknowledge, do NOT demand answers, hand to staff.
+        await sendAndSave(
+          phone,
+          `Thank you for flagging this, ${firstName}. \uD83D\uDE4F You are right to raise it \u2014 I will pass this to our team so someone can review your file properly. A Newton team member will follow up with you shortly. You do not need to answer the earlier questions for now.`,
+          session.caseId,
+          session.clientName,
+        );
+        // Best-effort: drop a staff-visible note on the case.
+        try {
+          const { addMessage } = await import("@/lib/store");
+          await addMessage({
+            companyId,
+            caseId: session.caseId,
+            senderType: "ai",
+            senderName: "Intake Bot",
+            text: `\u26a0\ufe0f INTAKE ESCALATED \u2014 client pushed back instead of answering: "${text.slice(0, 200)}". Bot stopped and is silent. Please review and reply manually, then use Reset Intake if a fresh intake is still needed.`,
+          } as any);
+        } catch { /* non-fatal */ }
+        return;
+      }
+    }
 
     // ── Delay-phrase short-circuit ──
     //
