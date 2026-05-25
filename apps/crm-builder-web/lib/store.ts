@@ -745,7 +745,26 @@ export async function resolveCaseDriveRootLink(
     }
   }
 
-  return { link: String(company.branding?.driveRootLink || "").trim(), source: "company" };
+  const companyLink = String(company.branding?.driveRootLink || "").trim();
+  if (companyLink) {
+    return { link: companyLink, source: "company" };
+  }
+
+  // Final fallback: the global Drive root from the GOOGLE_DRIVE_ROOT_FOLDER_ID
+  // env var. Without this, any case whose assignee has no personal Drive link
+  // AND whose company has no driveRootLink configured gets NO folder created
+  // (drive_root_missing) — and even the manual "Create Drive folder" button
+  // fails with "No Drive root is configured." The WhatsApp webhook and the
+  // marketing-convert path already use GOOGLE_DRIVE_ROOT_FOLDER_ID as the
+  // canonical root, so falling back to it here makes folder creation reliable
+  // and consistent across every case-creation path. extractDriveFolderId()
+  // accepts a bare folder id, so the raw env value works directly.
+  const envRoot = String(process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "").trim();
+  if (envRoot) {
+    return { link: envRoot, source: "company" };
+  }
+
+  return { link: "", source: "company" };
 }
 
 export async function findCompanyBySlug(slug: string): Promise<Company | null> {
