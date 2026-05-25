@@ -143,6 +143,13 @@ export const sampleCases: CaseItem[] = [
   }
 ];
 
+// NOTE: template/demo placeholders only. They are intentionally INACTIVE and
+// carry NO usable password. Earlier versions shipped weak plaintext credentials
+// (admin123, etc.) which — combined with the plaintext fallback in
+// verifyPassword() — were a usable admin backdoor if they ever reached the live
+// store. migrateStore() also filters out any @flowdesk.local user as a second
+// layer of defense. Real accounts are created via the bootstrap endpoint /
+// createCompanyWithAdmin, never from these seeds.
 export const seedUsers: AppUser[] = [
   {
     id: "USR-1",
@@ -151,7 +158,8 @@ export const seedUsers: AppUser[] = [
     email: "admin@flowdesk.local",
     role: "Admin",
     userType: "staff",
-    password: "admin123"
+    password: "",
+    active: false
   },
   {
     id: "USR-2",
@@ -160,7 +168,8 @@ export const seedUsers: AppUser[] = [
     email: "owner@flowdesk.local",
     role: "Processing",
     userType: "staff",
-    password: "owner123"
+    password: "",
+    active: false
   },
   {
     id: "USR-3",
@@ -169,7 +178,8 @@ export const seedUsers: AppUser[] = [
     email: "reviewer@flowdesk.local",
     role: "Reviewer",
     userType: "staff",
-    password: "reviewer123"
+    password: "",
+    active: false
   },
   {
     id: "USR-10",
@@ -178,7 +188,8 @@ export const seedUsers: AppUser[] = [
     email: "client@flowdesk.local",
     role: "Client",
     userType: "client",
-    password: "client123",
+    password: "",
+    active: false,
     caseId: "CASE-1021"
   }
 ];

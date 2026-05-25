@@ -131,7 +131,15 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
       }
     }));
 
-  const users = (raw.users ?? seedUsers).map((u, idx) => ({
+  const users = (raw.users ?? seedUsers)
+    // SECURITY: drop demo/seed accounts (admin@flowdesk.local / admin123, etc.).
+    // verifyPassword() accepts a plaintext match for non-hashed passwords, and the
+    // auto-hash migration would otherwise just hash the weak credential in place —
+    // so these template accounts were a usable admin backdoor if they lingered in
+    // the live store. Filtering here purges them on the next store load and stops
+    // the seedUsers fallback from ever re-introducing them.
+    .filter((u) => !String(u.email || "").toLowerCase().endsWith("@flowdesk.local"))
+    .map((u, idx) => ({
     ...u,
     companyId: u.companyId ?? companies[0].id,
     role:

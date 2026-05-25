@@ -24,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const PROCESSING_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
 const MARKETING_PHONE_ID = process.env.WHATSAPP_MARKETING_PHONE_ID || "";
@@ -65,6 +66,27 @@ export async function POST(request: NextRequest) {
   // Read the raw body once — we'll forward this same payload downstream
   // unchanged so the existing handlers see exactly what Meta sent them.
   const rawBody = await request.text();
+
+  // ── SIGNATURE VERIFICATION (Meta X-Hub-Signature-256) ──
+  // Meta signs every webhook with HMAC-SHA256 over the raw request body, keyed
+  // by the Meta App Secret. Without this, anyone who knows this URL could POST a
+  // forged payload and make the bots record fake messages or send WhatsApps to
+  // arbitrary numbers. We enforce ONLY when WHATSAPP_APP_SECRET is configured —
+  // so setting that env var in Railway switches enforcement on, and if it's ever
+  // unset the webhook keeps working (no accidental outage). HMAC must be over the
+  // exact raw bytes, which is why we compute it before JSON.parse.
+  const appSecret = String(process.env.WHATSAPP_APP_SECRET || "").trim();
+  if (appSecret) {
+    const provided = request.headers.get("x-hub-signature-256") || "";
+    const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    const valid = a.length === b.length && timingSafeEqual(a, b);
+    if (!valid) {
+      console.warn("[whatsapp-router] Rejected webhook: invalid/missing X-Hub-Signature-256 (forged or app-secret mismatch).");
+      return NextResponse.json({ error: "invalid signature" }, { status: 401 });
+    }
+  }
 
   let body: any;
   try {

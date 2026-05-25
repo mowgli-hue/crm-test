@@ -873,6 +873,42 @@ export async function POST(request: NextRequest) {
     const message = value.messages[0];
     const from = message.from;
     const msgType = String(message?.type || "text"); // text, image, document, audio
+
+    // ── IDEMPOTENCY CLAIM (Meta's stable message id) ──
+    // Same protection as the processing webhook. The whatsapp-router forwards
+    // here with a 15s timeout and retries on timeout, and Meta itself retries
+    // when we're slow to return 200. AI reply generation is slow, so a single
+    // inbound marketing message could be processed several times — making the
+    // bot send the SAME reply repeatedly (logs showed 9x to one number). We
+    // claim Meta's message.id exactly once in the shared whatsapp_processed_msgs
+    // table; if the INSERT conflicts, this is a retry of an already-handled
+    // message and we skip it. wamids are globally unique, so sharing the table
+    // with the processing route is safe.
+    const metaMsgId = String(message?.id || "");
+    if (metaMsgId) {
+      let alreadyProcessed = false;
+      try {
+        const { Pool } = await import("pg");
+        const dedupPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        await dedupPool.query(`CREATE TABLE IF NOT EXISTS whatsapp_processed_msgs (
+          meta_msg_id TEXT PRIMARY KEY,
+          claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+        const claim = await dedupPool.query(
+          `INSERT INTO whatsapp_processed_msgs (meta_msg_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+          [metaMsgId]
+        );
+        await dedupPool.end();
+        if (claim.rowCount === 0) alreadyProcessed = true;
+      } catch (e) {
+        console.error("[marketing] Dedup claim failed (non-fatal, processing anyway):", (e as Error).message);
+      }
+      if (alreadyProcessed) {
+        console.log(`⏸️  [marketing] Duplicate webhook for Meta msg ${metaMsgId} — already processed, skipping.`);
+        return NextResponse.json({ status: "ok" });
+      }
+    }
+
     const text = message.text?.body || "";
     const contact = value.contacts?.[0];
     const contactName = contact?.profile?.name || "";
