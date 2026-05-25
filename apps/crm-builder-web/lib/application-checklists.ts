@@ -302,3 +302,33 @@ export function getMissingChecklistDocs(formType: string, documents: DocumentIte
     .filter((item) => !item.keywords.some((k) => docs.some((name) => name.includes(normalize(k)))))
     .map((item) => item.label);
 }
+
+// Richer view of checklist progress for a case. Used by the WhatsApp bot to
+// say "got X ✓, still need Y, Z" instead of relisting the entire checklist
+// on every doc upload. Best-effort keyword matching against document names —
+// a broad keyword like "permit" may match more than one item, which is fine
+// for a client-facing nudge (staff still verify the real package).
+export function getChecklistProgress(
+  formType: string,
+  documents: DocumentItem[]
+): {
+  required: string[];          // every required label
+  receivedRequired: string[];  // required labels we appear to have
+  missingRequired: string[];   // required labels still outstanding
+  optional: string[];          // optional / if-applicable labels
+} {
+  const docNames = documents.map((d) => normalize(d.name));
+  const checklist = getChecklistForFormType(formType);
+  const isMatched = (item: ApplicationChecklistItem) =>
+    item.keywords.some((k) => docNames.some((name) => name.includes(normalize(k))));
+
+  const required = checklist.filter((i) => i.required);
+  const optional = checklist.filter((i) => !i.required);
+
+  return {
+    required: required.map((i) => i.label),
+    receivedRequired: required.filter(isMatched).map((i) => i.label),
+    missingRequired: required.filter((i) => !isMatched(i)).map((i) => i.label),
+    optional: optional.map((i) => i.label),
+  };
+}

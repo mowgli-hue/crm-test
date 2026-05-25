@@ -76,6 +76,28 @@ export async function extractDocumentFields(
     return null;
   }
 
+  // ── SIZE GUARD ──
+  // The Anthropic API rejects requests larger than ~32MB total, and base64
+  // encoding inflates the payload by ~33%. Large scanned PDFs (e.g. a 38MB
+  // multi-page tenancy agreement) blow straight past this and return
+  // HTTP 413 (request_too_large). Worse, the doomed call wastes several
+  // seconds, which pushes the WhatsApp webhook past the router's 15s timeout
+  // and triggers duplicate reprocessing of the whole message.
+  //
+  // Documents that actually need field extraction (passports, permits,
+  // photos, letters) are small — typically well under 2MB. So we skip the
+  // scan for anything above a safe threshold; the document is still saved to
+  // Drive/S3 by the caller, just without auto-naming/auto-fill (a human can
+  // label it). Returning null = "no extraction available".
+  const MAX_OCR_BYTES = 4_500_000; // ~4.5MB raw -> ~6MB base64, safely under the 32MB API limit
+  if (buffer.length > MAX_OCR_BYTES) {
+    console.warn(
+      `doc-ocr: skipping scan for ${clientName} — file is ${(buffer.length / 1e6).toFixed(1)}MB ` +
+      `(limit ${(MAX_OCR_BYTES / 1e6).toFixed(1)}MB). Saved without auto-extraction.`
+    );
+    return null;
+  }
+
   // Build content array — Claude vision needs base64-encoded source
   const scanContent: any[] = [];
   if (isImage) {

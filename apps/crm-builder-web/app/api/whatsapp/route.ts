@@ -143,6 +143,47 @@ export async function POST(req: NextRequest) {
       // the same id we used for the INSERT below. Generated once per message.
       const msgId = `WA-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
 
+      // ── IDEMPOTENCY CLAIM (Meta's stable message id) ──
+      // The whatsapp-router forwards inbound webhooks here with a 15s timeout
+      // and RETRIES on timeout. Large media (e.g. a 38MB PDF) can take longer
+      // than 15s to download + scan + upload, so the router aborts and retries,
+      // re-running this whole handler: re-downloading the file and re-saving it
+      // to S3/Drive with a fresh timestamp (DUPLICATE Drive files), plus
+      // duplicate inbox rows and duplicate client acks. Meta also retries when
+      // we're slow to 200. The previous code generated a RANDOM msgId per run,
+      // so retries were never recognized as duplicates.
+      //
+      // Fix: claim Meta's stable message.id ("wamid...") exactly once. If the
+      // INSERT conflicts, this is a retry of an already-handled message — skip
+      // it entirely. If the dedup check itself errors, we fall through and
+      // process normally (better a rare duplicate than a dropped message).
+      const metaMsgId = String((message as any)?.id || "");
+      if (metaMsgId) {
+        let alreadyProcessed = false;
+        try {
+          const { Pool } = await import("pg");
+          const dedupPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          await dedupPool.query(`CREATE TABLE IF NOT EXISTS whatsapp_processed_msgs (
+            meta_msg_id TEXT PRIMARY KEY,
+            claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )`);
+          const claim = await dedupPool.query(
+            `INSERT INTO whatsapp_processed_msgs (meta_msg_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+            [metaMsgId]
+          );
+          await dedupPool.end();
+          if (claim.rowCount === 0) {
+            alreadyProcessed = true;
+          }
+        } catch (e) {
+          console.error("Dedup claim failed (non-fatal, processing anyway):", (e as Error).message);
+        }
+        if (alreadyProcessed) {
+          console.log(`⏸️  Duplicate webhook for Meta msg ${metaMsgId} — already processed, skipping.`);
+          continue;
+        }
+      }
+
       const { listCases, addMessage, getCase } = await import("@/lib/store");
       const cases = await listCases(COMPANY_ID);
       const n = from.replace(/\D/g, "");
@@ -601,7 +642,17 @@ export async function POST(req: NextRequest) {
               // Uses the shared doc-ocr module (same logic as the staff-triggered
               // /scan-docs endpoint, so behavior is identical regardless of upload path).
               let docCategory = "client";
-              let properFileName = `${clientNameClean} - Document.${ext}`;
+              // Fallback name: prefer the client's original filename (so a large
+              // doc that skips OCR still gets a meaningful name like
+              // "Akash - ASSURED SHORTHOLD.pdf" instead of "Akash - Document.pdf").
+              const cleanOriginalName = String(originalFilename || media.filename || "")
+                .replace(/\.[^.]+$/, "")              // drop extension
+                .replace(/[^a-zA-Z0-9 .\-]/g, " ")    // strip odd chars
+                .replace(/\s+/g, " ")
+                .trim();
+              let properFileName = cleanOriginalName
+                ? `${clientNameClean} - ${cleanOriginalName}.${ext}`
+                : `${clientNameClean} - Document.${ext}`;
               try {
                 const { extractDocumentFields, mapExtractedToIntake } = await import("@/lib/doc-ocr");
                 const extracted = await extractDocumentFields(media.buffer, media.mimeType, matched.client);
@@ -713,6 +764,41 @@ export async function POST(req: NextRequest) {
                 else if (docCategory === "completion_letter") ackMsg += `\n\n🎓 Completion letter received!`;
                 else if (docCategory === "transcripts") ackMsg += `\n\n📚 Transcripts received!`;
                 else if (docCategory === "language_test" || docCategory === "ielts") ackMsg += `\n\n📝 Language test result saved!`;
+
+                // ── SMART COLLECTION: tell the client what's still outstanding ──
+                // A real agent doesn't just say "got it" — it keeps the
+                // collection moving by naming what's left. We do this ONLY when
+                // the client is NOT mid-intake. During active intake the intake
+                // flow drives the conversation (and completeIntake sends the
+                // full checklist at the end), so adding a second list here would
+                // just be noise. Post-intake, this is exactly the nudge that
+                // keeps document collection moving without staff effort.
+                let inActiveIntake = false;
+                try {
+                  const intakeMod = await import("@/lib/whatsapp-ai-intake");
+                  const sess = await intakeMod.getActiveSession(from, COMPANY_ID);
+                  inActiveIntake = (sess as any)?.phase === "ai_chat";
+                } catch { /* non-fatal */ }
+
+                if (!inActiveIntake) {
+                  try {
+                    const { listDocuments } = await import("@/lib/store");
+                    const { getMissingChecklistDocs } = await import("@/lib/application-checklists");
+                    const freshDocs = await listDocuments(COMPANY_ID, matched.id);
+                    const stillNeed = getMissingChecklistDocs(String(matched.formType || ""), freshDocs);
+                    if (stillNeed.length > 0) {
+                      const list = stillNeed.slice(0, 8).map((d) => `• ${d}`).join("\n");
+                      ackMsg += `\n\n📋 *Still needed:*\n${list}`;
+                      if (stillNeed.length > 8) ackMsg += `\n…and a few more`;
+                      ackMsg += `\n\nPlease send clear photos or scans here whenever you're ready. 📸`;
+                    } else {
+                      ackMsg += `\n\n🎉 That looks like everything we need from you for now — our team will review and follow up if anything else is required.`;
+                    }
+                  } catch (e) {
+                    console.error("Doc-progress append failed (non-fatal):", (e as Error).message);
+                  }
+                }
+
                 ackMsg += `\n\n— Newton Immigration Team 🍁`;
                 await sendWhatsAppText(from, ackMsg);
               } else {
@@ -1049,6 +1135,68 @@ Thank you for your message — our team has received it and will get back to you
           if (isStaffNumber) {
             console.log(`👥 Staff message from ${from} — skipping AI auto-reply`);
           } else {
+            // ── SAFE DETERMINISTIC INTERCEPT: "what documents do you need?" ──
+            // This is the single most common post-intake question. Answering
+            // it from the live checklist is 100% safe — no fees, no timing, no
+            // legal opinion — and far more reliable than letting the LLM guess
+            // a doc list. If it fires, we skip the LLM flow entirely so the
+            // client gets one clean, accurate answer.
+            let answeredDocQuestion = false;
+            const isSubmittedForDocQ = (matched as any)?.processingStatus === "submitted";
+            const docQuestionPattern =
+              /(what|which|kihr|kihre|kehr|kaun|ki ki|kya)\s+.*\b(doc|docs|document|documents|paper|papers|file|files)\b/i;
+            const docNeedPattern =
+              /\b(document|documents|docs|paper|papers)\b.*\b(need|needed|require|required|chahid|chahide|chaida|baki|pending|left|remaining|outstanding|missing)\b/i;
+            const whatLeftPattern =
+              /\bwhat('?s| is| do you)?\s+(left|pending|remaining|outstanding|need(ed)?|require[ds]?)\b.*\b(from me|me|you|us|now)?\b/i;
+            const looksLikeDocQuestion =
+              docQuestionPattern.test(text) ||
+              docNeedPattern.test(text) ||
+              /what do (you|u) need (from me)?/i.test(text) ||
+              (whatLeftPattern.test(text) && /\b(doc|document|paper|file|need|send|submit|upload)/i.test(text));
+
+            if (!isSubmittedForDocQ && looksLikeDocQuestion) {
+              try {
+                const { listDocuments } = await import("@/lib/store");
+                const { getChecklistProgress } = await import("@/lib/application-checklists");
+                const docsNow = await listDocuments(COMPANY_ID, matched.id);
+                const prog = getChecklistProgress(String(matched.formType || ""), docsNow);
+                const firstName = String(matched.client || "").split(" ")[0];
+                let docMsg: string;
+                if (prog.missingRequired.length === 0) {
+                  docMsg = `${firstName ? firstName + ", " : ""}good news — we have all the required documents on file for your ${matched.formType || "application"}. 🎉 Our team will review everything and follow up if anything else is needed.\n\n— Newton Immigration Team 🍁`;
+                } else {
+                  const needList = prog.missingRequired.slice(0, 10).map((d) => `• ${d}`).join("\n");
+                  const haveLine =
+                    prog.receivedRequired.length > 0
+                      ? `\n\n✅ Already received: ${prog.receivedRequired.slice(0, 6).join(", ")}`
+                      : "";
+                  docMsg = `${firstName ? "Hi " + firstName + "! " : ""}Here's what we still need for your ${matched.formType || "application"}:\n\n📋 *Still needed:*\n${needList}${haveLine}\n\nPlease send clear photos or scans right here whenever you're ready. 📸\n\n— Newton Immigration Team 🍁`;
+                }
+                const { sendWhatsAppText } = await import("@/lib/whatsapp");
+                const docSend = await sendWhatsAppText(from, docMsg);
+                if (docSend.success) {
+                  answeredDocQuestion = true;
+                  try {
+                    const { Pool } = await import("pg");
+                    const poolDocQ = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                    const digitsDq = String(from || "").replace(/\D/g, "");
+                    const normalizedDq = digitsDq.length === 10 ? `1${digitsDq}` : digitsDq;
+                    await poolDocQ.query(
+                      `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
+                      [`WA-DOCQ-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, normalizedDq, docMsg, matched.id, matched.client || null]
+                    );
+                    await poolDocQ.end();
+                  } catch (e) {
+                    console.error("Doc-question inbox log error:", (e as Error).message);
+                  }
+                  console.log(`📋✅ Answered doc-question deterministically for ${matched.client} (${prog.missingRequired.length} still needed)`);
+                }
+              } catch (e) {
+                console.error("Doc-question intercept failed (non-fatal):", (e as Error).message);
+              }
+            }
+
             // ─── Post-intake AI auto-reply (careful) ───
             //
             // For matched cases where intake bot didn't handle this message
@@ -1061,6 +1209,7 @@ Thank you for your message — our team has received it and will get back to you
             //
             // If the classifier or generator says "no" at any step, we just
             // do the team notification (already done above) and stay quiet.
+            if (!answeredDocQuestion) {
             try {
               const { classifyMessage, generateReply } = await import("@/lib/post-intake-ai-reply");
               const classification = await classifyMessage({
@@ -1097,12 +1246,18 @@ Thank you for your message — our team has received it and will get back to you
                     text: String(r.message || ""),
                   }));
 
-                // Compute missing docs (best-effort, optional context)
+                // Compute missing docs from the application CHECKLIST (not from
+                // doc-record status). The old code only looked at doc rows whose
+                // status !== "received", so a case with no placeholder rows
+                // looked like it needed nothing — even when the client hadn't
+                // sent a passport. getMissingChecklistDocs compares the real
+                // required checklist against the documents actually on file.
                 let missingDocs: string[] = [];
                 try {
                   const { listDocuments } = await import("@/lib/store");
+                  const { getMissingChecklistDocs } = await import("@/lib/application-checklists");
                   const docs = await listDocuments(COMPANY_ID, matched.id);
-                  missingDocs = docs.filter((d: any) => d.status !== "received").map((d: any) => d.label || d.name || "");
+                  missingDocs = getMissingChecklistDocs(String(matched.formType || ""), docs);
                 } catch { /* non-fatal */ }
 
                 const reply = await generateReply({
@@ -1151,6 +1306,7 @@ Thank you for your message — our team has received it and will get back to you
               console.error("Post-intake AI reply error:", (e as Error).message);
               // Fall through silently — staff was already notified above
             }
+            } // end if (!answeredDocQuestion)
           }
         }
       }

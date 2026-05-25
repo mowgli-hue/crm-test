@@ -2,7 +2,6 @@
 // AI-powered conversational intake — Claude chats with client naturally
 
 import { getQuestionFlowForFormType, getQuestionPromptsForFormType, getQuestionBatchesForFormType } from "@/lib/application-question-flows";
-import { resolveApplicationChecklistKey } from "@/lib/application-checklists";
 import { sendWhatsAppText, sendWhatsAppTemplate, sendDocumentChecklist } from "@/lib/whatsapp";
 import { getCase, updateCaseProcessing, addMessage } from "@/lib/store";
 import { Pool } from "pg";
@@ -1669,35 +1668,61 @@ export async function handleIncomingReply(params: {
 
 async function completeIntake(session: IntakeSession): Promise<void> {
   try {
-    const caseItem = await getCase(session.companyId, session.caseId);
-
-    // Get document checklist
-    const checklistKey = resolveApplicationChecklistKey(session.formType);
-    const { getChecklistForFormType } = await import("@/lib/application-checklists");
-    const checklist = getChecklistForFormType(session.formType);
-    const requiredDocs = checklist.filter(i => i.required).map(i => i.label);
-
-    // Send document checklist after intake complete
-    const { getChecklistForFormType: getChecklist } = await import("@/lib/application-checklists");
-    const docChecklist = getChecklist(session.formType);
+    // Build a document checklist that reflects what the client has ALREADY
+    // sent during intake. A real agent says "we have your passport ✓, still
+    // need X, Y" rather than relisting the whole checklist from scratch.
+    const { getChecklistForFormType, getChecklistProgress } = await import("@/lib/application-checklists");
+    const docChecklist = getChecklistForFormType(session.formType);
     const required = docChecklist.filter(i => i.required);
     const optional = docChecklist.filter(i => !i.required);
-    
-    const checklistMsg = [
-      `📋 *Documents needed for your ${session.formType} application:*`,
-      ``,
-      `*Required:*`,
-      ...required.map((item, i) => `${i+1}. ${item.label}`),
-      ...(optional.length ? [
-        ``,
-        `*Additional (if applicable):*`,
-        ...optional.map(item => `• ${item.label}`)
-      ] : []),
-      ``,
-      `Please send clear photos or scans directly here on WhatsApp. 📸`,
-      ``,
-      `— Newton Immigration Team 🍁`,
-    ].join("\n");
+
+    let alreadyHave: string[] = [];
+    let stillNeed: string[] = required.map(i => i.label);
+    try {
+      const { listDocuments } = await import("@/lib/store");
+      const existingDocs = await listDocuments(session.companyId, session.caseId);
+      const prog = getChecklistProgress(session.formType, existingDocs);
+      alreadyHave = prog.receivedRequired;
+      stillNeed = prog.missingRequired;
+    } catch (e) {
+      console.error("completeIntake doc-progress failed (non-fatal):", (e as Error).message);
+    }
+
+    const checklistMsg = (required.length > 0 && stillNeed.length === 0)
+      ? [
+          `📋 *${session.formType} — documents*`,
+          ``,
+          `✅ Great — we already have all the required documents on file. Thank you!`,
+          ...(optional.length ? [
+            ``,
+            `If any of these apply to you, they help strengthen your application:`,
+            ...optional.map(item => `• ${item.label}`)
+          ] : []),
+          ``,
+          `Our team will review everything and be in touch soon.`,
+          ``,
+          `— Newton Immigration Team 🍁`,
+        ].join("\n")
+      : [
+          `📋 *Documents needed for your ${session.formType} application:*`,
+          ...(alreadyHave.length ? [
+            ``,
+            `✅ *Already received:*`,
+            ...alreadyHave.map(label => `• ${label}`)
+          ] : []),
+          ``,
+          `*Still needed:*`,
+          ...stillNeed.map((label, i) => `${i+1}. ${label}`),
+          ...(optional.length ? [
+            ``,
+            `*Additional (if applicable):*`,
+            ...optional.map(item => `• ${item.label}`)
+          ] : []),
+          ``,
+          `Please send clear photos or scans directly here on WhatsApp. 📸`,
+          ``,
+          `— Newton Immigration Team 🍁`,
+        ].join("\n");
 
     await sendAndSave(session.phone, checklistMsg, session.caseId, session.clientName);
     await clearSession(session.phone);
