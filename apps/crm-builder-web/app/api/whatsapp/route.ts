@@ -1094,36 +1094,35 @@ Thank you for your message — our team has received it and will get back to you
         // If not an intake reply — it's a general client question, notify team
         if (!handledByIntake && matched) {
           try {
-            const { readStore, writeStore } = await import("@/lib/store");
-            const store = await readStore();
+            const { mutateStore } = await import("@/lib/store");
+            await mutateStore((store) => {
+              // Find assigned staff user
+              const assignedName = matched.assignedTo || "";
+              const staffUser = store.users?.find((u: any) =>
+                String(u.name || "").toLowerCase() === assignedName.toLowerCase() &&
+                u.companyId === COMPANY_ID
+              );
 
-            // Find assigned staff user
-            const assignedName = matched.assignedTo || "";
-            const staffUser = store.users?.find((u: any) =>
-              String(u.name || "").toLowerCase() === assignedName.toLowerCase() &&
-              u.companyId === COMPANY_ID
-            );
+              // Create notification for assigned staff (or all admins if unassigned)
+              const targets = staffUser
+                ? [staffUser]
+                : (store.users || []).filter((u: any) => u.companyId === COMPANY_ID && ["Admin", "ProcessingLead"].includes(u.role));
 
-            // Create notification for assigned staff (or all admins if unassigned)
-            const targets = staffUser
-              ? [staffUser]
-              : (store.users || []).filter((u: any) => u.companyId === COMPANY_ID && ["Admin", "ProcessingLead"].includes(u.role));
-
-            for (const target of targets.slice(0, 3)) {
-              const notice = {
-                id: `NTF-WA-${Date.now()}-${target.id}`,
-                companyId: COMPANY_ID,
-                userId: target.id,
-                type: "ai_alert" as const,
-                message: `💬 ${matched.client} sent a message: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}" — Please reply`,
-                caseId: matched.id,
-                read: false,
-                createdAt: new Date().toISOString()
-              };
-              if (!store.notifications) store.notifications = [];
-              store.notifications.unshift(notice);
-            }
-            await writeStore(store);
+              for (const target of targets.slice(0, 3)) {
+                const notice = {
+                  id: `NTF-WA-${Date.now()}-${target.id}`,
+                  companyId: COMPANY_ID,
+                  userId: target.id,
+                  type: "ai_alert" as const,
+                  message: `💬 ${matched.client} sent a message: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}" — Please reply`,
+                  caseId: matched.id,
+                  read: false,
+                  createdAt: new Date().toISOString()
+                };
+                if (!store.notifications) store.notifications = [];
+                store.notifications.unshift(notice);
+              }
+            });
             console.log(`🔔 Notified team about message from ${matched.client}`);
           } catch (e) {
             console.error("Team notification error:", (e as Error).message);

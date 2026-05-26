@@ -396,6 +396,55 @@ export async function writeStore(next: AppStore): Promise<void> {
   await writeFile(STORE_PATH, JSON.stringify(next, null, 2), "utf8");
 }
 
+// ── WRITE-SAFETY: serialized read-modify-write ──
+// The entire app state is one JSON blob that's read whole, mutated, and written
+// whole. With separate readStore()/writeStore() calls, two concurrent mutations
+// race: both read v1, both write, and the second silently erases the first's
+// change. At bulk (team + agent writing together) that loses data.
+//
+// mutateStore() makes a read-modify-write atomic:
+//   • an in-process promise-chain mutex serializes calls within THIS Node
+//     process (fully fixes single-replica deployments), and
+//   • a Postgres advisory lock serializes across replicas (so multiple Railway
+//     instances can't interleave either).
+// Mutation helpers that do read → change → write should go through this. The
+// mutator receives the freshly-read store, mutates it in place, and returns a
+// value; mutateStore writes the store afterward and returns that value.
+let __storeMutexChain: Promise<unknown> = Promise.resolve();
+const STORE_ADVISORY_LOCK_KEY = 947201; // fixed key for the single global store
+
+export async function mutateStore<T>(mutator: (store: AppStore) => T | Promise<T>): Promise<T> {
+  const run = __storeMutexChain.then(async () => {
+    let lockClient: any = null;
+    if (isPostgresBackendEnabled()) {
+      try {
+        lockClient = await getSharedPool().connect();
+        await lockClient.query("SELECT pg_advisory_lock($1)", [STORE_ADVISORY_LOCK_KEY]);
+      } catch (e) {
+        // If the cross-instance lock is unavailable, fall back to the in-process
+        // mutex alone rather than blocking writes entirely.
+        if (lockClient) { try { lockClient.release(); } catch { /* noop */ } lockClient = null; }
+        console.error("mutateStore: advisory lock unavailable, proceeding in-process only:", (e as Error).message);
+      }
+    }
+    try {
+      const store = await readStore();
+      const result = await mutator(store);
+      await writeStore(store);
+      return result;
+    } finally {
+      if (lockClient) {
+        try { await lockClient.query("SELECT pg_advisory_unlock($1)", [STORE_ADVISORY_LOCK_KEY]); } catch { /* noop */ }
+        try { lockClient.release(); } catch { /* noop */ }
+      }
+    }
+  });
+  // Advance the chain regardless of outcome so one failed mutation can't wedge
+  // the queue for everyone behind it.
+  __storeMutexChain = run.then(() => undefined, () => undefined);
+  return run as Promise<T>;
+}
+
 export async function findUserByCredentials(email: string, password: string): Promise<AppUser | null> {
   const store = await readStore();
   const normalized = email.toLowerCase().trim();
@@ -821,7 +870,43 @@ export async function createCase(input: {
   familyMembers?: string;
   familyTotalCharges?: number;
 }): Promise<CaseItem> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
+
+  // ── DUPLICATE-CASE GUARD ──
+  // Bulk intake, web-form double-submits, and automation retries were creating
+  // duplicate (even triplicate) cases for the same person — e.g. yuvraj x2,
+  // LOVELEEN KAUR x3. If a case for the same company + client name + formType
+  // was created very recently (and the phone matches when one is supplied),
+  // return that existing case instead of spawning another. The window is short
+  // (24h) so a genuine second application later is never blocked, and we return
+  // the existing case rather than throwing so callers keep working.
+  const dupName = String(input.client || "").trim().toLowerCase();
+  const dupPhone = String(input.leadPhone || "").replace(/\D/g, "").slice(-10);
+  const dupForm = String(input.formType || "").trim().toLowerCase();
+  if (dupName) {
+    const DUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const existingDup = store.cases.find((c) => {
+      if (c.companyId !== input.companyId) return false;
+      if (String(c.client || "").trim().toLowerCase() !== dupName) return false;
+      if (dupForm && String(c.formType || "").trim().toLowerCase() !== dupForm) return false;
+      // When a phone is supplied, require it to match (last 10 digits) so two
+      // different people with the same name aren't merged.
+      if (dupPhone) {
+        const cPhone = String(c.leadPhone || "").replace(/\D/g, "").slice(-10);
+        if (cPhone !== dupPhone) return false;
+      }
+      const created = new Date(c.createdAt || 0).getTime();
+      return Number.isFinite(created) && now - created < DUP_WINDOW_MS;
+    });
+    if (existingDup) {
+      console.warn(
+        `⛔ Duplicate case creation blocked: "${input.client}" (${input.formType}) matches recent ${existingDup.id} created ${existingDup.createdAt} — returning existing case.`
+      );
+      return existingDup;
+    }
+  }
+
   const company = store.companies.find((c) => c.id === input.companyId);
   const normalizedEmail = String(input.leadEmail || "").trim().toLowerCase();
   const normalizedPhone = String(input.leadPhone || "").replace(/\s+/g, "");
@@ -955,8 +1040,8 @@ export async function createCase(input: {
     }
   }
   store.cases = [item, ...store.cases];
-  await writeStore(store);
   return item;
+  });
 }
 
 export async function resetCompanyDataToSingleCase(input: {
@@ -1512,7 +1597,7 @@ export async function updateCaseProcessing(
     aiStatus?: AiStatus;
   }
 ): Promise<CaseItem | null> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
   const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
@@ -1572,8 +1657,8 @@ export async function updateCaseProcessing(
 
   store.cases[idx].caseStatus = inferCaseStatusFromStage(store.cases[idx].stage);
 
-  await writeStore(store);
   return store.cases[idx];
+  });
 }
 
 export async function updateCaseFinancials(
@@ -1659,7 +1744,7 @@ export async function updateCaseLinks(
     > & { intakeSheetId?: string; intakeSheetUrl?: string }
   >
 ): Promise<CaseItem | null> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
   const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
@@ -1681,8 +1766,8 @@ export async function updateCaseLinks(
     ...((patch as any).intakeSheetId !== undefined ? { intakeSheetId: String((patch as any).intakeSheetId) } : {}),
     ...((patch as any).intakeSheetUrl !== undefined ? { intakeSheetUrl: String((patch as any).intakeSheetUrl) } : {}),
   };
-  await writeStore(store);
   return store.cases[idx];
+  });
 }
 
 export async function addCaseMilestone(
@@ -2019,19 +2104,19 @@ export async function addMessage(input: {
   senderName: string;
   text: string;
 }): Promise<MessageItem> {
-  const store = await readStore();
-  const message: MessageItem = {
-    id: `MSG-${store.messages.length + 1}`,
-    companyId: input.companyId,
-    caseId: input.caseId,
-    senderType: input.senderType,
-    senderName: input.senderName,
-    text: input.text,
-    createdAt: new Date().toISOString()
-  };
-  store.messages.push(message);
-  await writeStore(store);
-  return message;
+  return mutateStore((store) => {
+    const message: MessageItem = {
+      id: `MSG-${store.messages.length + 1}`,
+      companyId: input.companyId,
+      caseId: input.caseId,
+      senderType: input.senderType,
+      senderName: input.senderName,
+      text: input.text,
+      createdAt: new Date().toISOString()
+    };
+    store.messages.push(message);
+    return message;
+  });
 }
 
 export async function listOutboundMessages(companyId: string, caseId: string): Promise<OutboundMessageItem[]> {
@@ -2084,25 +2169,25 @@ export async function addDocument(input: {
   status: DocumentItem["status"];
   link: string;
 }): Promise<DocumentItem> {
-  const store = await readStore();
-  const doc: DocumentItem = {
-    id: `DOC-${randomUUID().slice(0, 8)}`,
-    companyId: input.companyId,
-    caseId: input.caseId,
-    name: input.name,
-    category: input.category ?? "general",
-    status: input.status,
-    link: input.link,
-    createdAt: new Date().toISOString()
-  };
-  store.documents.push(doc);
-  const caseIdx = store.cases.findIndex((c) => c.companyId === input.companyId && c.id === input.caseId);
-  if (caseIdx !== -1) {
-    store.cases[caseIdx] = { ...store.cases[caseIdx], updatedAt: new Date().toISOString() };
-    applyCaseAutomation(store, store.cases[caseIdx]);
-  }
-  await writeStore(store);
-  return doc;
+  return mutateStore((store) => {
+    const doc: DocumentItem = {
+      id: `DOC-${randomUUID().slice(0, 8)}`,
+      companyId: input.companyId,
+      caseId: input.caseId,
+      name: input.name,
+      category: input.category ?? "general",
+      status: input.status,
+      link: input.link,
+      createdAt: new Date().toISOString()
+    };
+    store.documents.push(doc);
+    const caseIdx = store.cases.findIndex((c) => c.companyId === input.companyId && c.id === input.caseId);
+    if (caseIdx !== -1) {
+      store.cases[caseIdx] = { ...store.cases[caseIdx], updatedAt: new Date().toISOString() };
+      applyCaseAutomation(store, store.cases[caseIdx]);
+    }
+    return doc;
+  });
 }
 
 export async function listLegacyResults(companyId: string): Promise<LegacyResultItem[]> {
@@ -2551,21 +2636,21 @@ export async function addAuditLog(input: {
   resourceId: string;
   metadata?: Record<string, string>;
 }): Promise<AuditLog> {
-  const store = await readStore();
-  const item: AuditLog = {
-    id: `AUD-${store.auditLogs.length + 1}`,
-    companyId: input.companyId,
-    actorUserId: input.actorUserId,
-    actorName: input.actorName,
-    action: input.action,
-    resourceType: input.resourceType,
-    resourceId: input.resourceId,
-    metadata: input.metadata,
-    createdAt: new Date().toISOString()
-  };
-  store.auditLogs.push(item);
-  await writeStore(store);
-  return item;
+  return mutateStore((store) => {
+    const item: AuditLog = {
+      id: `AUD-${store.auditLogs.length + 1}`,
+      companyId: input.companyId,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      action: input.action,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      metadata: input.metadata,
+      createdAt: new Date().toISOString()
+    };
+    store.auditLogs.push(item);
+    return item;
+  });
 }
 
 export async function listAuditLogs(companyId: string, limit = 200): Promise<AuditLog[]> {

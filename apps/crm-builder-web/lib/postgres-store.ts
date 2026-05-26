@@ -33,6 +33,92 @@ async function ensureSnapshotTable() {
   `);
 }
 
+// ── AUTOMATED BACKUPS ──
+// The entire app state lives in one app_store_snapshots row. If a bad write or
+// corruption ever hits it, there's no undo. We keep a rolling history of
+// snapshots in app_store_backups so any recent state can be restored. To avoid
+// doubling write cost at bulk, backups are throttled to at most one per
+// BACKUP_INTERVAL_MS (tracked in-process), and we keep only the newest
+// BACKUP_KEEP rows. A cold start always captures one snapshot on first write,
+// which conveniently records state right after each deploy.
+const BACKUP_INTERVAL_MS = 60 * 60 * 1000; // hourly
+const BACKUP_KEEP = 72;                     // ~3 days of hourly snapshots
+let lastBackupAt = 0;
+
+async function ensureBackupTable() {
+  const db = getPool();
+  await db.query(`
+    create table if not exists app_store_backups (
+      id bigserial primary key,
+      payload jsonb not null,
+      created_at timestamptz not null default now()
+    )
+  `);
+}
+
+async function maybeBackupSnapshot(store: AppStore): Promise<void> {
+  const now = Date.now();
+  if (now - lastBackupAt < BACKUP_INTERVAL_MS) return;
+  lastBackupAt = now;
+  try {
+    await ensureBackupTable();
+    const db = getPool();
+    await db.query(
+      `insert into app_store_backups (payload) values ($1::jsonb)`,
+      [JSON.stringify(store)]
+    );
+    // Prune to the newest BACKUP_KEEP rows.
+    await db.query(
+      `delete from app_store_backups
+       where id not in (
+         select id from app_store_backups order by created_at desc limit $1
+       )`,
+      [BACKUP_KEEP]
+    );
+  } catch (e) {
+    // Backups are best-effort — never let a backup failure block a real write.
+    console.error("Store backup failed (non-fatal):", (e as Error).message);
+  }
+}
+
+export async function listStoreBackups(): Promise<Array<{ id: string; createdAt: string }>> {
+  await ensureBackupTable();
+  const db = getPool();
+  const res = await db.query(
+    `select id, created_at from app_store_backups order by created_at desc limit 100`
+  );
+  return res.rows.map((r: any) => ({ id: String(r.id), createdAt: toIso(r.created_at) }));
+}
+
+// Restore the live snapshot from a specific backup id. Returns the restored
+// payload. DESTRUCTIVE — overwrites the current app_store_snapshots row, so it
+// is only reachable from a guarded admin endpoint. Before overwriting, it takes
+// a fresh backup of the current state so a mistaken restore is itself undoable.
+export async function restoreStoreFromBackup(backupId: string): Promise<Partial<AppStore>> {
+  await ensureBackupTable();
+  const db = getPool();
+  const res = await db.query(
+    `select payload from app_store_backups where id = $1 limit 1`,
+    [backupId]
+  );
+  if (!res.rowCount || !res.rows[0]?.payload) {
+    throw new Error(`Backup ${backupId} not found`);
+  }
+  const payload = res.rows[0].payload as AppStore;
+  // Snapshot current state first (force a backup regardless of throttle).
+  lastBackupAt = 0;
+  const current = await readStoreFromPostgres();
+  await maybeBackupSnapshot(current as AppStore);
+  // Overwrite the live snapshot.
+  await db.query(
+    `insert into app_store_snapshots (id, payload, updated_at)
+     values ($1, $2::jsonb, now())
+     on conflict (id) do update set payload = excluded.payload, updated_at = now()`,
+    ["global", JSON.stringify(payload)]
+  );
+  return payload as Partial<AppStore>;
+}
+
 function toIso(value: unknown) {
   const text = String(value || "");
   if (!text) return new Date().toISOString();
@@ -271,4 +357,6 @@ export async function writeStoreToPostgres(store: AppStore): Promise<void> {
      on conflict (id) do update set payload = excluded.payload, updated_at = now()`,
     ["global", JSON.stringify(store)]
   );
+  // Keep a throttled rolling backup so a bad write is recoverable.
+  await maybeBackupSnapshot(store);
 }
