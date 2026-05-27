@@ -104,10 +104,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     if (!folderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
       try {
-        const { createCaseDriveStructure } = await import("@/lib/google-drive");
+        const { createCaseDriveStructure, buildCaseFolderNameWithApp } = await import("@/lib/google-drive");
         const structure = await createCaseDriveStructure(
           process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-          `${clientName} - ${formType}`
+          // Case id keeps the folder unique per case (avoids cross-case reuse).
+          buildCaseFolderNameWithApp(params.id, clientName || "", formType || "")
         );
         folderId = structure.subfolders.applicationForms.id;
         await updateCaseLinks(companyId, params.id, {

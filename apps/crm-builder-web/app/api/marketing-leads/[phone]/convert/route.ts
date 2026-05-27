@@ -81,7 +81,7 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
             ORDER BY created_at ASC`,
           [last9]
         );
-        const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
+        const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure, buildCaseFolderNameWithApp } = await import("@/lib/google-drive");
         const { getObjectFromS3 } = await import("@/lib/object-storage");
         const { addDocument, updateCaseLinks, getCase } = await import("@/lib/store");
         const caseFresh = await getCase(companyId, newCase.id);
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
           try {
             const structure = await createCaseDriveStructure(
               process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-              `${clientName} - ${formType}`
+              buildCaseFolderNameWithApp(newCase.id, clientName || "", formType || "")
             );
             driveFolderId = structure.subfolders.clientDocuments.id;
             await updateCaseLinks(companyId, newCase.id, {
@@ -167,7 +167,7 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
         [last9]
       );
       if (mktRows.rowCount && mktRows.rowCount > 0) {
-        const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
+        const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure, buildCaseFolderNameWithApp } = await import("@/lib/google-drive");
         const { getObjectFromS3 } = await import("@/lib/object-storage");
         const { addDocument, updateCaseLinks, getCase } = await import("@/lib/store");
 
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
           try {
             const structure = await createCaseDriveStructure(
               process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-              `${clientName} - ${formType}`
+              buildCaseFolderNameWithApp(newCase.id, clientName || "", formType || "")
             );
             driveFolderId = structure.subfolders.clientDocuments.id;
             await updateCaseLinks(companyId, newCase.id, {

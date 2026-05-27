@@ -597,7 +597,7 @@ export async function POST(req: NextRequest) {
             }
             if (media) {
               const { putObjectToS3, buildS3ObjectKey, toS3StoredLink, isS3StorageEnabled } = await import("@/lib/object-storage");
-              const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
+              const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure, buildCaseFolderNameWithApp } = await import("@/lib/google-drive");
               const { addDocument, updateCasePgwpIntake, updateCaseLinks } = await import("@/lib/store");
               const caseItem = await getCase(COMPANY_ID, matched.id);
               const clientNameClean = String(matched.client || "").replace(/[^a-zA-Z0-9 ]/g, "").trim();
@@ -696,7 +696,10 @@ export async function POST(req: NextRequest) {
                 if (!driveFolderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
                   const structure = await createCaseDriveStructure(
                     process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-                    `${matched.client} - ${matched.formType}`
+                    // Include the case id so every case gets a UNIQUE folder.
+                    // Without it, two cases sharing "<client> - <formType>" reused
+                    // the same Drive folder (cross-case contamination).
+                    buildCaseFolderNameWithApp(matched.id, matched.client || "", matched.formType || "")
                   );
                   driveFolderId = structure.subfolders.clientDocuments.id;
                   await updateCaseLinks(COMPANY_ID, matched.id, {
