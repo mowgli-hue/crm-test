@@ -793,6 +793,26 @@ export async function POST(req: NextRequest) {
                       ackMsg += `\n\nPlease send clear photos or scans here whenever you're ready. 📸`;
                     } else {
                       ackMsg += `\n\n🎉 That looks like everything we need from you for now — our team will review and follow up if anything else is required.`;
+
+                      // ── AUTO-PREPARE TRIGGER (gated OFF by default) ──
+                      // The last required document just landed. If enabled, kick
+                      // off the prep pipeline (forms + letter + review checklist
+                      // → "Ready for RCIC review") in the background so staff
+                      // open a case that's already assembled. Fire-and-forget so
+                      // it never blocks or delays the client acknowledgement.
+                      // It NEVER submits — a human still reviews and submits.
+                      // Enable by setting AUTO_PREPARE_ENABLED=true in Railway
+                      // once you've tested auto-prepare manually on a few cases.
+                      if (String(process.env.AUTO_PREPARE_ENABLED || "").toLowerCase() === "true") {
+                        const baseU = process.env.PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "https://crm.newtonimmigration.com";
+                        fetch(`${baseU}/api/cases/${matched.id}/auto-prepare`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ systemToken: getAuthRecoveryToken() }),
+                        })
+                          .then(() => console.log(`🤖 Auto-prepare triggered for ${matched.id} (all required docs received)`))
+                          .catch((e) => console.error("Auto-prepare trigger failed (non-fatal):", (e as Error).message));
+                      }
                     }
                   } catch (e) {
                     console.error("Doc-progress append failed (non-fatal):", (e as Error).message);
