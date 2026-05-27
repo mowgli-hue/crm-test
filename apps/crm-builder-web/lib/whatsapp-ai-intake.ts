@@ -524,6 +524,29 @@ export async function startIntakeSession(params: {
   const { caseId, companyId, phone, clientName, formType, existingIntake } = params;
   console.log(`▶️  startIntakeSession ENTRY: caseId=${caseId} phone=${phone} client="${clientName}" formType="${formType}"`);
 
+  // ── COMPLETION guard (May 2026, after the Isha Visitor-Record bug): ──
+  // completeIntake() CLEARS the session, so the "already active session" guards
+  // below cannot see a FINISHED intake. A later re-trigger (the scheduled Google
+  // Sheet lead-sync, a re-convert, a re-save) therefore found no session and
+  // RESTARTED the whole questionnaire from Section 1 on a client who had already
+  // finished — then every document she sent got read as intake activity. We now
+  // check the case's PERSISTED completion flag and refuse to restart a completed
+  // intake. (Staff can still redo it via the admin "Reset Intake" endpoint, which
+  // clears these flags first.)
+  try {
+    const existingCase = await getCase(companyId, caseId);
+    const intake = (existingCase?.pgwpIntake ?? {}) as Record<string, any>;
+    if (intake.whatsappIntakePhase === "complete" || intake.whatsappIntakeCompletedAt) {
+      console.log(
+        `🔁 Skipping startIntakeSession for ${caseId} — intake already completed ` +
+        `(${intake.whatsappIntakeCompletedAt || "phase=complete"}). Use admin Reset Intake to redo.`
+      );
+      return { success: true, skippedCount: 0, recoveredCount: 0, mode: "skip-already-completed" };
+    }
+  } catch (e) {
+    console.warn(`[startIntakeSession] completion check failed for ${caseId}: ${(e as Error).message.slice(0, 100)}`);
+  }
+
   // ── PRIMARY guard (NEW, May 2026 after CASE-1430 Harpreet bug): ──
   // Check if ANY OTHER case sharing this phone has an active session that
   // would be disrupted by a fresh intake.
