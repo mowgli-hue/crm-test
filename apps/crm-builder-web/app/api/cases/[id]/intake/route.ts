@@ -390,26 +390,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }).catch(() => null);
 
   // Auto-generate IRCC forms when questionnaire is complete
-  let formsGenerated: string[] = [];
-  try {
-    const { isQuestionnaireComplete } = await import("@/lib/application-question-flows");
-    const intakeData = (latest?.pgwpIntake ?? {}) as Record<string, string>;
-    if (isQuestionnaireComplete(latest?.formType || "", intakeData)) {
-      const baseUrl = process.env.NEXTAUTH_URL || `https://${request.headers.get("host")}`;
-      const formRes = await fetch(`${baseUrl}/api/cases/${params.id}/generate-forms`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemToken: getAuthRecoveryToken(),
-          intake: intakeData
-        })
-      }).catch(() => null);
-      if (formRes?.ok) {
-        const formData = await formRes.json().catch(() => ({}));
-        formsGenerated = formData.generated || [];
-      }
-    }
-  } catch { /* non-fatal */ }
+  // NOTE: automatic form generation on questionnaire-complete was removed
+  // (May 2026) — forms were not uploading reliably and orphaned files in Drive.
+  // Forms are handled manually for now. Field kept (empty) for response shape.
+  const formsGenerated: string[] = [];
 
   return NextResponse.json({
     intake: latest?.pgwpIntake ?? {},

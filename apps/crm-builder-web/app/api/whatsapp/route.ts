@@ -891,19 +891,10 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // ── STEP 6: AUTO-GENERATE PDF IF PASSPORT RECEIVED ──────────
-              if (docCategory === "passport") {
-                const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "";
-                if (baseUrl) {
-                  fetch(`${baseUrl}/api/cases/${matched.id}/generate-forms`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
-                  }).then(r => r.json()).then(d => {
-                    console.log(`📄 Auto PDF after passport for ${matched.id}:`, d.generated);
-                  }).catch(e => console.error("Auto PDF failed:", e));
-                }
-              }
+              // ── STEP 6: (removed) ──
+              // Automatic form-PDF generation on passport upload was removed
+              // (May 2026): forms were not uploading reliably and landed loose
+              // in Drive (orphaned). Forms are handled manually for now.
             }
           } catch(e) {
             console.error("Media upload error:", (e as Error).message);

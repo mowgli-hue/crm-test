@@ -1730,14 +1730,9 @@ async function completeIntake(session: IntakeSession): Promise<void> {
 
     // Save intake answers as PDF in Drive
     try {
-      const appUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
-      
-      // Generate forms PDF
-      fetch(`${appUrl}/api/cases/${session.caseId}/generate-forms`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
-      }).catch(e => console.error("Auto PDF failed:", e));
+      // NOTE: automatic form-PDF generation was removed (May 2026). The forms
+      // were not uploading reliably and were landing loose in Drive (orphaned),
+      // so we no longer auto-generate them here. Forms are handled manually.
 
       // Save intake answers as a text PDF in Drive
       const answersText = Object.entries(session.answers)
@@ -1792,26 +1787,9 @@ ${answersText}`, "utf-8");
       }
     } catch { /* non-fatal */ }
 
-    // Auto-generate IRCC forms
-    try {
-      const imm5710Types = ["pgwp", "owp", "sowp", "bowp", "vowp", "open work permit", "work permit", "restoration"];
-      const ft = session.formType.toLowerCase();
-      const needsForm = imm5710Types.some(t => ft.includes(t));
-      if (needsForm) {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || "https://junglecrm-builder-web-production-d358.up.railway.app";
-        const res = await fetch(`${appUrl}/api/cases/${session.caseId}/generate-forms`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ systemToken: getAuthRecoveryToken() })
-        });
-        if (res.ok) {
-          const d = await res.json();
-          console.log(`📄 Auto-generated forms for ${session.caseId}:`, d.generated);
-        }
-      }
-    } catch (e) {
-      console.error("Auto-generate form error:", (e as Error).message);
-    }
+    // NOTE: automatic IRCC form generation was removed (May 2026) — forms were
+    // not uploading reliably and orphaned files in Drive. Forms are handled
+    // manually for now.
   } catch (err) {
     console.error("Error completing intake:", err);
   }

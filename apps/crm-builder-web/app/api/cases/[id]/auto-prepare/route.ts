@@ -7,11 +7,13 @@
 // submit. It chains the existing, individually-tested steps:
 //
 //   1. Doc-completeness precheck  (getChecklistProgress)
-//   2. Generate IMM forms         (POST /generate-forms, systemToken)
-//   3. Draft representative letter (POST /rep-letter, systemToken)
-//   4. Compute pre-submission review checklist (getReviewChecklist)
-//   5. Move case → "under_review" (= Ready for RCIC review) + aiStatus completed
-//   6. Write a summary note: what was prepared + what a human must verify
+//   2. Draft representative letter (POST /rep-letter, systemToken)
+//   3. Compute pre-submission review checklist (getReviewChecklist)
+//   4. Move case → "under_review" (= Ready for RCIC review) + aiStatus completed
+//   5. Write a summary note: what was prepared + what a human must verify
+//
+// NOTE: IMM form generation was intentionally removed from this pipeline —
+// the forms were not uploading reliably and orphaned files in Drive.
 //
 // HARD SAFETY LINE: this NEVER submits to IRCC. It stops at "Ready for RCIC
 // review." Submission is a deliberate human action (RCIC Sandhu) via /submit.
@@ -123,36 +125,31 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const systemToken = getAuthRecoveryToken();
   const results: Record<string, { ok: boolean; error?: string }> = {};
 
-  // ── STEP 2: Generate IMM forms ──
-  const forms = await callStep(`/api/cases/${params.id}/generate-forms`, systemToken);
-  results.forms = { ok: forms.ok, error: forms.error };
-
-  // ── STEP 3: Draft representative letter ──
+  // ── STEP 2: Draft representative letter ──
+  // NOTE: IMM form generation was intentionally removed — the forms were not
+  // uploading reliably and orphaned files in Drive. The letter is best-effort.
   const letter = await callStep(`/api/cases/${params.id}/rep-letter`, systemToken);
   results.repLetter = { ok: letter.ok, error: letter.error };
 
-  // ── STEP 4: Pre-submission review checklist ──
+  // ── STEP 3: Pre-submission review checklist ──
   const checklist = getReviewChecklist(formType);
   const reviewItems = checklist?.items.filter((i) => i.required && !i.autoVerifiable) ?? [];
   const reviewRequiredCount = checklist?.items.filter((i) => i.required).length ?? 0;
 
-  // Core prep succeeded if the forms generated. The letter is helpful but not
-  // a blocker for marking the case ready for human review.
-  const prepared = results.forms.ok;
+  // The doc-completeness precheck above already passed, so the case is ready
+  // for human review regardless of whether the letter draft succeeded.
+  const prepared = true;
 
-  // ── STEP 5: Move to "Ready for RCIC review" (only if core prep worked) ──
-  if (prepared) {
-    await updateCaseProcessing(companyId, params.id, {
-      processingStatus: "under_review",
-      aiStatus: "completed",
-    });
-  }
+  // ── STEP 4: Move to "Ready for RCIC review" ──
+  await updateCaseProcessing(companyId, params.id, {
+    processingStatus: "under_review",
+    aiStatus: "completed",
+  });
 
   // ── STEP 6: Summary note for staff ──
   const lines: string[] = [];
   lines.push(`🤖 Auto-prepare ${prepared ? "completed" : "ran with issues"} (triggered by ${actorName}) — ${new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver" })}`);
   lines.push("");
-  lines.push(`• Forms: ${results.forms.ok ? "generated ✓" : `FAILED — ${results.forms.error}`}`);
   lines.push(`• Rep letter: ${results.repLetter.ok ? "drafted ✓" : `not done — ${results.repLetter.error}`}`);
   lines.push(`• Required documents: all received ✓ (${progress.receivedRequired.length})`);
   lines.push("");
