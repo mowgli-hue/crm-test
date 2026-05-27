@@ -996,7 +996,36 @@ async function sendNextBatchAfterPreAnswers(session: IntakeSession): Promise<voi
 }
 
 // Handle incoming reply from client
+// ── PER-PHONE SERIALIZATION ──
+// A client's burst of messages/documents must be handled ONE AT A TIME. The
+// intake handler does getSession → mutate → setSession across the whole message;
+// when two messages from the same client are processed concurrently, those
+// read-modify-write cycles race and the session's chatTurns / currentBatch jump
+// around (observed on CASE-1546: 18 → 10 → 16), corrupting the intake flow —
+// questions get re-asked, skipped, or the batch advances wrongly.
+//
+// This is an in-process chain mutex keyed by the client's phone: each call runs
+// only after the previous call for that same phone has settled (success or
+// failure). It never deadlocks (no held lock — pure promise chaining) and only
+// serializes within one conversation, so different clients still run in parallel.
+const __phoneReplyChains = new Map<string, Promise<unknown>>();
+function runSerializedByPhone<T>(phone: string, fn: () => Promise<T>): Promise<T> {
+  const key = String(phone || "").replace(/\D/g, "").slice(-10) || String(phone || "");
+  const prev = __phoneReplyChains.get(key) ?? Promise.resolve();
+  const result = prev.then(() => fn(), () => fn());
+  __phoneReplyChains.set(key, result.then(() => undefined, () => undefined));
+  return result;
+}
+
 export async function handleIncomingReply(params: {
+  phone: string;
+  message: string;
+  companyId: string;
+}): Promise<void> {
+  return runSerializedByPhone(params.phone, () => handleIncomingReplyInner(params));
+}
+
+async function handleIncomingReplyInner(params: {
   phone: string;
   message: string;
   companyId: string;
