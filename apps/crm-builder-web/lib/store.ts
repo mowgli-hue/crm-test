@@ -1000,7 +1000,11 @@ export async function createCase(input: {
     balanceAmount: totalCharges,
     retainerSigned: false,
     retainerSentAt: undefined,
-    docsUploadLink: company?.branding?.driveRootLink || "",
+    // Do NOT seed the shared Drive root here. A per-case subfolder is created
+    // at case setup (New Case screen) or lazily on the first document upload.
+    // Seeding the root caused client docs to be uploaded straight into the
+    // shared root folder (orphaned, no case folder). Empty = "no folder yet".
+    docsUploadLink: "",
     applicationFormsLink: undefined,
     submittedFolderLink: undefined,
     correspondenceFolderLink: undefined,
@@ -1096,7 +1100,7 @@ export async function resetCompanyDataToSingleCase(input: {
     docsPending: 0,
     balanceAmount: 0,
     retainerSigned: false,
-    docsUploadLink: company.branding.driveRootLink || "",
+    docsUploadLink: "", // never seed the shared Drive root (orphans client docs)
     questionnaireLink: "",
     paymentMethod: "interac",
     interacRecipient: process.env.NEXT_PUBLIC_INTERAC_RECIPIENT || "newtonimmigration@gmail.com",

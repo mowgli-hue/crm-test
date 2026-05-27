@@ -680,7 +680,18 @@ export async function POST(req: NextRequest) {
               let driveLink = "";
               try {
                 let driveFolderId = extractDriveFolderId(caseItem?.docsUploadLink || "");
-                
+
+                // ── ORPHAN GUARD ──
+                // Never upload a client doc straight into the shared Drive root —
+                // that's exactly how docs ended up loose with no case folder.
+                // If the case's link resolves to the root, treat it as "no case
+                // folder" so a proper per-case structure is created below.
+                const envRootId = extractDriveFolderId(process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "");
+                if (driveFolderId && envRootId && driveFolderId === envRootId) {
+                  console.log(`⚠️ ${matched.client}: docsUploadLink points to the Drive ROOT — creating a per-case folder instead of orphaning the doc.`);
+                  driveFolderId = "";
+                }
+
                 // Auto-create Drive folders if missing
                 if (!driveFolderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
                   const structure = await createCaseDriveStructure(

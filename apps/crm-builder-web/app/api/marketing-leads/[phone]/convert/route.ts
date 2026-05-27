@@ -86,6 +86,9 @@ export async function POST(request: NextRequest, { params }: { params: { phone: 
         const { addDocument, updateCaseLinks, getCase } = await import("@/lib/store");
         const caseFresh = await getCase(companyId, newCase.id);
         let driveFolderId = extractDriveFolderId(caseFresh?.docsUploadLink || "");
+        // Orphan guard: never upload into the shared Drive root — force a per-case folder.
+        const envRootIdMk = extractDriveFolderId(process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "");
+        if (driveFolderId && envRootIdMk && driveFolderId === envRootIdMk) driveFolderId = "";
         if (!driveFolderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
           try {
             const structure = await createCaseDriveStructure(
