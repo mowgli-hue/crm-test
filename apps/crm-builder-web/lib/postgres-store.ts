@@ -11,14 +11,12 @@ export function getPool(): Pool {
   if (!pool) {
     pool = new Pool({
       connectionString: databaseUrl,
-      // Bumped from 5: under live webhook load (many getSession reads) plus
-      // logins, a 5-connection pool was a bottleneck and reads queued/hung.
-      // Override via PG_POOL_MAX if the DB's own connection limit requires it.
-      max: Number(process.env.PG_POOL_MAX || 15),
-      // Don't let a borrowed connection hang forever — fail fast so a stuck
-      // query can't pin a pool slot and starve logins.
-      connectionTimeoutMillis: 10000,
-      idleTimeoutMillis: 30000,
+      // Reverted to the long-standing known-good config (was bumped to 15 with a
+      // 10s connection timeout during a login-hotfix attempt; under load that
+      // turned slow reads into hard failures and the dashboard hung on
+      // "loading"). Default 5, pg defaults for timeouts. Override via
+      // PG_POOL_MAX only if you've confirmed the DB can take more connections.
+      max: Number(process.env.PG_POOL_MAX || 5),
       ssl: databaseUrl.includes("localhost") ? false : { rejectUnauthorized: false }
     });
   }
