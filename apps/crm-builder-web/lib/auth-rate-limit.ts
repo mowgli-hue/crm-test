@@ -35,6 +35,23 @@ function getPool() {
   return pool;
 }
 
+// Self-heal: the auth_rate_limits table must exist or every login query throws
+// `relation "auth_rate_limits" does not exist` — which (without the fail-open
+// guard below) blocked ALL logins. Create it on demand; cached after first run.
+let __rateLimitTableReady = false;
+async function ensureRateLimitTable(db: Pool): Promise<void> {
+  if (__rateLimitTableReady) return;
+  await db.query(`
+    create table if not exists auth_rate_limits (
+      key text primary key,
+      attempts integer not null default 0,
+      window_started_at timestamptz not null default now(),
+      blocked_until timestamptz
+    )
+  `);
+  __rateLimitTableReady = true;
+}
+
 export async function consumeAuthRateLimit(input: {
   key: string;
   maxAttempts: number;
@@ -69,6 +86,8 @@ export async function consumeAuthRateLimit(input: {
   const db = getPool();
   if (!db) return { allowed: true };
   const key = String(input.key || "");
+  try {
+  await ensureRateLimitTable(db);
   const result = await db.query(
     `
     insert into auth_rate_limits (key, attempts, window_started_at, blocked_until)
@@ -113,6 +132,13 @@ export async function consumeAuthRateLimit(input: {
     allowed: attempts <= maxAttempts,
     remaining: Math.max(0, maxAttempts - attempts)
   };
+  } catch (e) {
+    // FAIL-OPEN: a rate-limiter must NEVER block login because of a DB problem.
+    // A missing table or transient DB error here previously threw all the way up
+    // and broke every login. Allow the attempt through and log it instead.
+    console.error("auth rate-limit check failed — allowing login:", (e as Error).message);
+    return { allowed: true };
+  }
 }
 
 export async function clearAuthRateLimit(key: string): Promise<void> {
@@ -123,5 +149,11 @@ export async function clearAuthRateLimit(key: string): Promise<void> {
   }
   const db = getPool();
   if (!db) return;
-  await db.query("delete from auth_rate_limits where key = $1", [key]);
+  try {
+    await ensureRateLimitTable(db);
+    await db.query("delete from auth_rate_limits where key = $1", [key]);
+  } catch (e) {
+    // Non-fatal: clearing the limiter must never block a successful login.
+    console.error("auth rate-limit clear failed (ignored):", (e as Error).message);
+  }
 }
