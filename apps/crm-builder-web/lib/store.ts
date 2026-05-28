@@ -402,42 +402,26 @@ export async function writeStore(next: AppStore): Promise<void> {
 // race: both read v1, both write, and the second silently erases the first's
 // change. At bulk (team + agent writing together) that loses data.
 //
-// mutateStore() makes a read-modify-write atomic:
-//   • an in-process promise-chain mutex serializes calls within THIS Node
-//     process (fully fixes single-replica deployments), and
-//   • a Postgres advisory lock serializes across replicas (so multiple Railway
-//     instances can't interleave either).
-// Mutation helpers that do read → change → write should go through this. The
-// mutator receives the freshly-read store, mutates it in place, and returns a
-// value; mutateStore writes the store afterward and returns that value.
+// mutateStore() makes a read-modify-write atomic via an in-process promise-chain
+// mutex that serializes calls within THIS Node process — which fully fixes the
+// lost-update race on single-replica deployments (the normal case here).
+//
+// IMPORTANT (May 2026 hotfix): an earlier version ALSO took a Postgres advisory
+// lock for cross-replica safety. That held a pooled DB connection for the whole
+// read-modify-write, and under live webhook load it starved the small pool —
+// logins and other reads began hanging ("login taking too long"). The advisory
+// lock was removed; the in-process mutex is enough for a single instance, and a
+// blocked app is far worse than a rare cross-instance race. If we ever run
+// multiple replicas and need cross-instance serialization, do it without holding
+// a pooled connection (e.g. a dedicated short-lived client + lock timeout).
 let __storeMutexChain: Promise<unknown> = Promise.resolve();
-const STORE_ADVISORY_LOCK_KEY = 947201; // fixed key for the single global store
 
 export async function mutateStore<T>(mutator: (store: AppStore) => T | Promise<T>): Promise<T> {
   const run = __storeMutexChain.then(async () => {
-    let lockClient: any = null;
-    if (isPostgresBackendEnabled()) {
-      try {
-        lockClient = await getSharedPool().connect();
-        await lockClient.query("SELECT pg_advisory_lock($1)", [STORE_ADVISORY_LOCK_KEY]);
-      } catch (e) {
-        // If the cross-instance lock is unavailable, fall back to the in-process
-        // mutex alone rather than blocking writes entirely.
-        if (lockClient) { try { lockClient.release(); } catch { /* noop */ } lockClient = null; }
-        console.error("mutateStore: advisory lock unavailable, proceeding in-process only:", (e as Error).message);
-      }
-    }
-    try {
-      const store = await readStore();
-      const result = await mutator(store);
-      await writeStore(store);
-      return result;
-    } finally {
-      if (lockClient) {
-        try { await lockClient.query("SELECT pg_advisory_unlock($1)", [STORE_ADVISORY_LOCK_KEY]); } catch { /* noop */ }
-        try { lockClient.release(); } catch { /* noop */ }
-      }
-    }
+    const store = await readStore();
+    const result = await mutator(store);
+    await writeStore(store);
+    return result;
   });
   // Advance the chain regardless of outcome so one failed mutation can't wedge
   // the queue for everyone behind it.
