@@ -193,17 +193,41 @@ export async function getOrCreateDriveSubfolder(parentFolderId: string, folderNa
   return createDriveSubfolder(parentFolderId, folderName);
 }
 
+// ── SERIALIZED per case folder ──
+// A client's burst of document uploads fired this concurrently for the SAME
+// case. Because getOrCreateDriveSubfolder is check-then-create, each concurrent
+// run found no subfolders yet and created its OWN "Client Documents" /
+// "Application Forms" / "Submitted" / "Correspondence" — Drive then suffixes the
+// copies "(1)", "(2)", … (the duplicate subfolders that showed up). We chain
+// calls per (root + caseFolderName) so they run one at a time; later calls then
+// reuse the folders the first call created. Also serializes subfolder creation
+// (sequential, not Promise.all) so two parallel finds can't both miss.
+const __caseStructureChains = new Map<string, Promise<unknown>>();
 export async function createCaseDriveStructure(
   rootFolderId: string,
   caseFolderName: string
 ): Promise<CaseDriveStructureResult> {
+  const key = `${rootFolderId}::${caseFolderName}`;
+  const prev = __caseStructureChains.get(key) ?? Promise.resolve();
+  const run = prev.then(
+    () => createCaseDriveStructureInner(rootFolderId, caseFolderName),
+    () => createCaseDriveStructureInner(rootFolderId, caseFolderName)
+  );
+  __caseStructureChains.set(key, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+async function createCaseDriveStructureInner(
+  rootFolderId: string,
+  caseFolderName: string
+): Promise<CaseDriveStructureResult> {
   const caseFolder = await getOrCreateDriveSubfolder(rootFolderId, caseFolderName);
-  const [clientDocuments, applicationForms, submitted, correspondence] = await Promise.all([
-    getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.clientDocuments),
-    getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.applicationForms),
-    getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.submitted),
-    getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.correspondence)
-  ]);
+  // Sequential (not Promise.all): creating these in parallel let two of the same
+  // name slip through under index lag. One at a time is safe and plenty fast.
+  const clientDocuments = await getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.clientDocuments);
+  const applicationForms = await getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.applicationForms);
+  const submitted = await getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.submitted);
+  const correspondence = await getOrCreateDriveSubfolder(caseFolder.id, CASE_SUBFOLDER_NAMES.correspondence);
 
   return {
     caseFolder,
