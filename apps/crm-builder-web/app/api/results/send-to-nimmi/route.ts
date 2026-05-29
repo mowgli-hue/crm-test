@@ -31,6 +31,20 @@ const VALID_RESULT_TYPES: NimmiResultType[] = [
 ];
 const VALID_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/heic"];
 
+// Best-effort map from the case's formType to a Nimmi serviceSlug. serviceSlug
+// is optional on Nimmi's side, so an empty result is fine.
+function deriveServiceSlug(formType: string): string {
+  const ft = String(formType || "").toLowerCase();
+  if (ft.includes("pgwp")) return "pgwp";
+  if (ft.includes("spousal") || ft.includes("sponsor")) return "pr-spousal";
+  if (ft.includes("citizen")) return "citizenship";
+  if (ft.includes("study")) return "study-permit";
+  if (ft.includes("sowp") || ft.includes("work permit") || ft.includes("owp") || ft.includes("lmia") || ft.includes("bowp")) return "work-permit";
+  if (ft.includes("express entry") || ft.includes("pnp") || ft.includes("permanent res")) return "pr";
+  if (ft.includes("visitor") || ft.includes("trv") || ft.includes("super visa")) return "visitor";
+  return "";
+}
+
 export async function POST(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,21 +70,61 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
-  const clientName = str("clientName");
-  const phone = str("phone");
-  const email = str("email");
+  let clientName = str("clientName");
+  let phone = str("phone");
+  let email = str("email");
+  let serviceSlug = str("serviceSlug");
+  const appNumber = str("appNumber");
   const resultType = str("resultType") as NimmiResultType;
 
-  if (!clientName) return NextResponse.json({ error: "clientName is required" }, { status: 400 });
-  if (!phone && !email) return NextResponse.json({ error: "phone or email is required" }, { status: 400 });
   if (!VALID_RESULT_TYPES.includes(resultType)) {
     return NextResponse.json({ error: `resultType must be one of: ${VALID_RESULT_TYPES.join(", ")}` }, { status: 400 });
+  }
+  if (!clientName && !appNumber) {
+    return NextResponse.json({ error: "Provide a client name and/or an application number" }, { status: 400 });
   }
 
   const contentType = file.type || "application/pdf";
   if (!VALID_CONTENT_TYPES.includes(contentType)) {
     return NextResponse.json(
       { error: `Unsupported file type "${contentType}". Allowed: ${VALID_CONTENT_TYPES.join(", ")}` },
+      { status: 400 }
+    );
+  }
+
+  // ── Auto-fetch the client's contact details from the matching case ──
+  // Staff only type the client name + application number; we look the case up
+  // (by application number first, then by name) and fill in phone/email/service
+  // automatically. Anything the staff DID type wins over the fetched value.
+  let matchedCaseId: string | undefined;
+  try {
+    const { listCases } = await import("@/lib/store");
+    const cases = await listCases(user.companyId);
+    const normApp = (s: string) => String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+    const normName = (s: string) => String(s || "").trim().toLowerCase();
+    let match = appNumber
+      ? cases.find((c) => normApp((c as any).applicationNumber) && normApp((c as any).applicationNumber) === normApp(appNumber))
+      : undefined;
+    if (!match && clientName) {
+      match = cases.find((c) => normName(c.client) === normName(clientName));
+    }
+    if (match) {
+      matchedCaseId = match.id;
+      if (!clientName) clientName = String(match.client || "");
+      if (!phone) phone = String((match as any).leadPhone || "");
+      if (!email) email = String((match as any).leadEmail || "");
+      if (!serviceSlug) serviceSlug = deriveServiceSlug(String(match.formType || ""));
+    }
+  } catch (e) {
+    console.error("Nimmi case lookup failed (non-fatal):", (e as Error).message);
+  }
+
+  if (!clientName) {
+    return NextResponse.json({ error: "Could not determine the client name — enter it, or check the case exists." }, { status: 400 });
+  }
+  if (!phone && !email) {
+    return NextResponse.json(
+      { error: `No phone or email found for "${clientName}"${appNumber ? ` / app ${appNumber}` : ""}. Make sure the case exists with a phone on file, or enter a phone manually.` },
       { status: 400 }
     );
   }
@@ -83,8 +137,8 @@ export async function POST(request: NextRequest) {
     clientName,
     phone: phone || undefined,
     email: email || undefined,
-    appNumber: str("appNumber") || undefined,
-    serviceSlug: str("serviceSlug") || undefined,
+    appNumber: appNumber || undefined,
+    serviceSlug: serviceSlug || undefined,
     resultType,
     fileName,
     contentType,

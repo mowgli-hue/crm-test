@@ -7,6 +7,7 @@ import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
 import ResultsDashboard from "@/components/results-dashboard";
+import SendResultToNimmi from "@/components/send-result-to-nimmi";
 import { MarketingLeads } from "@/components/marketing-leads";
 import { MarketingDashboard } from "@/components/marketing-dashboard";
 import { CallLog } from "@/components/call-log";
@@ -9403,6 +9404,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                 }}
               />
+
+              {/* Send a result to the client via Nimmi (magic-link + WhatsApp) */}
+              <div style={{ margin: "16px 0" }}>
+                <SendResultToNimmi />
+              </div>
 
               {/* Anchor for scroll-to-list link from the dashboard */}
               <div id="results-list-anchor" />
