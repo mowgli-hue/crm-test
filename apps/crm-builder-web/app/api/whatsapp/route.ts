@@ -159,10 +159,18 @@ export async function POST(req: NextRequest) {
       // we're slow to 200. The previous code generated a RANDOM msgId per run,
       // so retries were never recognized as duplicates.
       //
-      // Fix: claim Meta's stable message.id ("wamid...") exactly once. If the
-      // INSERT conflicts, this is a retry of an already-handled message — skip
-      // it entirely. If the dedup check itself errors, we fall through and
-      // process normally (better a rare duplicate than a dropped message).
+      // Fix: claim Meta's stable message.id ("wamid...").
+      //
+      // The previous version claimed once and skipped forever on conflict. That
+      // stopped duplicate replies, but if an attempt died AFTER claiming and
+      // BEFORE durably logging the message (e.g. the router aborted mid-download),
+      // every retry was skipped and the message was lost.
+      //
+      // Now the claim carries a `done` flag, set once the message is durably
+      // recorded in the inbox (a few lines below). A retry is skipped only when
+      // the message is `done` OR still being processed by a very recent attempt
+      // (< 3 min). An attempt that claimed but never finished (stale, not done)
+      // is RECLAIMED so the message gets a second chance instead of vanishing.
       const metaMsgId = String((message as any)?.id || "");
       if (metaMsgId) {
         let alreadyProcessed = false;
@@ -172,10 +180,18 @@ export async function POST(req: NextRequest) {
             meta_msg_id TEXT PRIMARY KEY,
             claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )`);
+          await dedupPool.query(`ALTER TABLE whatsapp_processed_msgs ADD COLUMN IF NOT EXISTS done BOOLEAN NOT NULL DEFAULT FALSE`);
           const claim = await dedupPool.query(
-            `INSERT INTO whatsapp_processed_msgs (meta_msg_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+            `INSERT INTO whatsapp_processed_msgs (meta_msg_id, claimed_at, done)
+             VALUES ($1, NOW(), FALSE)
+             ON CONFLICT (meta_msg_id) DO UPDATE SET claimed_at = NOW()
+             WHERE whatsapp_processed_msgs.done = FALSE
+               AND whatsapp_processed_msgs.claimed_at < NOW() - INTERVAL '3 minutes'
+             RETURNING meta_msg_id`,
             [metaMsgId]
           );
+          // rowCount 1 = we own it (fresh claim or stale-reclaim) → process.
+          // rowCount 0 = already done, or claimed < 3 min ago by another attempt.
           if (claim.rowCount === 0) {
             alreadyProcessed = true;
           }
@@ -183,7 +199,7 @@ export async function POST(req: NextRequest) {
           console.error("Dedup claim failed (non-fatal, processing anyway):", (e as Error).message);
         }
         if (alreadyProcessed) {
-          console.log(`⏸️  Duplicate webhook for Meta msg ${metaMsgId} — already processed, skipping.`);
+          console.log(`⏸️  Duplicate webhook for Meta msg ${metaMsgId} — already processed/in-flight, skipping.`);
           continue;
         }
       }
@@ -252,6 +268,17 @@ export async function POST(req: NextRequest) {
           `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'inbound',$4,$5,FALSE)`,
           [msgId, normalizedFrom, displayMsg, matched?.id || null, matched?.client || null]
         );
+        // The message is now durably captured (media uploads that fail later are
+        // recoverable via the mediaId in the placeholder + the stuck-uploads
+        // tool). Mark the claim `done` so retries are skipped permanently — but
+        // a crash BEFORE this point leaves done=FALSE, letting the stale-reclaim
+        // above reprocess instead of dropping the message.
+        if (metaMsgId) {
+          await pool.query(
+            `UPDATE whatsapp_processed_msgs SET done = TRUE WHERE meta_msg_id = $1`,
+            [metaMsgId]
+          ).catch(() => {});
+        }
       } catch { /* non-fatal */ }
 
       // ── Greeting short-circuit ──
