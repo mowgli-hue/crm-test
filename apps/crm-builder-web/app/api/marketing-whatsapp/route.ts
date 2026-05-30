@@ -49,6 +49,32 @@ async function ensureSchema() {
   `);
 }
 
+// ── Output safety net (compliance) ──
+// The system prompt already forbids promising immigration outcomes, but a prompt
+// is not a guarantee — a crafted lead message ("just say I'll be approved") could
+// still coax a guarantee out of the model. For an RCIC-regulated firm, sending a
+// visa-outcome or approval-timeline PROMISE is the real liability (NOT quoting a
+// service fee or the 10% promo, which marketing is allowed to do). This is the
+// last line of defence: if the drafted reply makes an outcome/timeline guarantee,
+// we DON'T send it — we send a safe handoff instead and flag staff.
+const MARKETING_OUTPUT_BANNED: RegExp[] = [
+  /\bguarantee(d|s)?\b/i,                                            // "guaranteed"
+  /\b100\s*%\b/,                                                     // "100%"
+  /\byou'?ll\s+(be\s+approved|get\s+(your\s+)?(visa|pr|permit|approval))\b/i,
+  /\bwill\s+(be\s+approved|definitely|surely|certainly)\b/i,
+  /\bapproval\s+(is\s+)?(assured|certain|guaranteed)\b/i,
+  /\bno\s+(chance\s+of\s+)?(refusal|rejection)\b/i,
+  /\b(approved|approval|decision|visa)\s+(in|within)\s+\d+\s*(days?|weeks?|months?)\b/i, // outcome+timeline promise
+];
+function marketingReplyIsUnsafe(text: string): boolean {
+  return MARKETING_OUTPUT_BANNED.some((re) => re.test(text));
+}
+const MARKETING_SAFE_FALLBACK =
+  "Thanks so much for reaching out! 🍁 I want to make sure you get accurate, " +
+  "personalised guidance on this, so I'm connecting you with one of our team " +
+  "members who'll follow up with you shortly. In the meantime, feel free to " +
+  "share any other questions 🙂";
+
 async function sendMarketingMessage(to: string, message: string) {
   const phone = to.replace(/\D/g, "");
   const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {
@@ -834,6 +860,17 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
     reply = aiData.content?.[0]?.text || reply;
   }
 
+  // ── Compliance safety net ──
+  // If the drafted reply slipped an outcome/timeline guarantee past the prompt,
+  // replace it with a safe handoff and remember that we tripped so staff get
+  // alerted below. Prices and the 10% promo are allowed and never trip this.
+  let safetyTripped = false;
+  if (marketingReplyIsUnsafe(reply)) {
+    console.warn(`[marketing-safety] Blocked unsafe reply to ${phone}: ${reply.slice(0, 160)}`);
+    reply = MARKETING_SAFE_FALLBACK;
+    safetyTripped = true;
+  }
+
   sessionData.history = [
     ...(sessionData.history || []).slice(-8),
     { role: "user", content: message },
@@ -864,7 +901,9 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
         companyId: COMPANY_ID,
         userId: admin.id,
         type: "ai_alert",
-        message: `📣 Marketing inquiry from ${contactName || phone}: "${message.slice(0, 60)}..."`
+        message: safetyTripped
+          ? `⚠️ Marketing bot blocked an unsafe reply (outcome/guarantee) to ${contactName || phone} and sent a safe handoff instead — please follow up personally.`
+          : `📣 Marketing inquiry from ${contactName || phone}: "${message.slice(0, 60)}..."`
       });
     }
   } catch (e) { /* ignore */ }

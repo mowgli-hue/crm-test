@@ -7465,7 +7465,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({
-                                    systemToken: "newton-recovery-2024",
                                     mode: "preview",
                                     clientStory: story,
                                     pronouns: selectedPronoun,
@@ -7642,7 +7641,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                       method: "POST",
                                       headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify({
-                                        systemToken: "newton-recovery-2024",
                                         editedBodyLines,
                                         editedDocs,
                                         editedSubject,
@@ -7750,7 +7748,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 method: "POST",
                                 headers: {"Content-Type":"application/json"},
                                 body: JSON.stringify({
-                                  systemToken: "newton-recovery-2024",
                                   intake: selectedCase.pgwpIntake || {},
                                   previewOnly: true,
                                 })
@@ -7776,7 +7773,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     method: "POST",
                                     headers: {"Content-Type":"application/json"},
                                     body: JSON.stringify({
-                                      systemToken: "newton-recovery-2024",
                                       intake: selectedCase.pgwpIntake || {},
                                       skipAI: true,
                                       overrides,
@@ -7890,7 +7886,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                                                           headers: { "Content-Type": "application/json" },
 
-                                                          body: JSON.stringify({ systemToken: "newton-recovery-2024" }),
+                                                          body: JSON.stringify({}),
 
                                                         }).catch(() => null);
 
@@ -12970,7 +12966,6 @@ function ClientPortal({
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
-                            systemToken: "newton-recovery-2024",
                             mode: "preview",
                             clientStory: repLetterStory.trim(),
                             pronouns: repLetterPronouns,
@@ -13091,7 +13086,6 @@ function ClientPortal({
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
-                              systemToken: "newton-recovery-2024",
                               editedBodyLines: editedLines,
                               pronouns: repLetterPronouns,
                             }),

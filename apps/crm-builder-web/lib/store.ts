@@ -121,6 +121,47 @@ function nextClientCode(clients: ClientMaster[]) {
   return `CLT-${max + 1}`;
 }
 
+// ── Embedded WhatsApp intake-session trim ──
+// Each intake stores its session JSON (including the full conversationHistory
+// transcript) inside case.pgwpIntake.whatsappSession. That transcript is the
+// single biggest source of "cases" blob weight, and it is REDUNDANT:
+//   • the live transcript lives in the dedicated whatsapp_inbox table, and
+//   • completed intakes are exported to Drive (backupChatToDrive), and
+//   • the restart-guard reads the pgwpIntake-level flags (whatsappIntakePhase /
+//     whatsappIntakeCompletedAt), NOT the embedded session.
+// So we can safely strip it. completeIntake() already clears it on the happy
+// path; this is the belt-and-suspenders pass that also catches completions that
+// cleared the wrong case and abandoned intakes that never completed.
+const INTAKE_SESSION_RAW_THRESHOLD = 1500; // only bother with heavy sessions
+const INTAKE_STALE_DAYS = 21;              // abandoned-intake cutoff
+function trimEmbeddedIntakeSession(c: any): any {
+  const intake = c?.pgwpIntake;
+  if (!intake || typeof intake !== "object") return intake ?? undefined;
+  const raw = intake.whatsappSession;
+  if (typeof raw !== "string" || raw.length < INTAKE_SESSION_RAW_THRESHOLD) return intake;
+
+  // Completed intake → drop the embedded session entirely (pure dead weight).
+  const completed =
+    intake.whatsappIntakePhase === "complete" || Boolean(intake.whatsappIntakeCompletedAt);
+  if (completed) return { ...intake, whatsappSession: "" };
+
+  // Abandoned intake (no case activity for a while) → keep the lightweight
+  // session (answers/phase so a late resume still has context) but drop the
+  // bulky conversationHistory, which is already mirrored in whatsapp_inbox.
+  const updatedAt = Date.parse(String(c.updatedAt || c.createdAt || "")) || 0;
+  const ageDays = updatedAt ? (Date.now() - updatedAt) / 86_400_000 : 0;
+  if (ageDays >= INTAKE_STALE_DAYS) {
+    try {
+      const s = JSON.parse(raw);
+      if (Array.isArray(s?.conversationHistory) && s.conversationHistory.length > 0) {
+        s.conversationHistory = [];
+        return { ...intake, whatsappSession: JSON.stringify(s) };
+      }
+    } catch { /* not JSON — leave untouched */ }
+  }
+  return intake;
+}
+
 function migrateStore(raw: Partial<AppStore>): AppStore {
   const companies =
     (raw.companies && raw.companies.length > 0 ? raw.companies : [seedCompany]).map((c) => ({
@@ -279,7 +320,7 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
           ? Number((c as CaseItem).familyTotalCharges)
           : undefined,
       imm5710Automation: c.imm5710Automation ?? { status: "idle" },
-      pgwpIntake: c.pgwpIntake ?? undefined,
+      pgwpIntake: trimEmbeddedIntakeSession(c),
       docRequests: Array.isArray(c.docRequests) ? c.docRequests : [],
       retainerRecord: c.retainerRecord ?? undefined,
       servicePackage: c.servicePackage ?? {
