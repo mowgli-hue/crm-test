@@ -669,11 +669,20 @@ export async function POST(req: NextRequest) {
               let properFileName = cleanOriginalName
                 ? `${clientNameClean} - ${cleanOriginalName}.${ext}`
                 : `${clientNameClean} - Document.${ext}`;
+              // Quality signals used to decide whether to ask the client for a
+              // clearer/smaller resend instead of silently accepting a doc we
+              // can't actually read.
+              const { OCR_MAX_BYTES } = await import("@/lib/doc-ocr");
+              const docOversized = media.buffer.length > OCR_MAX_BYTES;
+              let docLegible: boolean | undefined;
+              let docQualityNote = "";
               try {
                 const { extractDocumentFields, mapExtractedToIntake } = await import("@/lib/doc-ocr");
                 const extracted = await extractDocumentFields(media.buffer, media.mimeType, matched.client);
                 if (extracted) {
                   if (extracted.category) docCategory = extracted.category;
+                  if (typeof extracted.legible === "boolean") docLegible = extracted.legible;
+                  if (extracted.qualityNote) docQualityNote = String(extracted.qualityNote);
 
                   // Build proper filename: ClientName - DocumentType (exp DATE).ext
                   if (extracted.label) {
@@ -691,6 +700,10 @@ export async function POST(req: NextRequest) {
                   }
                 }
               } catch(e) { console.error("AI scan failed (non-fatal):", e); }
+              // A doc needs a resend when it's too large for us to read OR the
+              // vision model judged the scan illegible. (An OCR API error alone
+              // doesn't count — that's our infrastructure, not the client's photo.)
+              const docNeedsResend = docOversized || docLegible === false;
 
               // ── STEP 3: SAVE TO DRIVE WITH PROPER NAME ──────────────────
               let driveLink = "";
@@ -791,6 +804,29 @@ export async function POST(req: NextRequest) {
               if (!isSubmittedCase) {
                 const { sendWhatsAppText } = await import("@/lib/whatsapp");
                 const firstName = String(matched.client || "").split(" ")[0];
+
+                if (docNeedsResend) {
+                  // We DID save the file (staff can still see it), but it's too
+                  // large or too unclear for us to read — so instead of a false
+                  // "all set!", we gently ask for a clearer/smaller copy. This
+                  // stops blurry/oversized docs from silently stalling a case.
+                  const reason = docOversized
+                    ? "the file came through quite large, so I couldn't open it clearly on my end"
+                    : "the photo came through a little unclear to read";
+                  const tip = docOversized
+                    ? "Could you resend it as a smaller file (ideally under 4MB), or a clearer scan?"
+                    : "Could you resend a clearer photo — good lighting, all four corners in frame, no glare?";
+                  await sendWhatsAppText(from, [
+                    `✅ Thanks ${firstName} — I've saved what you sent.`,
+                    ``,
+                    `Just one thing: ${reason}. ${tip}`,
+                    ``,
+                    `That helps us process your application without any delays. 🙏`,
+                    ``,
+                    `— Newton Immigration Team 🍁`,
+                  ].join("\n"));
+                  console.log(`📸 Asked ${matched.client} to resend ${docOversized ? "oversized" : "illegible"} doc${docQualityNote ? ` (${docQualityNote})` : ""}.`);
+                } else {
                 const docLabel = properFileName.split(" - ")[1]?.replace(/\.[^.]+$/, "").replace(/ \(exp.*\)/, "") || "document";
                 let ackMsg = `✅ ${firstName}, I've saved your *${docLabel}* to your file.`;
                 if (docCategory === "passport") ackMsg += `\n\n📘 Passport details have been recorded automatically.`;
@@ -855,6 +891,7 @@ export async function POST(req: NextRequest) {
 
                 ackMsg += `\n\n— Newton Immigration Team 🍁`;
                 await sendWhatsAppText(from, ackMsg);
+                } // end else (doc readable → normal ack)
               } else {
                 console.log(`🤐 Skipped auto-ack for submitted case ${matched.id} (${matched.client}) — uploads on submitted cases need staff review first.`);
 

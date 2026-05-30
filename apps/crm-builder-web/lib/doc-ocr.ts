@@ -12,9 +12,19 @@
 // case to populate intake fields from already-uploaded passports.
 // ─────────────────────────────────────────────────────────────────────
 
+// Largest file (raw bytes) we attempt to OCR. Anything bigger is saved but not
+// auto-read. Exported so the WhatsApp handler can tell a client their upload was
+// too large to process and ask for a smaller copy.
+export const OCR_MAX_BYTES = 4_500_000; // ~4.5MB raw -> ~6MB base64, under the 32MB API limit
+
 export interface ExtractedFields {
   category?: string;
   label?: string;
+  // Legibility assessment from the vision model. legible=false means the scan is
+  // too blurry/dark/cropped/low-res to reliably read — the caller can ask the
+  // client to resend a clearer copy instead of silently accepting an unusable doc.
+  legible?: boolean;
+  qualityNote?: string;
   expiryDate?: string;
   issueDate?: string;
   documentNumber?: string;
@@ -89,7 +99,7 @@ export async function extractDocumentFields(
   // scan for anything above a safe threshold; the document is still saved to
   // Drive/S3 by the caller, just without auto-naming/auto-fill (a human can
   // label it). Returning null = "no extraction available".
-  const MAX_OCR_BYTES = 4_500_000; // ~4.5MB raw -> ~6MB base64, safely under the 32MB API limit
+  const MAX_OCR_BYTES = OCR_MAX_BYTES;
   if (buffer.length > MAX_OCR_BYTES) {
     console.warn(
       `doc-ocr: skipping scan for ${clientName} — file is ${(buffer.length / 1e6).toFixed(1)}MB ` +
@@ -125,6 +135,8 @@ Return ONLY a JSON object with these fields (use empty string "" if unknown — 
 {
   "category": "passport|study_permit|work_permit|visa|completion_letter|transcripts|language_test|photo|bank_statement|job_offer|medical|police_clearance|ielts|lmia|eap|copr|loa|pal|other",
   "label": "Short human label e.g. Passport, Study Permit, Letter of Acceptance, PAL",
+  "legible": true,
+  "qualityNote": "If not legible, briefly why (e.g. 'too blurry', 'too dark', 'edges cut off', 'glare covers text', 'low resolution'). Empty if legible.",
   "expiryDate": "YYYY-MM-DD",
   "issueDate": "YYYY-MM-DD",
   "documentNumber": "Passport number or permit number (digits/letters only, no spaces)",
