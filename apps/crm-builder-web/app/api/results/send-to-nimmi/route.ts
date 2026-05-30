@@ -160,45 +160,43 @@ export async function POST(request: NextRequest) {
       const wa = await import("@/lib/whatsapp");
       const firstName = str("firstName") || clientName.split(/\s+/)[0];
 
-      if (resultType === "approval") {
-        // Approvals go via the approved Marketing template on the MARKETING WABA.
-        // A template DELIVERS regardless of the client's 24-hour window — a
-        // free-form text would be accepted (200) but silently dropped if the
-        // client hasn't messaged us in the last day. Template body params are
-        // {{1}} = first name, {{2}} = Nimmi share link.
-        const tmpl = await wa.sendWhatsAppTemplate({
-          to: phone,
-          templateName: process.env.NIMMI_APPROVAL_TEMPLATE_NAME || "approval_review",
-          languageCode: process.env.NIMMI_APPROVAL_TEMPLATE_LANG || "en",
-          // The template was approved on the Marketing WABA, so it must be sent
-          // from that number. Omit to fall back to the Processing number.
-          phoneNumberId: process.env.WHATSAPP_MARKETING_PHONE_ID || undefined,
-          components: [
-            {
-              type: "body",
-              parameters: [
-                { type: "text", text: firstName },
-                { type: "text", text: result.shareUrl },
-              ],
-            },
-          ],
-        });
-        whatsappSent = Boolean(tmpl.success);
-        if (!tmpl.success) {
-          whatsappError = tmpl.error;
-          // Fallback: free-form text (delivers only if the 24h window is open).
-          const message = buildResultWhatsAppMessage(resultType, firstName, result.shareUrl);
-          const send = await wa.sendWhatsAppText(phone, message);
-          if (send.success) { whatsappSent = true; whatsappError = undefined; }
-        }
-      } else {
-        // Non-approval results stay on the privacy-aware free-form text for now
-        // (no template approved yet). Add a `result_update` Utility template and
-        // wire it here the same way once it's live.
+      // Both result types go via an approved WhatsApp template — templates DELIVER
+      // regardless of the client's 24-hour window, whereas free-form text is
+      // accepted (200) but silently dropped if the client hasn't messaged us
+      // recently. Approvals use the celebratory Marketing template; everything
+      // else (incl. refusals) uses the neutral, privacy-aware Utility template.
+      // Both templates' body params are {{1}} = first name, {{2}} = Nimmi link,
+      // and both live on the Marketing WABA so they send from that number.
+      const isApproval = resultType === "approval";
+      const templateName = isApproval
+        ? (process.env.NIMMI_APPROVAL_TEMPLATE_NAME || "approval_review")
+        : (process.env.NIMMI_RESULT_TEMPLATE_NAME || "result_update");
+      const templateLang = isApproval
+        ? (process.env.NIMMI_APPROVAL_TEMPLATE_LANG || "en")
+        : (process.env.NIMMI_RESULT_TEMPLATE_LANG || "en");
+
+      const tmpl = await wa.sendWhatsAppTemplate({
+        to: phone,
+        templateName,
+        languageCode: templateLang,
+        phoneNumberId: process.env.WHATSAPP_MARKETING_PHONE_ID || undefined,
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: firstName },
+              { type: "text", text: result.shareUrl },
+            ],
+          },
+        ],
+      });
+      whatsappSent = Boolean(tmpl.success);
+      if (!tmpl.success) {
+        whatsappError = tmpl.error;
+        // Fallback: free-form text (delivers only if the 24h window is open).
         const message = buildResultWhatsAppMessage(resultType, firstName, result.shareUrl);
         const send = await wa.sendWhatsAppText(phone, message);
-        whatsappSent = Boolean(send.success);
-        if (!send.success) whatsappError = send.error;
+        if (send.success) { whatsappSent = true; whatsappError = undefined; }
       }
     } catch (e) {
       whatsappError = (e as Error).message;
