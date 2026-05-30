@@ -359,7 +359,25 @@ async function ensureStoreFile() {
   }
 }
 
+// ── SHORT READ-CACHE ──
+// The whole app state is one large JSON blob. Re-fetching it from Postgres and
+// re-running migrateStore on EVERY request (dashboard does it several times, the
+// webhook does it constantly) is what made the dashboard slow to load. We cache
+// the parsed/migrated store for a short TTL and write through on every write, so
+// within that window repeated reads are instant. The TTL is tiny so a write from
+// ANOTHER replica is picked up within ~1.5s; same-replica writes are reflected
+// immediately via the write-through in writeStore().
+let __storeCache: { store: AppStore; at: number } | null = null;
+const STORE_CACHE_TTL_MS = Number(process.env.STORE_CACHE_TTL_MS || 1500);
+
+export function invalidateStoreCache(): void {
+  __storeCache = null;
+}
+
 export async function readStore(): Promise<AppStore> {
+  if (__storeCache && Date.now() - __storeCache.at < STORE_CACHE_TTL_MS) {
+    return __storeCache.store;
+  }
   const source = isPostgresBackendEnabled()
     ? await readStoreFromPostgres()
     : (() => {
@@ -384,16 +402,20 @@ export async function readStore(): Promise<AppStore> {
   if (changed) {
     await writeStore(store);
   }
+  __storeCache = { store, at: Date.now() };
   return store;
 }
 
 export async function writeStore(next: AppStore): Promise<void> {
   if (isPostgresBackendEnabled()) {
     await writeStoreToPostgres(migrateStore(next));
+    // Write-through: same-replica reads see this immediately (no staleness).
+    __storeCache = { store: next, at: Date.now() };
     return;
   }
   await ensureStoreFile();
   await writeFile(STORE_PATH, JSON.stringify(next, null, 2), "utf8");
+  __storeCache = { store: next, at: Date.now() };
 }
 
 // ── WRITE-SAFETY: serialized read-modify-write ──
