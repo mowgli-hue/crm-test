@@ -115,8 +115,17 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
       if (res.ok) return { ok: true, status: res.status };
       // Surface the S3 error body (XML) so 403s are diagnosable — it names the
       // exact reason, e.g. SignatureDoesNotMatch / AccessDenied / expired URL.
-      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
-      return { ok: false, status: res.status, error: `S3 PUT ${res.status}${detail ? ` — ${detail}` : ""}` };
+      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 600);
+      // Diagnostics for SignatureDoesNotMatch: show which headers Nimmi SIGNED
+      // into the presigned URL vs. what we actually send. If SignedHeaders lists
+      // "content-type" and our value differs (or it lists a checksum header we
+      // don't send), that's the mismatch.
+      let signedHeaders = "?";
+      try { signedHeaders = new URL(uploadUrl).searchParams.get("X-Amz-SignedHeaders") || "(none)"; } catch { /* ignore */ }
+      console.error(
+        `[nimmi] S3 PUT ${res.status} | signedHeaders=[${signedHeaders}] | weSent Content-Type=${input.contentType} | bodyBytes=${input.fileBuffer.length}`
+      );
+      return { ok: false, status: res.status, error: `S3 PUT ${res.status} (signed:[${signedHeaders}], sent ct=${input.contentType})${detail ? ` — ${detail}` : ""}` };
     } catch (e) {
       return { ok: false, status: 0, error: (e as Error).message };
     }
