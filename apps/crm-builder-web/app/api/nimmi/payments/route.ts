@@ -4,8 +4,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
+
+// Staff-only gate for this payments admin API (lists + verifies/rejects payment
+// records — financial data + PII). Returns a 401 response when not staff, else null.
+async function requireStaff(req: NextRequest): Promise<NextResponse | null> {
+  const user = await getCurrentUserFromRequest(req);
+  if (!user || user.userType !== "staff") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
 
 let _pool: Pool | null = null;
 function getNimmiPool(): Pool {
@@ -20,8 +31,8 @@ function getNimmiPool(): Pool {
 }
 
 export async function GET(req: NextRequest) {
-  // Auth check — adjust to your CRM auth pattern
-  // For now, require an internal header or session — minimal protection
+  const authErr = await requireStaff(req);
+  if (authErr) return authErr;
   const url = new URL(req.url);
   const status = url.searchParams.get("status");
 
@@ -46,6 +57,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const authErr = await requireStaff(req);
+  if (authErr) return authErr;
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });

@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || "";
@@ -44,6 +45,13 @@ async function downloadWaMedia(mediaId: string): Promise<{ buffer: Buffer; mimeT
 
 export async function POST(request: NextRequest) {
   try {
+    // Admin-only: this can re-fetch Meta media and mutate inbox rows.
+    const user = await getCurrentUserFromRequest(request);
+    if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (user.userType !== "staff" || user.role !== "Admin") {
+      return NextResponse.json({ ok: false, error: "Forbidden — Admin only" }, { status: 403 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const rowId: string = body?.rowId;
     const action: "dismiss" | "retry" = body?.action;

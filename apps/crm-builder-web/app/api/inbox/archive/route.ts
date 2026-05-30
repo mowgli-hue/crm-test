@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -24,6 +25,12 @@ const pool = new Pool({
 
 export async function POST(request: NextRequest) {
   try {
+    // Staff-only: archiving inbox rows is an internal action.
+    const user = await getCurrentUserFromRequest(request);
+    if (!user || user.userType !== "staff") {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const phone: string | undefined = body?.phone;
     const rowId: number | undefined = body?.rowId;
