@@ -36,7 +36,7 @@ import { SUBMITTED_APPS } from "@/lib/submitted-apps";
 import { generatePgwpDraft } from "@/lib/pgwp";
 import { getStorePath } from "@/lib/storage-paths";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/security";
-import { getPool as getSharedPool, isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres } from "@/lib/postgres-store";
+import { getPool as getSharedPool, isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres, insertAuditLogRow, listAuditLogsFromTable } from "@/lib/postgres-store";
 
 const STORE_PATH = getStorePath();
 const SESSION_MAX_AGE_SECONDS = Math.max(
@@ -321,7 +321,18 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
       ...l,
       createdAt: l.createdAt ?? new Date().toISOString()
     })),
-    tasks: raw.tasks ?? [],
+    // Keep ALL open (pending) tasks + the most recent completed ones; drop the
+    // long tail of old completed AI tasks that bloated the store (had 5900+).
+    tasks: (() => {
+      const t = raw.tasks ?? [];
+      if (t.length <= 1500) return t;
+      const pending = t.filter((x: any) => x.status !== "completed");
+      const completed = t
+        .filter((x: any) => x.status === "completed")
+        .sort((a: any, b: any) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+        .slice(0, Math.max(0, 1500 - pending.length));
+      return [...pending, ...completed];
+    })(),
     // Cap transient UI notifications so they can't grow unbounded and bloat the
     // hot-path store (had grown to 7000+). Keep the newest 800 by createdAt;
     // older alerts are no longer useful. Self-heals: the trimmed list persists
@@ -2656,29 +2667,48 @@ export async function addAuditLog(input: {
   resourceId: string;
   metadata?: Record<string, string>;
 }): Promise<AuditLog> {
+  const item: AuditLog = {
+    id: `AUD-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    companyId: input.companyId,
+    actorUserId: input.actorUserId,
+    actorName: input.actorName,
+    action: input.action,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    metadata: input.metadata,
+    createdAt: new Date().toISOString()
+  };
+  // Audit logs go to their own table (out of the hot JSON blob). If the table
+  // write fails for any reason, fall back to the store so we never lose an audit
+  // entry. Audit logging must never throw / block the underlying operation.
+  if (isPostgresBackendEnabled()) {
+    try {
+      await insertAuditLogRow(item as any);
+      return item;
+    } catch (e) {
+      console.error("audit log table insert failed, falling back to store:", (e as Error).message);
+    }
+  }
   return mutateStore((store) => {
-    const item: AuditLog = {
-      id: `AUD-${store.auditLogs.length + 1}`,
-      companyId: input.companyId,
-      actorUserId: input.actorUserId,
-      actorName: input.actorName,
-      action: input.action,
-      resourceType: input.resourceType,
-      resourceId: input.resourceId,
-      metadata: input.metadata,
-      createdAt: new Date().toISOString()
-    };
     store.auditLogs.push(item);
     return item;
   });
 }
 
 export async function listAuditLogs(companyId: string, limit = 200): Promise<AuditLog[]> {
+  const cap = Math.max(1, Math.min(1000, Number(limit) || 200));
+  // Merge the table (primary store of audit history) with any logs still in the
+  // JSON blob (pre-migration, or file-mode fallback). Dedupe by id.
+  const fromTable: AuditLog[] = isPostgresBackendEnabled()
+    ? await listAuditLogsFromTable(companyId, cap).catch(() => []) as AuditLog[]
+    : [];
   const store = await readStore();
-  return store.auditLogs
-    .filter((l) => l.companyId === companyId)
+  const fromStore = store.auditLogs.filter((l) => l.companyId === companyId);
+  const byId = new Map<string, AuditLog>();
+  for (const l of [...fromTable, ...fromStore]) byId.set(l.id, l);
+  return Array.from(byId.values())
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, Math.max(1, Math.min(1000, Number(limit) || 200)));
+    .slice(0, cap);
 }
 
 export async function updateCasePgwpIntake(

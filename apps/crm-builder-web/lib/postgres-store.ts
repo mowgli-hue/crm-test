@@ -338,6 +338,62 @@ async function loadFromNormalizedTables(): Promise<Partial<AppStore>> {
   };
 }
 
+// ── AUDIT LOGS in their own table (out of the hot JSON blob) ──
+// Audit logs are append-only and grow forever; keeping 8000+ of them inside the
+// single store blob slowed every read. They live in audit_logs now: all history
+// kept, out of the hot path.
+let __auditTableReady = false;
+async function ensureAuditLogTable(): Promise<void> {
+  if (__auditTableReady) return;
+  const db = getPool();
+  await db.query(`
+    create table if not exists audit_logs (
+      id text primary key,
+      company_id text not null,
+      actor_user_id text,
+      actor_name text,
+      action text,
+      resource_type text,
+      resource_id text,
+      metadata jsonb,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await db.query(`create index if not exists idx_audit_logs_company_created on audit_logs(company_id, created_at desc)`);
+  __auditTableReady = true;
+}
+
+export async function insertAuditLogRow(item: {
+  id: string; companyId: string; actorUserId?: string; actorName?: string;
+  action?: string; resourceType?: string; resourceId?: string;
+  metadata?: Record<string, string>; createdAt?: string;
+}): Promise<void> {
+  await ensureAuditLogTable();
+  const db = getPool();
+  await db.query(
+    `insert into audit_logs (id, company_id, actor_user_id, actor_name, action, resource_type, resource_id, metadata, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb, coalesce($9::timestamptz, now()))
+     on conflict (id) do nothing`,
+    [item.id, item.companyId, item.actorUserId || null, item.actorName || null, item.action || null,
+     item.resourceType || null, item.resourceId || null, JSON.stringify(item.metadata || {}), item.createdAt || null]
+  );
+}
+
+export async function listAuditLogsFromTable(companyId: string, limit: number): Promise<any[]> {
+  await ensureAuditLogTable();
+  const db = getPool();
+  const res = await db.query(
+    `select id, company_id, actor_user_id, actor_name, action, resource_type, resource_id, metadata, created_at
+     from audit_logs where company_id = $1 order by created_at desc limit $2`,
+    [companyId, Math.max(1, Math.min(2000, limit))]
+  );
+  return res.rows.map((r: any) => ({
+    id: r.id, companyId: r.company_id, actorUserId: r.actor_user_id, actorName: r.actor_name,
+    action: r.action, resourceType: r.resource_type, resourceId: r.resource_id,
+    metadata: r.metadata || {}, createdAt: r.created_at ? toIso(r.created_at) : new Date().toISOString(),
+  }));
+}
+
 export async function readStoreFromPostgres(): Promise<Partial<AppStore>> {
   await ensureSnapshotTable();
   const db = getPool();
