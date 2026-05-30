@@ -5,6 +5,12 @@ export type ApplicationChecklistItem = {
   label: string;
   required: boolean;
   keywords: string[];
+  // OCR document-category enums (see doc-ocr.ts: passport, study_permit,
+  // work_permit, completion_letter, transcripts, photo, ielts, bank_statement…)
+  // that satisfy this item. When set, a document whose stored `category` matches
+  // counts as received even if its filename keywords don't — and, crucially,
+  // lets a "study permit" item NOT be falsely ticked by a work-permit upload.
+  categories?: string[];
 };
 
 function normalize(text: string): string {
@@ -12,6 +18,26 @@ function normalize(text: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+// Normalize a stored document category to the OCR enum shape ("study_permit").
+function normalizeCategory(cat: unknown): string {
+  return String(cat || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+// Single source of truth for "does this document satisfy this checklist item?".
+// Prefers the precise OCR category (so a work permit can't tick a study-permit
+// box); falls back to filename keywords for docs that skipped OCR or were
+// uploaded by staff with no category.
+function itemIsSatisfied(
+  item: ApplicationChecklistItem,
+  docNames: string[],
+  docCategories: string[],
+): boolean {
+  if (item.categories && item.categories.some((c) => docCategories.includes(normalizeCategory(c)))) {
+    return true;
+  }
+  return item.keywords.some((k) => docNames.some((name) => name.includes(normalize(k))));
 }
 
 export function resolveApplicationChecklistKey(formType: string):
@@ -91,19 +117,21 @@ export function resolveApplicationChecklistKey(formType: string):
 
 const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
   pgwp: [
-    { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
-    { key: "study_permit", label: "Valid Study Permit", required: true, keywords: ["study permit", "permit"] },
-    { key: "completion_letter", label: "Completion Letter", required: true, keywords: ["completion letter", "completion"] },
-    { key: "transcripts", label: "Official Transcripts", required: true, keywords: ["transcript"] },
-    { key: "digital_photo", label: "Digital Photo", required: true, keywords: ["photo", "digital photo"] },
-    { key: "language_test", label: "Language Test (IELTS/CELPIP/PTE)", required: false, keywords: ["ielts", "celpip", "pte", "language"] },
+    { key: "passport", label: "Passport", required: true, keywords: ["passport"], categories: ["passport"] },
+    // Bug fix: bare "permit" used to tick this from a WORK permit upload. Match
+    // on the precise study_permit category (+ explicit "study permit" text) only.
+    { key: "study_permit", label: "Valid Study Permit", required: true, keywords: ["study permit"], categories: ["study_permit"] },
+    { key: "completion_letter", label: "Completion Letter", required: true, keywords: ["completion letter", "completion"], categories: ["completion_letter"] },
+    { key: "transcripts", label: "Official Transcripts", required: true, keywords: ["transcript"], categories: ["transcripts"] },
+    { key: "digital_photo", label: "Digital Photo", required: true, keywords: ["photo", "digital photo"], categories: ["photo"] },
+    { key: "language_test", label: "Language Test (IELTS/CELPIP/PTE)", required: false, keywords: ["ielts", "celpip", "pte", "language"], categories: ["language_test", "ielts"] },
     { key: "old_studies", label: "Old/Past College Documents (if transfer)", required: false, keywords: ["old college", "past stud", "previous college"] }
   ],
   trv_inside: [
-    { key: "passport", label: "Passport (all pages, clear copies)", required: true, keywords: ["passport"] },
-    { key: "current_permit", label: "Current Status Document (study/work permit or TRV)", required: true, keywords: ["current permit", "permit", "status"] },
-    { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["digital photo", "photo"] },
-    { key: "funds", label: "Proof of Funds", required: true, keywords: ["fund", "bank", "statement"] },
+    { key: "passport", label: "Passport (all pages, clear copies)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "current_permit", label: "Current Status Document (study/work permit or TRV)", required: true, keywords: ["current permit", "permit", "status"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["digital photo", "photo"], categories: ["photo"] },
+    { key: "funds", label: "Proof of Funds", required: true, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
     { key: "ties", label: "Proof of Ties to Home Country", required: false, keywords: ["ties", "property", "employment", "family"] }
   ],
   visitor_visa: [
@@ -117,28 +145,28 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "education_docs", label: "Education Documents (degrees, diplomas)", required: false, keywords: ["degree", "diploma", "education"] }
   ],
   visitor_record: [
-    { key: "passport", label: "Passport (all pages, clear copies)", required: true, keywords: ["passport"] },
-    { key: "current_status", label: "Current Visitor Record / Status Document", required: true, keywords: ["visitor record", "permit", "visa", "status"] },
-    { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["photo", "digital photo"] },
-    { key: "funds", label: "Proof of Funds (bank statements last 3 months)", required: true, keywords: ["fund", "bank", "statement"] },
+    { key: "passport", label: "Passport (all pages, clear copies)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "current_status", label: "Current Visitor Record / Status Document", required: true, keywords: ["visitor record", "permit", "visa", "status"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["photo", "digital photo"], categories: ["photo"] },
+    { key: "funds", label: "Proof of Funds (bank statements last 3 months)", required: true, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
     { key: "travel_history", label: "Travel History Documents (stamps, previous visas)", required: false, keywords: ["travel", "stamp", "previous visa"] },
     { key: "reason_letter", label: "Extension/Restoration Reason Letter", required: true, keywords: ["letter", "explanation", "reason", "extension"] },
     { key: "ties_home", label: "Proof of Ties to Home Country (property, employment, family)", required: false, keywords: ["ties", "property", "employment letter", "family"] }
   ],
   work_permit: [
-    { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
-    { key: "current_permits", label: "All Current Permits", required: true, keywords: ["permit"] },
-    { key: "job_offer", label: "Job Offer/Employment Support Docs", required: true, keywords: ["job", "offer", "employment", "lmia"] },
-    { key: "education_docs", label: "Education Documents", required: false, keywords: ["education", "degree", "diploma", "transcript"] },
-    { key: "language_test", label: "English Test (if available)", required: false, keywords: ["ielts", "celpip", "pte", "language"] }
+    { key: "passport", label: "Passport", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "current_permits", label: "All Current Permits", required: true, keywords: ["permit"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "job_offer", label: "Job Offer/Employment Support Docs", required: true, keywords: ["job", "offer", "employment", "lmia"], categories: ["job_offer", "lmia"] },
+    { key: "education_docs", label: "Education Documents", required: false, keywords: ["education", "degree", "diploma", "transcript"], categories: ["transcripts"] },
+    { key: "language_test", label: "English Test (if available)", required: false, keywords: ["ielts", "celpip", "pte", "language"], categories: ["language_test", "ielts"] }
   ],
   sowp: [
     // Spousal Open Work Permit — applicant is the SPOUSE; principal docs
     // belong to the partner (worker / student / PGWP holder)
-    { key: "applicant_passport", label: "Applicant's passport (bio + stamped pages)", required: true, keywords: ["passport"] },
-    { key: "applicant_photo", label: "Applicant's digital photo (IRCC specs)", required: true, keywords: ["photo"] },
+    { key: "applicant_passport", label: "Applicant's passport (bio + stamped pages)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "applicant_photo", label: "Applicant's digital photo (IRCC specs)", required: true, keywords: ["photo"], categories: ["photo"] },
     { key: "marriage_cert", label: "Marriage certificate (or 12-month cohabitation evidence)", required: true, keywords: ["marriage", "cohabitation", "common law"] },
-    { key: "principal_status", label: "Principal partner's permit (work/study/PGWP)", required: true, keywords: ["work permit", "study permit", "pgwp", "permit"] },
+    { key: "principal_status", label: "Principal partner's permit (work/study/PGWP)", required: true, keywords: ["work permit", "study permit", "pgwp", "permit"], categories: ["work_permit", "study_permit"] },
     { key: "principal_employment_letter", label: "Principal's employment letter (NOC, duties, salary, hours)", required: false, keywords: ["employment letter", "job letter", "noc"] },
     { key: "principal_pay_stubs", label: "Principal's pay stubs (last 3 months)", required: false, keywords: ["pay stub", "payslip"] },
     { key: "principal_school_doc", label: "Principal's enrollment letter (if student spouse)", required: false, keywords: ["enrollment", "loa", "school"] },
@@ -147,22 +175,22 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter"] }
   ],
   study_permit: [
-    { key: "passport", label: "Passport", required: true, keywords: ["passport"] },
-    { key: "loa", label: "Letter of Acceptance (LOA)", required: true, keywords: ["loa", "letter of acceptance"] },
+    { key: "passport", label: "Passport", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "loa", label: "Letter of Acceptance (LOA)", required: true, keywords: ["loa", "letter of acceptance"], categories: ["loa"] },
     { key: "tuition", label: "Tuition Fee Payment Proof", required: true, keywords: ["tuition", "fee receipt"] },
-    { key: "education_docs", label: "Education Credentials", required: true, keywords: ["marksheet", "transcript", "degree", "diploma"] },
-    { key: "funds", label: "Bank Statements / Financial Proof", required: true, keywords: ["bank", "statement", "fund"] },
-    { key: "language", label: "English Proficiency", required: false, keywords: ["ielts", "toefl", "pte"] },
-    { key: "medical", label: "Medical Exam", required: false, keywords: ["medical"] }
+    { key: "education_docs", label: "Education Credentials", required: true, keywords: ["marksheet", "transcript", "degree", "diploma"], categories: ["transcripts"] },
+    { key: "funds", label: "Bank Statements / Financial Proof", required: true, keywords: ["bank", "statement", "fund"], categories: ["bank_statement"] },
+    { key: "language", label: "English Proficiency", required: false, keywords: ["ielts", "toefl", "pte"], categories: ["language_test", "ielts"] },
+    { key: "medical", label: "Medical Exam", required: false, keywords: ["medical"], categories: ["medical"] }
   ],
   study_permit_extension: [
-    { key: "passport", label: "Passport (front/back clear copies)", required: true, keywords: ["passport"] },
-    { key: "permits", label: "All current permits", required: true, keywords: ["permit"] },
-    { key: "photo", label: "Recent digital photograph", required: true, keywords: ["photo", "digital"] },
+    { key: "passport", label: "Passport (front/back clear copies)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "permits", label: "All current permits", required: true, keywords: ["permit"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "photo", label: "Recent digital photograph", required: true, keywords: ["photo", "digital"], categories: ["photo"] },
     { key: "enrollment", label: "Enrollment letter", required: true, keywords: ["enrollment"] },
-    { key: "transcripts", label: "Unofficial transcripts", required: true, keywords: ["transcript"] },
+    { key: "transcripts", label: "Unofficial transcripts", required: true, keywords: ["transcript"], categories: ["transcripts"] },
     { key: "tuition", label: "Tuition fee receipts", required: true, keywords: ["tuition", "fee receipt"] },
-    { key: "loa", label: "LOA + PAL (if applicable)", required: true, keywords: ["loa", "pal"] },
+    { key: "loa", label: "LOA + PAL (if applicable)", required: true, keywords: ["loa", "pal"], categories: ["loa", "pal"] },
     { key: "previous_college", label: "Previous college docs (if transfer)", required: false, keywords: ["previous", "old college", "transfer"] }
   ],
   super_visa: [
@@ -296,10 +324,11 @@ export function getChecklistForFormType(formType: string): ApplicationChecklistI
 }
 
 export function getMissingChecklistDocs(formType: string, documents: DocumentItem[]): string[] {
-  const docs = documents.map((d) => normalize(d.name));
+  const docNames = documents.map((d) => normalize(d.name));
+  const docCategories = documents.map((d) => normalizeCategory((d as { category?: unknown }).category));
   const checklist = getChecklistForFormType(formType).filter((i) => i.required);
   return checklist
-    .filter((item) => !item.keywords.some((k) => docs.some((name) => name.includes(normalize(k)))))
+    .filter((item) => !itemIsSatisfied(item, docNames, docCategories))
     .map((item) => item.label);
 }
 
@@ -318,9 +347,10 @@ export function getChecklistProgress(
   optional: string[];          // optional / if-applicable labels
 } {
   const docNames = documents.map((d) => normalize(d.name));
+  const docCategories = documents.map((d) => normalizeCategory((d as { category?: unknown }).category));
   const checklist = getChecklistForFormType(formType);
   const isMatched = (item: ApplicationChecklistItem) =>
-    item.keywords.some((k) => docNames.some((name) => name.includes(normalize(k))));
+    itemIsSatisfied(item, docNames, docCategories);
 
   const required = checklist.filter((i) => i.required);
   const optional = checklist.filter((i) => !i.required);
