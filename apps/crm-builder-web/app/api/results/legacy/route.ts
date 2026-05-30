@@ -92,10 +92,14 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  // Allow IRCC scanner script via API key
+  // Allow IRCC scanner script via API key.
+  // SECURITY: never fall back to a hardcoded literal — if IRCC_SCANNER_API_KEY
+  // is unset, that public string ("newton-ircc-2024") would become a valid key
+  // and bypass staff auth. Require the env var to be configured AND to match;
+  // otherwise treat the request as un-keyed and fall through to session auth.
   const irccApiKey = request.headers.get("x-ircc-api-key");
-  const validApiKey = process.env.IRCC_SCANNER_API_KEY || "newton-ircc-2024";
-  const isScriptUpload = irccApiKey === validApiKey;
+  const expectedApiKey = String(process.env.IRCC_SCANNER_API_KEY || "").trim();
+  const isScriptUpload = expectedApiKey.length > 0 && irccApiKey === expectedApiKey;
   let user: Awaited<ReturnType<typeof getCurrentUserFromRequest>> = null;
 
   if (!isScriptUpload) {
