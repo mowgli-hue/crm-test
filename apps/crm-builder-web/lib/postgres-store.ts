@@ -394,6 +394,70 @@ export async function listAuditLogsFromTable(companyId: string, limit: number): 
   }));
 }
 
+// ── CASE MESSAGES in their own table (out of the hot JSON blob) ──
+// In-app case messages (client/staff/AI conversation entries) are append-only
+// and grow without bound. Keeping them in the single store blob inflated every
+// read/write. They live in case_messages now: full history, out of the hot path.
+let __caseMessagesTableReady = false;
+async function ensureCaseMessagesTable(): Promise<void> {
+  if (__caseMessagesTableReady) return;
+  const db = getPool();
+  await db.query(`
+    create table if not exists case_messages (
+      id text primary key,
+      company_id text not null,
+      case_id text not null,
+      sender_type text,
+      sender_name text,
+      text text,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await db.query(`create index if not exists idx_case_messages_company_case on case_messages(company_id, case_id, created_at asc)`);
+  __caseMessagesTableReady = true;
+}
+
+export async function insertCaseMessageRow(item: {
+  id: string; companyId: string; caseId: string;
+  senderType?: string; senderName?: string; text?: string; createdAt?: string;
+}): Promise<void> {
+  await ensureCaseMessagesTable();
+  const db = getPool();
+  await db.query(
+    `insert into case_messages (id, company_id, case_id, sender_type, sender_name, text, created_at)
+     values ($1,$2,$3,$4,$5,$6, coalesce($7::timestamptz, now()))
+     on conflict (id) do nothing`,
+    [item.id, item.companyId, item.caseId, item.senderType || null, item.senderName || null, item.text || null, item.createdAt || null]
+  );
+}
+
+export async function listCaseMessagesFromTable(companyId: string, caseId: string): Promise<any[]> {
+  await ensureCaseMessagesTable();
+  const db = getPool();
+  const res = await db.query(
+    `select id, company_id, case_id, sender_type, sender_name, text, created_at
+     from case_messages where company_id = $1 and case_id = $2 order by created_at asc`,
+    [companyId, caseId]
+  );
+  return res.rows.map((r: any) => ({
+    id: r.id, companyId: r.company_id, caseId: r.case_id,
+    senderType: r.sender_type, senderName: r.sender_name, text: r.text,
+    createdAt: r.created_at ? toIso(r.created_at) : new Date().toISOString(),
+  }));
+}
+
+export async function deleteCaseMessagesFromTable(companyId: string, caseId: string): Promise<void> {
+  await ensureCaseMessagesTable();
+  const db = getPool();
+  await db.query(`delete from case_messages where company_id = $1 and case_id = $2`, [companyId, caseId]);
+}
+
+export async function deleteCompanyMessagesFromTable(companyId: string): Promise<void> {
+  await ensureCaseMessagesTable();
+  const db = getPool();
+  await db.query(`delete from case_messages where company_id = $1`, [companyId]);
+}
+
 export async function readStoreFromPostgres(): Promise<Partial<AppStore>> {
   await ensureSnapshotTable();
   const db = getPool();

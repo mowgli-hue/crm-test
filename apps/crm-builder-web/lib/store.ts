@@ -36,7 +36,7 @@ import { SUBMITTED_APPS } from "@/lib/submitted-apps";
 import { generatePgwpDraft } from "@/lib/pgwp";
 import { getStorePath } from "@/lib/storage-paths";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/security";
-import { getPool as getSharedPool, isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres, insertAuditLogRow, listAuditLogsFromTable } from "@/lib/postgres-store";
+import { getPool as getSharedPool, isPostgresBackendEnabled, readStoreFromPostgres, writeStoreToPostgres, insertAuditLogRow, listAuditLogsFromTable, insertCaseMessageRow, listCaseMessagesFromTable, deleteCaseMessagesFromTable, deleteCompanyMessagesFromTable } from "@/lib/postgres-store";
 
 const STORE_PATH = getStorePath();
 const SESSION_MAX_AGE_SECONDS = Math.max(
@@ -1217,6 +1217,13 @@ export async function resetCompanyDataToSingleCase(input: {
     ? store.sessions.filter((s) => s.companyId !== input.companyId || staffUserIds.has(s.userId))
     : store.sessions.filter((s) => s.companyId !== input.companyId);
 
+  // Messages live in their own table post-migration — wipe the company's there too.
+  if (isPostgresBackendEnabled()) {
+    await deleteCompanyMessagesFromTable(input.companyId).catch((e) =>
+      console.error("company reset: case_messages cleanup failed:", (e as Error).message)
+    );
+  }
+
   await writeStore(store);
   return freshCase;
 }
@@ -2163,10 +2170,16 @@ export async function deleteStaffNote(
 }
 
 export async function listMessages(companyId: string, caseId: string): Promise<MessageItem[]> {
+  // Merge the case_messages table (primary store) with any messages still in the
+  // JSON blob (pre-migration / file-mode fallback). Dedupe by id, sort ascending.
+  const fromTable: MessageItem[] = isPostgresBackendEnabled()
+    ? await listCaseMessagesFromTable(companyId, caseId).catch(() => []) as MessageItem[]
+    : [];
   const store = await readStore();
-  return store.messages
-    .filter((m) => m.companyId === companyId && m.caseId === caseId)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const fromStore = store.messages.filter((m) => m.companyId === companyId && m.caseId === caseId);
+  const byId = new Map<string, MessageItem>();
+  for (const m of [...fromTable, ...fromStore]) byId.set(m.id, m);
+  return Array.from(byId.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function addMessage(input: {
@@ -2176,18 +2189,26 @@ export async function addMessage(input: {
   senderName: string;
   text: string;
 }): Promise<MessageItem> {
+  const message: MessageItem = {
+    id: `MSG-${randomUUID().slice(0, 8)}`,
+    companyId: input.companyId,
+    caseId: input.caseId,
+    senderType: input.senderType,
+    senderName: input.senderName,
+    text: input.text,
+    createdAt: new Date().toISOString()
+  };
+  // Messages go to their own table (out of the hot JSON blob). If the table
+  // write fails, fall back to the store so a message is never lost.
+  if (isPostgresBackendEnabled()) {
+    try {
+      await insertCaseMessageRow(message as any);
+      return message;
+    } catch (e) {
+      console.error("case_messages insert failed, falling back to store:", (e as Error).message);
+    }
+  }
   return mutateStore((store) => {
-    const message: MessageItem = {
-      // randomUUID, not array length: notifications/messages/tasks get trimmed,
-      // so length+1 would reuse an existing id and silently overwrite a record.
-      id: `MSG-${randomUUID().slice(0, 8)}`,
-      companyId: input.companyId,
-      caseId: input.caseId,
-      senderType: input.senderType,
-      senderName: input.senderName,
-      text: input.text,
-      createdAt: new Date().toISOString()
-    };
     store.messages.push(message);
     return message;
   });
@@ -3144,12 +3165,25 @@ export async function deleteCase(companyId: string, id: string): Promise<{
     store.submissions = store.submissions.filter(s => !(s.companyId === companyId && s.caseId === id));
   }
 
+  // Messages live in the case_messages table post-migration — clear them too,
+  // and count them so the deletion summary reflects reality.
+  let tableMsgCount = 0;
+  if (isPostgresBackendEnabled()) {
+    try {
+      tableMsgCount = (await listCaseMessagesFromTable(companyId, id)).length;
+      await deleteCaseMessagesFromTable(companyId, id);
+    } catch (e) {
+      console.error("deleteCase: case_messages cleanup failed:", (e as Error).message);
+    }
+  }
+
   await writeStore(store);
   return {
     ok: true,
     removed: {
       case: true,
       ...before,
+      messages: before.messages + tableMsgCount,
     },
   };
 }
