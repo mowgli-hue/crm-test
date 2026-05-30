@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthRecoveryToken } from "@/lib/auth-recovery-token";
 import { normalizePhone } from "@/lib/phone";
 import { notifyCaseEvent } from "@/lib/case-notifications";
+// Shared, bounded connection pool. Previously this route created 11 separate
+// `new Pool()` per request and only `.end()`d them on the success path — any
+// earlier throw leaked the connections, eventually exhausting Postgres (the
+// recurring 502 / "loading forever"). One shared pool (max via PG_POOL_MAX)
+// is reused across requests and never closed per-request.
+import { getPool } from "@/lib/postgres-store";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
@@ -161,8 +167,7 @@ export async function POST(req: NextRequest) {
       if (metaMsgId) {
         let alreadyProcessed = false;
         try {
-          const { Pool } = await import("pg");
-          const dedupPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          const dedupPool = getPool();
           await dedupPool.query(`CREATE TABLE IF NOT EXISTS whatsapp_processed_msgs (
             meta_msg_id TEXT PRIMARY KEY,
             claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -171,7 +176,6 @@ export async function POST(req: NextRequest) {
             `INSERT INTO whatsapp_processed_msgs (meta_msg_id) VALUES ($1) ON CONFLICT DO NOTHING`,
             [metaMsgId]
           );
-          await dedupPool.end();
           if (claim.rowCount === 0) {
             alreadyProcessed = true;
           }
@@ -196,8 +200,7 @@ export async function POST(req: NextRequest) {
 
       // Save to inbox
       try {
-        const { Pool } = await import("pg");
-        const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        const pool = getPool();
         await pool.query(`CREATE TABLE IF NOT EXISTS whatsapp_inbox (
           id TEXT PRIMARY KEY, phone TEXT NOT NULL, message TEXT NOT NULL,
           direction TEXT NOT NULL DEFAULT 'inbound', matched_case_id TEXT,
@@ -249,7 +252,6 @@ export async function POST(req: NextRequest) {
           `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'inbound',$4,$5,FALSE)`,
           [msgId, normalizedFrom, displayMsg, matched?.id || null, matched?.client || null]
         );
-        await pool.end();
       } catch { /* non-fatal */ }
 
       // ── Greeting short-circuit ──
@@ -328,8 +330,7 @@ export async function POST(req: NextRequest) {
           // (avoid greeting loops if they keep typing "hi", "hi", "hi")
           let recentlyGreeted = false;
           try {
-            const { Pool } = await import("pg");
-            const checkPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+            const checkPool = getPool();
             const last10check = String(from).replace(/\D/g, "").slice(-10);
             const recent = await checkPool.query(
               `SELECT 1 FROM whatsapp_inbox
@@ -341,7 +342,6 @@ export async function POST(req: NextRequest) {
               [last10check]
             );
             recentlyGreeted = recent.rows.length > 0;
-            await checkPool.end();
           } catch { /* non-fatal — proceed assuming not greeted */ }
 
           if (!recentlyGreeted) {
@@ -435,15 +435,13 @@ export async function POST(req: NextRequest) {
               if (sendResult.success) {
                 // Log to inbox so staff sees the auto-greeting in the conversation
                 try {
-                  const { Pool } = await import("pg");
-                  const logPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const logPool = getPool();
                   const digits = String(from || "").replace(/\D/g, "");
                   const normPhone = (digits.length === 10) ? `1${digits}` : digits;
                   await logPool.query(
                     `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
                     [`WA-GREET-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, normPhone, greetingReply, matched?.id || null, matched?.client || null]
                   );
-                  await logPool.end();
                 } catch { /* non-fatal */ }
                 console.log(`👋 Auto-greeting sent to ${from}: ${greetingReply.slice(0, 60)}`);
               }
@@ -493,12 +491,10 @@ export async function POST(req: NextRequest) {
 
                 // Update inbox row with download info (same as matched-case path)
                 try {
-                  const { Pool } = await import("pg");
-                  const upPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const upPool = getPool();
                   const finalName = (originalFilename || media.filename || `orphan-${from.replace(/\D/g, "")}.${ext}`).replace(/\|/g, "");
                   const updatedDisplay = `[doc:${msgId}|kind=${msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document"}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}]`;
                   await upPool.query(`UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`, [updatedDisplay, msgId]);
-                  await upPool.end();
                 } catch (e) {
                   console.error("Orphan inbox row update failed:", (e as Error).message);
                 }
@@ -535,8 +531,7 @@ export async function POST(req: NextRequest) {
 
               // Store orphan doc record for later linking
               try {
-                const { Pool } = await import("pg");
-                const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                const pool = getPool();
                 await pool.query(`
                   CREATE TABLE IF NOT EXISTS orphan_docs (
                     id TEXT PRIMARY KEY,
@@ -567,7 +562,6 @@ export async function POST(req: NextRequest) {
                   );
                 } catch { /* non-fatal */ }
 
-                await pool.end();
                 console.log(`📌 Orphan doc registered: ${suggestedLabel} from ${from}`);
               } catch (e) {
                 console.error("Orphan registration failed:", e);
@@ -640,12 +634,10 @@ export async function POST(req: NextRequest) {
                 // text with one that includes filename + mime + S3 key so the
                 // frontend can render a download button.
                 try {
-                  const { Pool } = await import("pg");
-                  const upPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                  const upPool = getPool();
                   const finalName = (originalFilename || media.filename || `${matched.client || "doc"}.${ext}`).replace(/\|/g, "");
                   const updatedDisplay = `[doc:${msgId}|kind=${msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document"}|name=${encodeURIComponent(finalName)}|mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}|s3=${encodeURIComponent(s3Key)}${mediaCaption && mediaCaption !== originalFilename ? `|caption=${encodeURIComponent(mediaCaption)}` : ""}]`;
                   await upPool.query(`UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`, [updatedDisplay, msgId]);
-                  await upPool.end();
                   console.log(`✅ Inbox row ${msgId} updated with download info (case=${matched.client})`);
                 } catch (e) {
                   console.error(`❌ Inbox row update failed for ${msgId} (case=${matched.client}):`, (e as Error).message, "— S3 has the file but inbox row is still at pending=1.");
@@ -1097,8 +1089,7 @@ export async function POST(req: NextRequest) {
         if (!handledByIntake && !matched) {
           try {
             const { sendWhatsAppText } = await import("@/lib/whatsapp");
-            const { Pool } = await import("pg");
-            const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+            const pool = getPool();
 
             // Check if we already know their name from previous messages
             const prevMsg = await pool.query(
@@ -1169,7 +1160,6 @@ Thank you for your message — our team has received it and will get back to you
 — Newton Immigration Team`);
             }
 
-            await pool.end();
           } catch(e) { console.error("Unknown number handler error:", e); }
         }
 
@@ -1259,15 +1249,13 @@ Thank you for your message — our team has received it and will get back to you
                 if (docSend.success) {
                   answeredDocQuestion = true;
                   try {
-                    const { Pool } = await import("pg");
-                    const poolDocQ = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                    const poolDocQ = getPool();
                     const digitsDq = String(from || "").replace(/\D/g, "");
                     const normalizedDq = digitsDq.length === 10 ? `1${digitsDq}` : digitsDq;
                     await poolDocQ.query(
                       `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
                       [`WA-DOCQ-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, normalizedDq, docMsg, matched.id, matched.client || null]
                     );
-                    await poolDocQ.end();
                   } catch (e) {
                     console.error("Doc-question inbox log error:", (e as Error).message);
                   }
@@ -1303,8 +1291,7 @@ Thank you for your message — our team has received it and will get back to you
 
               if (classification.route === "ai") {
                 // Pull recent conversation context (last 8 messages from inbox)
-                const { Pool } = await import("pg");
-                const pool2 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                const pool2 = getPool();
                 const last10 = String(matched.leadPhone || "").replace(/\D/g, "").slice(-10);
                 const recentRows = last10
                   ? await pool2.query(
@@ -1319,7 +1306,6 @@ Thank you for your message — our team has received it and will get back to you
                        ORDER BY created_at DESC LIMIT 8`,
                       [matched.id]
                     );
-                await pool2.end();
                 const recentConversation = (recentRows.rows || [])
                   .reverse() // oldest-first for the LLM
                   .map((r: any) => ({
@@ -1356,7 +1342,7 @@ Thank you for your message — our team has received it and will get back to you
                   if (sendResult.success) {
                     // Log outbound to inbox so staff sees it in conversation view
                     try {
-                      const pool3 = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                      const pool3 = getPool();
                       const digits = String(from || "").replace(/\D/g, "");
                       const normalizedPhone = (digits.length === 10)
                         ? `1${digits}`
@@ -1367,7 +1353,6 @@ Thank you for your message — our team has received it and will get back to you
                         `INSERT INTO whatsapp_inbox (id, phone, message, direction, matched_case_id, matched_case_name, is_read) VALUES ($1,$2,$3,'outbound',$4,$5,TRUE)`,
                         [`WA-AI-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, normalizedPhone, reply, matched.id, matched.client || null]
                       );
-                      await pool3.end();
                     } catch (e) {
                       console.error("AI reply inbox log error:", (e as Error).message);
                     }
