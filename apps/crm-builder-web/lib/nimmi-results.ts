@@ -104,12 +104,27 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
     return { ok: false, error: "prepare-upload returned no uploadUrl/resultId" };
   }
 
+  // Nimmi signs its presigned PUT URLs with server-side encryption enabled, which
+  // makes `x-amz-server-side-encryption` a SIGNED header. S3 then REQUIRES the PUT
+  // to send that exact header — omitting it causes SignatureDoesNotMatch. We read
+  // the value Nimmi signed from the presigned URL when present, else default to
+  // AES256 (SSE-S3; the only header signed is x-amz-server-side-encryption, with
+  // no KMS key-id header, so it's SSE-S3 not SSE-KMS).
+  const sseFromUrl = (() => {
+    try { return new URL(uploadUrl).searchParams.get("X-Amz-SignedHeaders") || ""; } catch { return ""; }
+  })();
+  const sseValue: string | null = sseFromUrl.includes("x-amz-server-side-encryption")
+    ? String((prep as any).serverSideEncryption || (prep as any).sse || "AES256")
+    : null;
+
   // ── Step 2: PUT the file to the presigned S3 URL ──
   const putFile = async (): Promise<{ ok: boolean; status: number; error?: string }> => {
     try {
+      const putHeaders: Record<string, string> = { "Content-Type": input.contentType };
+      if (sseValue) putHeaders["x-amz-server-side-encryption"] = sseValue;
       const res = await fetch(uploadUrl, {
         method: "PUT",
-        headers: { "Content-Type": input.contentType },
+        headers: putHeaders,
         body: input.fileBuffer as any,
       });
       if (res.ok) return { ok: true, status: res.status };
