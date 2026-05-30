@@ -7390,6 +7390,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
                                 </div>
 
+                                <div style="margin-top:12px;">
+                                  <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">📎 Add reference documents (optional)</label>
+                                  <input id="__rep_letter_refs__" type="file" multiple accept=".pdf,image/jpeg,image/png,image/webp" style="width:100%;font-size:12px;" />
+                                  <p style="margin:4px 0 0;font-size:10px;color:#94a3b8;">Attach supporting evidence — proof of ties, relationship, funds, enrolment, employment, etc. Claude reads them and weaves the strongest, specific points into the letter. Up to 5 files (images / PDF).</p>
+                                </div>
+
                                 <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:20px;">
                                   <span id="__rep_letter_status__" style="margin-right:auto;font-size:12px;color:#7e22ce;font-weight:600;display:none;">⏳ AI is drafting your letter…</span>
                                   <button id="__rep_letter_cancel__" style="border:1px solid #e2e8f0;background:white;padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">Cancel</button>
@@ -7437,6 +7443,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             // existing close handlers on the outer overlay still work.
                             submitBtn?.addEventListener("click", async () => {
                               const story = textarea.value.trim();
+                              // Read attached reference docs as base64 (images / PDF) for the AI.
+                              const refInput = document.getElementById("__rep_letter_refs__") as HTMLInputElement | null;
+                              const referenceDocs: { mediaType: string; data: string; name: string }[] = [];
+                              for (const f of (refInput?.files ? Array.from(refInput.files).slice(0, 5) : [])) {
+                                try {
+                                  const b64 = await new Promise<string>((resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onload = () => { const r = String(reader.result || ""); const c = r.indexOf(","); resolve(c >= 0 ? r.slice(c + 1) : r); };
+                                    reader.onerror = () => reject(reader.error);
+                                    reader.readAsDataURL(f);
+                                  });
+                                  referenceDocs.push({ mediaType: f.type || "application/octet-stream", data: b64, name: f.name });
+                                } catch { /* skip unreadable file */ }
+                              }
                               submitBtn.disabled = true;
                               submitBtn.textContent = "Generating…";
                               statusSpan.style.display = "inline";
@@ -7449,6 +7469,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     mode: "preview",
                                     clientStory: story,
                                     pronouns: selectedPronoun,
+                                    referenceDocs,
                                   }),
                                 });
                                 if (!res?.ok) {

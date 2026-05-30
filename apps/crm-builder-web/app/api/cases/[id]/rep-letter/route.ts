@@ -530,6 +530,10 @@ interface AIBodyParams {
   arrivalDate: string;
   permitExpiry: string;
   programEndDate: string;
+  // Optional supporting evidence (images / PDFs as base64) that staff attach via
+  // "Add Reference". Claude reads them with vision to write a stronger, more
+  // specific letter (real dates, names, evidence of ties/relationship/funds).
+  referenceDocs?: { mediaType: string; data: string; name?: string }[];
 }
 
 // Result of a single AI call: structured body + structured enclosed docs.
@@ -853,6 +857,38 @@ ${p.clientStory}
 
 Draft the letter as a JSON object with bodyLines (using HEADING/BULLET markers) and docs (enclosed-documents list).`;
 
+  // ── Reference evidence (Add Reference) ──
+  // Attach staff-uploaded images/PDFs as Claude vision blocks so the letter is
+  // built from the actual evidence, not just notes. Cap count + per-file size
+  // so we stay under the API's request limit (base64 inflates ~33%).
+  const MAX_REF_DOCS = 5;
+  const MAX_REF_BYTES = 4_500_000; // ~4.5MB raw per file
+  const refBlocks: any[] = [];
+  for (const d of (p.referenceDocs || []).slice(0, MAX_REF_DOCS)) {
+    const mt = String(d?.mediaType || "");
+    const data = String(d?.data || "");
+    if (!data) continue;
+    // base64 length ~ 4/3 of raw bytes; guard against oversized attachments.
+    if (data.length > MAX_REF_BYTES * 1.4) continue;
+    if (mt.includes("pdf")) {
+      refBlocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data } });
+    } else if (mt.startsWith("image/")) {
+      const safe = mt.includes("png") ? "image/png" : mt.includes("webp") ? "image/webp" : mt.includes("gif") ? "image/gif" : "image/jpeg";
+      refBlocks.push({ type: "image", source: { type: "base64", media_type: safe, data } });
+    }
+  }
+  const userContent: any = refBlocks.length
+    ? [
+        ...refBlocks,
+        {
+          type: "text",
+          text:
+            userPrompt +
+            "\n\nThe attached files above are SUPPORTING EVIDENCE for this case. Read each one carefully and weave the strongest, specific, verifiable points into the letter — real dates, names, amounts, and concrete evidence (e.g. ties to home country, genuineness of relationship, proof of funds, enrolment, employment). Cite each attachment in the enclosed-documents list. Do not invent anything not supported by the evidence or the notes.",
+        },
+      ]
+    : userPrompt;
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -870,7 +906,7 @@ Draft the letter as a JSON object with bodyLines (using HEADING/BULLET markers) 
       // room for the full body + docs without truncation.
       max_tokens: 6000,
       system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+      messages: [{ role: "user", content: userContent }],
     }),
   });
 
@@ -1019,6 +1055,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           arrivalDate,
           permitExpiry,
           programEndDate,
+          referenceDocs: Array.isArray((body as any).referenceDocs) ? (body as any).referenceDocs : undefined,
         });
         bodyLines = aiResult.bodyLines;
         // If AI generated docs, prefer those (case-tailored). If the AI

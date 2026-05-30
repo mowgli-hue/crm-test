@@ -112,7 +112,11 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
         headers: { "Content-Type": input.contentType },
         body: input.fileBuffer as any,
       });
-      return { ok: res.ok, status: res.status, error: res.ok ? undefined : `S3 PUT ${res.status}` };
+      if (res.ok) return { ok: true, status: res.status };
+      // Surface the S3 error body (XML) so 403s are diagnosable — it names the
+      // exact reason, e.g. SignatureDoesNotMatch / AccessDenied / expired URL.
+      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
+      return { ok: false, status: res.status, error: `S3 PUT ${res.status}${detail ? ` — ${detail}` : ""}` };
     } catch (e) {
       return { ok: false, status: 0, error: (e as Error).message };
     }
