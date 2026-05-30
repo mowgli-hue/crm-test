@@ -5323,7 +5323,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             onClick={async () => {
                               setNewtonBriefing({loaded:false, data:null});
                               try {
-                                const res = await apiFetch("/newton-briefing", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({token:"newton-recovery-2024"})});
+                                const res = await apiFetch("/newton-briefing", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
                                 const data = await res.json();
                                 setNewtonBriefing({loaded:true, data});
                               } catch(e) { setNewtonBriefing({loaded:true, data:{error:"Failed"}}); }
@@ -6290,8 +6290,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         if (!confirm("Run the daily digest right now? Each staff member with stale cases will receive an email immediately.")) return;
                         setDigestRunLoading(true);
                         try {
-                          const url = `/admin/digest/run?token=${encodeURIComponent("newton-recovery-2024")}`;
-                          const res = await apiFetch(url);
+                          const res = await apiFetch("/admin/digest/run");
                           const d = await res?.json().catch(() => ({}));
                           if (res?.ok) {
                             const msg = `✅ Digest run complete\n\n` +

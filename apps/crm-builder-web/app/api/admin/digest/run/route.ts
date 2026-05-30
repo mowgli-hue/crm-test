@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listCases, listUsers } from "@/lib/store";
 import { sendEmail } from "@/lib/email";
 import { isValidSystemToken } from "@/lib/auth-recovery-token";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 // Staleness thresholds — keep them as constants so easy to tune later.
 const UNDER_REVIEW_STALE_DAYS = 3;
@@ -49,11 +50,16 @@ function daysAgo(iso: string | undefined | null): number {
 const COMPANY_ID = "CMP-1";
 
 export async function GET(req: NextRequest) {
-  // Token check — same pattern as /api/inbox/escalate
+  // Auth: accept the system token (Railway cron, via x-admin-token header or
+  // ?token=) OR a logged-in staff session (the "Run digest" button in the
+  // dashboard). A client/lead session is not sufficient.
   const token = req.headers.get("x-admin-token") ||
     new URL(req.url).searchParams.get("token");
   if (!isValidSystemToken(token)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getCurrentUserFromRequest(req);
+    if (!user || user.userType !== "staff") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   const cases = await listCases(COMPANY_ID);

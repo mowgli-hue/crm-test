@@ -3,13 +3,22 @@ import { listCases, listUsers, addNotification } from "@/lib/store";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { Pool } from "pg";
 import { isValidSystemToken } from "@/lib/auth-recovery-token";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    if (!isValidSystemToken(body.token)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Auth: accept the system token (Railway cron) OR a logged-in staff session
+    // (the "Send briefing" button in the dashboard). Either is sufficient; a
+    // client/lead session is not.
+    if (!isValidSystemToken(body.token)) {
+      const user = await getCurrentUserFromRequest(request);
+      if (!user || user.userType !== "staff") {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
 
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver", weekday: "long", year: "numeric", month: "long", day: "numeric" });
     const todayShort = new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver" });
