@@ -1334,7 +1334,7 @@ function addAutomationTask(
 ) {
   if (hasOpenTaskWithTitle(store, input.companyId, input.caseId, input.title)) return;
   const task: TaskItem = {
-    id: `TSK-${store.tasks.length + 1}`,
+    id: `TSK-${randomUUID().slice(0, 8)}`,
     companyId: input.companyId,
     caseId: input.caseId,
     title: input.title,
@@ -1353,7 +1353,7 @@ function addAutomationNotification(
   input: { companyId: string; userId: string; type: "deadline" | "missing_doc" | "ai_alert"; message: string }
 ) {
   const notice: NotificationItem = {
-    id: `NTF-${store.notifications.length + 1}`,
+    id: `NTF-${randomUUID().slice(0, 8)}`,
     companyId: input.companyId,
     userId: input.userId,
     type: input.type,
@@ -2178,7 +2178,9 @@ export async function addMessage(input: {
 }): Promise<MessageItem> {
   return mutateStore((store) => {
     const message: MessageItem = {
-      id: `MSG-${store.messages.length + 1}`,
+      // randomUUID, not array length: notifications/messages/tasks get trimmed,
+      // so length+1 would reuse an existing id and silently overwrite a record.
+      id: `MSG-${randomUUID().slice(0, 8)}`,
       companyId: input.companyId,
       caseId: input.caseId,
       senderType: input.senderType,
@@ -2208,22 +2210,22 @@ export async function addOutboundMessage(input: {
   createdByUserId: string;
   createdByName: string;
 }): Promise<OutboundMessageItem> {
-  const store = await readStore();
-  const item: OutboundMessageItem = {
-    id: `OUT-${store.outboundMessages.length + 1}`,
-    companyId: input.companyId,
-    caseId: input.caseId,
-    channel: input.channel,
-    status: input.status,
-    target: input.target,
-    message: input.message,
-    createdByUserId: input.createdByUserId,
-    createdByName: input.createdByName,
-    createdAt: new Date().toISOString()
-  };
-  store.outboundMessages.push(item);
-  await writeStore(store);
-  return item;
+  return mutateStore((store) => {
+    const item: OutboundMessageItem = {
+      id: `OUT-${randomUUID().slice(0, 8)}`,
+      companyId: input.companyId,
+      caseId: input.caseId,
+      channel: input.channel,
+      status: input.status,
+      target: input.target,
+      message: input.message,
+      createdByUserId: input.createdByUserId,
+      createdByName: input.createdByName,
+      createdAt: new Date().toISOString()
+    };
+    store.outboundMessages.push(item);
+    return item;
+  });
 }
 
 export async function listDocuments(companyId: string, caseId: string): Promise<DocumentItem[]> {
@@ -2511,10 +2513,10 @@ export async function addTask(input: {
   priority?: "low" | "medium" | "high";
   dueDate?: string;
 }): Promise<TaskItem> {
-  const store = await readStore();
+  return mutateStore((store) => {
   const normalizedCaseId = String(input.caseId || "").trim() || "GENERAL";
   const task: TaskItem = {
-    id: `TSK-${store.tasks.length + 1}`,
+    id: `TSK-${randomUUID().slice(0, 8)}`,
     companyId: input.companyId,
     caseId: normalizedCaseId,
     title: input.title.trim(),
@@ -2562,8 +2564,8 @@ export async function addTask(input: {
     });
   }
 
-  await writeStore(store);
   return task;
+  });
 }
 
 export async function updateTaskStatus(
@@ -2571,7 +2573,7 @@ export async function updateTaskStatus(
   taskId: string,
   status: "pending" | "completed"
 ): Promise<TaskItem | null> {
-  const store = await readStore();
+  return mutateStore((store) => {
   const idx = store.tasks.findIndex((t) => t.companyId === companyId && t.id === taskId);
   if (idx === -1) return null;
   store.tasks[idx] = { ...store.tasks[idx], status };
@@ -2605,8 +2607,8 @@ export async function updateTaskStatus(
     }
   }
 
-  await writeStore(store);
   return store.tasks[idx];
+  });
 }
 
 export async function listNotifications(companyId: string, userId: string): Promise<NotificationItem[]> {
@@ -2685,12 +2687,12 @@ export async function listNotifications(companyId: string, userId: string): Prom
 }
 
 export async function markNotificationRead(companyId: string, userId: string, id: string): Promise<NotificationItem | null> {
-  const store = await readStore();
-  const idx = store.notifications.findIndex((n) => n.companyId === companyId && n.userId === userId && n.id === id);
-  if (idx === -1) return null;
-  store.notifications[idx] = { ...store.notifications[idx], read: true };
-  await writeStore(store);
-  return store.notifications[idx];
+  return mutateStore((store) => {
+    const idx = store.notifications.findIndex((n) => n.companyId === companyId && n.userId === userId && n.id === id);
+    if (idx === -1) return null;
+    store.notifications[idx] = { ...store.notifications[idx], read: true };
+    return store.notifications[idx];
+  });
 }
 
 export async function addNotification(input: {
@@ -2700,20 +2702,20 @@ export async function addNotification(input: {
   message: string;
   link?: string;
 }): Promise<NotificationItem> {
-  const store = await readStore();
-  const notice: NotificationItem = {
-    id: `NTF-${store.notifications.length + 1}`,
-    companyId: input.companyId,
-    userId: input.userId,
-    type: input.type as any,
-    message: input.message,
-    link: input.link,
-    read: false,
-    createdAt: new Date().toISOString()
-  } as any;
-  store.notifications.unshift(notice);
-  await writeStore(store);
-  return notice;
+  return mutateStore((store) => {
+    const notice: NotificationItem = {
+      id: `NTF-${randomUUID().slice(0, 8)}`,
+      companyId: input.companyId,
+      userId: input.userId,
+      type: input.type as any,
+      message: input.message,
+      link: input.link,
+      read: false,
+      createdAt: new Date().toISOString()
+    } as any;
+    store.notifications.unshift(notice);
+    return notice;
+  });
 }
 
 export async function addAuditLog(input: {
