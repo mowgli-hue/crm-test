@@ -928,9 +928,13 @@ export async function POST(request: NextRequest) {
     const change = entry?.changes?.[0];
     const value = change?.value;
 
-    if (!value?.messages?.[0]) return NextResponse.json({ status: "ok" });
+    if (!Array.isArray(value?.messages) || value.messages.length === 0) {
+      return NextResponse.json({ status: "ok" });
+    }
 
-    const message = value.messages[0];
+    // Meta can batch multiple inbound messages in a single webhook. Process each
+    // (the processing webhook already loops; this one used to drop messages[1+]).
+    for (const message of value.messages) {
     const from = message.from;
     const msgType = String(message?.type || "text"); // text, image, document, audio
 
@@ -965,7 +969,7 @@ export async function POST(request: NextRequest) {
       }
       if (alreadyProcessed) {
         console.log(`⏸️  [marketing] Duplicate webhook for Meta msg ${metaMsgId} — already processed, skipping.`);
-        return NextResponse.json({ status: "ok" });
+        continue;
       }
     }
 
@@ -1069,6 +1073,7 @@ export async function POST(request: NextRequest) {
         console.error("Marketing inbound media save failed:", (e as Error).message);
       }
     }
+    } // end for (const message of value.messages)
 
     return NextResponse.json({ status: "ok" });
   } catch (e) {
