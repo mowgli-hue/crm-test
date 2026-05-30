@@ -322,7 +322,17 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
       createdAt: l.createdAt ?? new Date().toISOString()
     })),
     tasks: raw.tasks ?? [],
-    notifications: raw.notifications ?? [],
+    // Cap transient UI notifications so they can't grow unbounded and bloat the
+    // hot-path store (had grown to 7000+). Keep the newest 800 by createdAt;
+    // older alerts are no longer useful. Self-heals: the trimmed list persists
+    // on the next write. (Only sorts when actually over the cap.)
+    notifications: (() => {
+      const n = raw.notifications ?? [];
+      if (n.length <= 800) return n;
+      return [...n]
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+        .slice(0, 800);
+    })(),
     legacyResults: (raw.legacyResults ?? []).map((r) => {
       const createdAt = r.createdAt ?? new Date().toISOString();
       const resultDate = String((r as LegacyResultItem).resultDate || "").trim() || createdAt.slice(0, 10);
