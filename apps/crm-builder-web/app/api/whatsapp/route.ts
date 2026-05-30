@@ -587,6 +587,22 @@ export async function POST(req: NextRequest) {
 
         if (mediaId) {
           console.log(`📎 WA media from ${matched.client} (mediaId=${mediaId}): ${mediaCaption}`);
+          // ── Idempotency pre-check ──
+          // If a document for this case already carries this Meta message.id, the
+          // media was already saved on an earlier delivery. Skip the whole
+          // download → S3 → OCR → Drive pipeline so a redelivered webhook can't
+          // create duplicate files/records. (addDocument also dedupes as a
+          // backstop, but checking here avoids the wasted upload work entirely.)
+          if (metaMsgId) {
+            try {
+              const { listDocuments } = await import("@/lib/store");
+              const already = await listDocuments(COMPANY_ID, matched.id);
+              if (already.some((d) => String((d as { sourceMsgId?: string }).sourceMsgId || "") === metaMsgId)) {
+                console.log(`⏸️  Media for Meta msg ${metaMsgId} already saved on case ${matched.id} — skipping re-upload.`);
+                continue;
+              }
+            } catch { /* non-fatal — fall through and let addDocument dedupe */ }
+          }
           try {
             const media = await downloadWaMedia(mediaId);
             if (!media) {
@@ -744,7 +760,11 @@ export async function POST(req: NextRequest) {
                 category: docCategory,
                 uploadedBy: matched.client || "Client (WhatsApp)",
                 status: "received",
-                link: finalLink
+                link: finalLink,
+                // Dedupe on Meta's stable message id: a redelivered/retried webhook
+                // for this same upload returns the existing record instead of adding
+                // another. (Fixes "one upload → many document records".)
+                sourceMsgId: metaMsgId || undefined,
               });
               // doc_uploaded email notification disabled by user request (May 2026)
               // - Was firing on every client doc upload, which created inbox noise.

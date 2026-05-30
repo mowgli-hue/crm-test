@@ -346,6 +346,9 @@ export type DocumentItem = {
   status: "pending" | "received";
   link: string;
   createdAt: string;
+  // Stable source identity (WhatsApp Meta message.id) used to dedupe a redelivered
+  // webhook so one upload can't become many document records.
+  sourceMsgId?: string;
 };
 
 export type ClientMaster = {

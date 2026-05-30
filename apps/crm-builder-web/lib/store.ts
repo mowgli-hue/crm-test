@@ -2240,8 +2240,24 @@ export async function addDocument(input: {
   category?: "general" | "result";
   status: DocumentItem["status"];
   link: string;
+  // Stable identity of the source (e.g. WhatsApp Meta message.id "wamid…").
+  // When provided, addDocument is IDEMPOTENT on (companyId, caseId, sourceMsgId):
+  // a redelivered/retried webhook for the same media returns the existing record
+  // instead of inserting a duplicate. This is the durable backstop that stops
+  // the "one upload became 87 documents" bug even if the webhook is reprocessed.
+  sourceMsgId?: string;
 }): Promise<DocumentItem> {
   return mutateStore((store) => {
+    const srcId = String(input.sourceMsgId || "").trim();
+    if (srcId) {
+      const existing = store.documents.find(
+        (d) =>
+          d.companyId === input.companyId &&
+          d.caseId === input.caseId &&
+          String((d as { sourceMsgId?: string }).sourceMsgId || "") === srcId
+      );
+      if (existing) return existing; // already saved this exact message — no duplicate
+    }
     const doc: DocumentItem = {
       id: `DOC-${randomUUID().slice(0, 8)}`,
       companyId: input.companyId,
@@ -2250,8 +2266,9 @@ export async function addDocument(input: {
       category: input.category ?? "general",
       status: input.status,
       link: input.link,
-      createdAt: new Date().toISOString()
-    };
+      createdAt: new Date().toISOString(),
+      ...(srcId ? { sourceMsgId: srcId } : {}),
+    } as DocumentItem;
     store.documents.push(doc);
     const caseIdx = store.cases.findIndex((c) => c.companyId === input.companyId && c.id === input.caseId);
     if (caseIdx !== -1) {
