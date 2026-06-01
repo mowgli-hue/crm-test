@@ -3,6 +3,7 @@ import { NewtonAgent } from "@/components/newton-agent";
 import { MarketingInbox } from "@/components/marketing-inbox";
 import WebFormsPage from "@/components/web-forms-page";
 import AdminDashboardPage from "@/components/admin-dashboard-page";
+import AlertRecipientsManager from "@/components/alert-recipients-manager";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
@@ -5246,7 +5247,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             ) : screen === "marketing-leads" ? (
               <MarketingLeads sessionUser={sessionUser} apiFetch={apiFetch} />
             ) : screen === "admin-dashboard" ? (
-              <AdminDashboardPage apiFetch={apiFetch} onOpenCase={(id: string) => { setSelectedCaseId(id); setScreen("cases"); }} />
+              <div className="space-y-4">
+                <AdminDashboardPage apiFetch={apiFetch} onOpenCase={(id: string) => { setSelectedCaseId(id); setScreen("cases"); }} />
+                <AlertRecipientsManager />
+              </div>
             ) : screen === "marketing-dashboard" ? (
               <MarketingDashboard apiFetch={apiFetch} onNavigate={(s: any) => setScreen(s)} />
             ) : screen === "web-forms" ? (
