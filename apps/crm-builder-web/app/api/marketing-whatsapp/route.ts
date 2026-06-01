@@ -103,19 +103,55 @@ const MARKETING_PRESENCE_FALLBACK =
 const VISIT_INTENT_RE = /\b(come\s+(in|over|now|to|by|down)|coming\s+(in|over|to)|drop\s+by|walk[\s-]?in|in\s+person|face[\s-]?to[\s-]?face|visit|at\s+the\s+(office|door|building|front)|outside\s+(the\s+)?(building|office)|door\s+is\s+locked|nobody\s+is\s+here|reach\s+(you|someone)|meet\s+(you|in\s+person)|office\s+(open|hours|address))\b/i;
 
 const __ownerAlertAt = new Map<string, number>();
-async function alertOwnerByWhatsApp(key: string, message: string): Promise<void> {
+// Template body params can't contain newlines or long whitespace runs.
+const sanitizeParam = (s: string) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 200) || "—";
+async function alertOwnerByWhatsApp(opts: {
+  key: string; clientName: string; clientPhone: string; context: string;
+}): Promise<void> {
   const raw = String(process.env.OWNER_ALERT_WHATSAPP || "").trim();
   if (!raw) return;
   // Debounce: at most one ping per contact per 10 minutes (avoid spamming the
   // owner when a client sends several visit-related messages in a row).
   const now = Date.now();
-  const last = __ownerAlertAt.get(key) || 0;
+  const last = __ownerAlertAt.get(opts.key) || 0;
   if (now - last < 10 * 60 * 1000) return;
-  __ownerAlertAt.set(key, now);
+  __ownerAlertAt.set(opts.key, now);
+
+  const numbers = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  // Prefer an approved template (delivers regardless of the 24h window — this is
+  // a safety alert and MUST land). Falls back to free-form text if no template is
+  // configured or the template send fails. Body params: {{1}} name, {{2}} phone,
+  // {{3}} what's happening.
+  const templateName = String(process.env.OWNER_ALERT_TEMPLATE_NAME || "").trim();
+  const templateLang = String(process.env.OWNER_ALERT_TEMPLATE_LANG || "en").trim();
+  const fromPhoneId = process.env.OWNER_ALERT_PHONE_ID || process.env.WHATSAPP_MARKETING_PHONE_ID || undefined;
+  const fallbackText =
+    `🚨 Newton bot alert\nClient: ${opts.clientName} (${opts.clientPhone})\n${opts.context}\nPlease reach out to them directly.`;
+
   try {
-    const { sendWhatsAppText } = await import("@/lib/whatsapp");
-    for (const n of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
-      await sendWhatsAppText(n, message).catch(() => {});
+    const { sendWhatsAppTemplate, sendWhatsAppText } = await import("@/lib/whatsapp");
+    for (const n of numbers) {
+      let ok = false;
+      if (templateName) {
+        const t = await sendWhatsAppTemplate({
+          to: n,
+          templateName,
+          languageCode: templateLang,
+          phoneNumberId: fromPhoneId,
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: sanitizeParam(opts.clientName || opts.clientPhone) },
+                { type: "text", text: sanitizeParam(opts.clientPhone) },
+                { type: "text", text: sanitizeParam(opts.context) },
+              ],
+            },
+          ],
+        }).catch(() => ({ success: false }));
+        ok = Boolean((t as { success?: boolean }).success);
+      }
+      if (!ok) await sendWhatsAppText(n, fallbackText).catch(() => {});
     }
   } catch { /* non-fatal */ }
 }
@@ -218,10 +254,12 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
   // WhatsApp right away so a human handles it (the bot still replies, but only
   // with "I'm confirming with the team" — never a fabricated "they're waiting").
   if (VISIT_INTENT_RE.test(message)) {
-    await alertOwnerByWhatsApp(
-      phone,
-      `🚨 Possible OFFICE VISIT / in-person request on the marketing WhatsApp from ${contactName || phone} (${phone}):\n\n"${message.slice(0, 220)}"\n\nThe bot will NOT promise availability — please reach out to them directly.`
-    );
+    await alertOwnerByWhatsApp({
+      key: phone,
+      clientName: contactName || phone,
+      clientPhone: phone,
+      context: `Possible office visit / in-person request: "${message.slice(0, 180)}"`,
+    });
   }
 
   // Map referral source — if user clicked an FB/IG ad, "referral" header has source name
@@ -953,12 +991,13 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
     safetyReason = unsafeReason;
     if (unsafeReason === "presence") {
       // The bot just tried to fabricate office presence — ping the owner directly
-      // (they may have a client physically waiting). Forced (no debounce key reuse
-      // collision) via the same phone key; the 10-min debounce still applies.
-      await alertOwnerByWhatsApp(
-        phone,
-        `🚨 The marketing bot just tried to tell ${contactName || phone} (${phone}) that someone is at/coming to the office — BLOCKED. They may be waiting in person. Call them now: ${phone}`
-      );
+      // (they may have a client physically waiting). 10-min debounce still applies.
+      await alertOwnerByWhatsApp({
+        key: phone,
+        clientName: contactName || phone,
+        clientPhone: phone,
+        context: "Bot tried to claim someone is at/coming to the office — BLOCKED. Client may be waiting in person.",
+      });
     }
   }
 
