@@ -504,4 +504,15 @@ export type AppStore = {
   webForms?: WebFormEntry[];
   prConsultations?: PrConsultationEntry[];
   submissions?: SubmissionEntry[];
+  alertRecipients?: AlertRecipient[];
+};
+
+// People who get a WhatsApp ping when the marketing bot hits an "important"
+// moment (office visit, blocked fabrication, frustrated client, ready-to-pay).
+export type AlertRecipient = {
+  id: string;
+  phone: string;     // digits only, with country code (e.g. 16049071276)
+  label: string;     // e.g. "Navdeep", "Front desk"
+  active: boolean;
+  createdAt: string;
 };

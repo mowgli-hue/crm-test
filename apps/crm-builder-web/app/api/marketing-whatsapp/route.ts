@@ -101,6 +101,10 @@ const MARKETING_PRESENCE_FALLBACK =
 // The bot must NOT decide office availability — instead the OWNER gets a direct
 // WhatsApp ping (to OWNER_ALERT_WHATSAPP) so a human steps in immediately.
 const VISIT_INTENT_RE = /\b(come\s+(in|over|now|to|by|down)|coming\s+(in|over|to)|drop\s+by|walk[\s-]?in|in\s+person|face[\s-]?to[\s-]?face|visit|at\s+the\s+(office|door|building|front)|outside\s+(the\s+)?(building|office)|door\s+is\s+locked|nobody\s+is\s+here|reach\s+(you|someone)|meet\s+(you|in\s+person)|office\s+(open|hours|address))\b/i;
+// Frustrated / upset client — a human should jump in.
+const FRUSTRATED_RE = /\b(angry|furious|frustrat\w*|ridiculous|waste\s+of\s+(my\s+)?time|terrible|worst|horrible|useless|complain\w*|refund|scam|cheat\w*|fraud|report\s+(you|this)|\bsue\b|lawyer|legal\s+action|fed\s+up|disappoint\w*|unprofessional|never\s+(coming|again)|cancel\s+everything)\b/i;
+// Ready to pay / commit — a hot lead worth grabbing live.
+const READY_TO_PAY_RE = /\b(ready\s+to\s+pay|i'?ll\s+pay|i\s+will\s+pay|payment\s+sent|sent\s+(the\s+)?(payment|e-?transfer)|paid\s+(it|now|the\s+fee|already)|made\s+the\s+payment|ready\s+to\s+(start|proceed|go\s+ahead))\b/i;
 
 const __ownerAlertAt = new Map<string, number>();
 // Template body params can't contain newlines or long whitespace runs.
@@ -108,16 +112,23 @@ const sanitizeParam = (s: string) => String(s || "").replace(/\s+/g, " ").trim()
 async function alertOwnerByWhatsApp(opts: {
   key: string; clientName: string; clientPhone: string; context: string;
 }): Promise<void> {
-  const raw = String(process.env.OWNER_ALERT_WHATSAPP || "").trim();
-  if (!raw) return;
-  // Debounce: at most one ping per contact per 10 minutes (avoid spamming the
-  // owner when a client sends several visit-related messages in a row).
+  // Recipients = the CRM-managed list (admin screen) PLUS any in the env var.
+  const envNumbers = String(process.env.OWNER_ALERT_WHATSAPP || "")
+    .split(",").map((s) => s.replace(/\D/g, "")).filter((n) => n.length >= 10);
+  let storeNumbers: string[] = [];
+  try {
+    const { listAlertRecipients } = await import("@/lib/store");
+    storeNumbers = (await listAlertRecipients()).filter((r) => r.active).map((r) => r.phone);
+  } catch { /* non-fatal */ }
+  const numbers = Array.from(new Set([...storeNumbers, ...envNumbers]));
+  if (numbers.length === 0) return;
+
+  // Debounce: at most one ping per contact per 10 minutes (avoid spamming when a
+  // client sends several alert-worthy messages in a row).
   const now = Date.now();
   const last = __ownerAlertAt.get(opts.key) || 0;
   if (now - last < 10 * 60 * 1000) return;
   __ownerAlertAt.set(opts.key, now);
-
-  const numbers = raw.split(",").map((s) => s.trim()).filter(Boolean);
   // Prefer an approved template (delivers regardless of the 24h window — this is
   // a safety alert and MUST land). Falls back to free-form text if no template is
   // configured or the template send fails. Body params: {{1}} name, {{2}} phone,
@@ -248,17 +259,24 @@ function detectServiceInterest(text: string): string | null {
 async function handleMarketingMessage(phone: string, message: string, contactName?: string, referral?: string) {
   await saveMarketingMessage(phone, message, "inbound", contactName);
 
-  // ── Office-visit / in-person intent → ping the OWNER directly ──
-  // The bot must never decide office availability. If the client wants to come
-  // in, reach someone in person, or is already at the office, alert the owner on
-  // WhatsApp right away so a human handles it (the bot still replies, but only
-  // with "I'm confirming with the team" — never a fabricated "they're waiting").
+  // ── Important-moment alerts → ping the alert recipients directly ──
+  // Only fire on genuinely important moments (debounced once per client / 10 min).
+  // Priority order: an office visit is most time-sensitive, then a frustrated
+  // client, then a ready-to-pay lead.
+  let alertContext: string | null = null;
   if (VISIT_INTENT_RE.test(message)) {
+    alertContext = `Possible office visit / in-person request: "${message.slice(0, 160)}"`;
+  } else if (FRUSTRATED_RE.test(message)) {
+    alertContext = `⚠️ Client sounds frustrated/upset: "${message.slice(0, 160)}"`;
+  } else if (READY_TO_PAY_RE.test(message)) {
+    alertContext = `💰 Client is ready to pay / commit: "${message.slice(0, 160)}"`;
+  }
+  if (alertContext) {
     await alertOwnerByWhatsApp({
       key: phone,
       clientName: contactName || phone,
       clientPhone: phone,
-      context: `Possible office visit / in-person request: "${message.slice(0, 180)}"`,
+      context: alertContext,
     });
   }
 

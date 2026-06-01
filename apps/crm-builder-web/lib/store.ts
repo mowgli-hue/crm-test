@@ -25,7 +25,8 @@ import {
   UserType,
   WebFormEntry,
   PrConsultationEntry,
-  SubmissionEntry
+  SubmissionEntry,
+  AlertRecipient
 } from "@/lib/models";
 import { sampleCases, seedCompany, seedUsers } from "@/lib/data";
 import { getMissingChecklistDocs } from "@/lib/application-checklists";
@@ -408,7 +409,8 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
     invites: raw.invites ?? [],
     webForms: raw.webForms ?? [],
     prConsultations: raw.prConsultations ?? [],
-    submissions: raw.submissions ?? []
+    submissions: raw.submissions ?? [],
+    alertRecipients: raw.alertRecipients ?? []
   };
 }
 
@@ -2790,6 +2792,44 @@ export async function listAuditLogs(companyId: string, limit = 200): Promise<Aud
   return Array.from(byId.values())
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, cap);
+}
+
+// ── Alert recipients (people pinged on important marketing-bot moments) ──
+export async function listAlertRecipients(): Promise<AlertRecipient[]> {
+  const store = await readStore();
+  return (store.alertRecipients || []).slice().sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export async function addAlertRecipient(input: { phone: string; label: string }): Promise<AlertRecipient | null> {
+  const phone = String(input.phone || "").replace(/\D/g, "");
+  if (phone.length < 10) return null;
+  return mutateStore((store) => {
+    if (!Array.isArray(store.alertRecipients)) store.alertRecipients = [];
+    const existing = store.alertRecipients.find((r) => r.phone === phone);
+    if (existing) {
+      existing.active = true;
+      existing.label = String(input.label || existing.label).trim() || existing.label;
+      return existing;
+    }
+    const rec: AlertRecipient = {
+      id: `ALR-${randomUUID().slice(0, 8)}`,
+      phone,
+      label: String(input.label || "").trim() || phone,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    store.alertRecipients.push(rec);
+    return rec;
+  });
+}
+
+export async function removeAlertRecipient(id: string): Promise<boolean> {
+  return mutateStore((store) => {
+    const list = store.alertRecipients || [];
+    const before = list.length;
+    store.alertRecipients = list.filter((r) => r.id !== id);
+    return store.alertRecipients.length < before;
+  });
 }
 
 export async function updateCasePgwpIntake(
