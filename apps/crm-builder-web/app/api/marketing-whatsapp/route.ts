@@ -66,14 +66,36 @@ const MARKETING_OUTPUT_BANNED: RegExp[] = [
   /\bno\s+(chance\s+of\s+)?(refusal|rejection)\b/i,
   /\b(approved|approval|decision|visa)\s+(in|within)\s+\d+\s*(days?|weeks?|months?)\b/i, // outcome+timeline promise
 ];
-function marketingReplyIsUnsafe(text: string): boolean {
-  return MARKETING_OUTPUT_BANNED.some((re) => re.test(text));
+// Physical-presence fabrications. The bot has ZERO visibility into the office —
+// it cannot know who is there, whether the door is open, or that someone is "on
+// the way". Saying so sent a real client to a locked, empty office for 30+ min.
+// These phrases must never leave the bot; if one slips past the prompt, we swap
+// in an honest message and alert staff.
+const MARKETING_PRESENCE_BANNED: RegExp[] = [
+  /\bcom(e|ing)\s+down\b/i,                                                          // "coming down" / "come down"
+  /\blet\s+you\s+in\b/i,                                                             // "they'll let you in"
+  /\bwaiting\s+(for\s+you\s+)?(inside|in\s+the\s+office|at\s+the\s+(office|door|front|building)|downstairs|upstairs)\b/i,
+  /\b(someone|somebody|the\s+team|they|she|he)\s+(is|are|'?re|'?s)\s+coming\b/i,     // "someone is coming"
+  /\bon\s+(their|his|her|my)\s+way\b/i,                                              // "on their way"
+  /\bbe\s+(right\s+)?(there|down)\s+(soon|shortly|in\s+(a\s+)?(minute|moment|sec|\d+\s*min))/i,
+  /\bcome\s+(now|over\s+now|in\s+(a\s+|half\s+an\s+)?(hour|moment|\d+\s*min))/i,      // "come now" / "come in half an hour"
+  /\bteam\s+is\s+(ready|here|waiting)\b/i,                                           // "team is ready/here/waiting"
+];
+function marketingUnsafeReason(text: string): "outcome" | "presence" | null {
+  if (MARKETING_OUTPUT_BANNED.some((re) => re.test(text))) return "outcome";
+  if (MARKETING_PRESENCE_BANNED.some((re) => re.test(text))) return "presence";
+  return null;
 }
 const MARKETING_SAFE_FALLBACK =
   "Thanks so much for reaching out! 🍁 I want to make sure you get accurate, " +
   "personalised guidance on this, so I'm connecting you with one of our team " +
   "members who'll follow up with you shortly. In the meantime, feel free to " +
   "share any other questions 🙂";
+const MARKETING_PRESENCE_FALLBACK =
+  "Thanks for reaching out! 🍁 Quick note — I'm a chat assistant, so I can't see " +
+  "our office or arrange an in-person meet on the spot, and our offices are by " +
+  "appointment (closed weekends). I've flagged this to our team to follow up. For " +
+  "anything time-sensitive, please call the office: +1 604-653-5031 🙏";
 
 async function sendMarketingMessage(to: string, message: string) {
   const phone = to.replace(/\D/g, "");
@@ -556,6 +578,26 @@ BANNED THINKING:
 ❌ NEVER auto-decline based on country. Newton handles UK, USA, and many other
    visitor visas for clients in Canada. Confirm and proceed.
 
+🚫 OFFICE VISITS & PHYSICAL PRESENCE — ABSOLUTE RULES (you have ZERO visibility into the office):
+   You are a chat assistant. You CANNOT see the office. You do NOT know who is physically
+   there, whether the door is open, or whether anyone is available right now. Acting like
+   you do has already caused real harm — a client was told to come in and "the team is
+   waiting", then stood at a LOCKED, EMPTY office on a Sunday for 30+ minutes. Never again:
+   ❌ NEVER tell a client to "come now", "come in half an hour", or "drop by" expecting
+      someone to be there. You cannot know that.
+   ❌ NEVER say "the team is waiting", "someone is coming down", "they'll let you in",
+      "they're on their way", "should be a minute", or anything implying a person is
+      physically present or en route. This is almost always FALSE and you have no way to know.
+   ❌ NEVER claim the office is open. The office is CLOSED on weekends (Saturday & Sunday)
+      and holidays, and in-person meetings are BY APPOINTMENT ONLY during weekday business
+      hours — never a same-day "right now" walk-in.
+   ✅ If a client wants to visit: share the address, but say a visit must be BOOKED first and
+      the team will confirm a specific date/time. Do not promise anyone will be there.
+   ✅ If a client is ALREADY at the office or can't reach anyone: be honest — tell them you're
+      a chat assistant and can't see the office or dispatch anyone in person, that you're
+      flagging it to the team right now, and give the real office number (+1 604-653-5031).
+      Do NOT fabricate that someone is coming or keep saying "one minute / they're on the way."
+
 🚨 For PR / Express Entry / PNP / Sponsorship questions when those ARE the immediate
    step the client wants to take:
    ✅ Confirm Newton handles it
@@ -865,10 +907,13 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
   // replace it with a safe handoff and remember that we tripped so staff get
   // alerted below. Prices and the 10% promo are allowed and never trip this.
   let safetyTripped = false;
-  if (marketingReplyIsUnsafe(reply)) {
-    console.warn(`[marketing-safety] Blocked unsafe reply to ${phone}: ${reply.slice(0, 160)}`);
-    reply = MARKETING_SAFE_FALLBACK;
+  let safetyReason: "outcome" | "presence" | null = null;
+  const unsafeReason = marketingUnsafeReason(reply);
+  if (unsafeReason) {
+    console.warn(`[marketing-safety] Blocked ${unsafeReason} reply to ${phone}: ${reply.slice(0, 160)}`);
+    reply = unsafeReason === "presence" ? MARKETING_PRESENCE_FALLBACK : MARKETING_SAFE_FALLBACK;
     safetyTripped = true;
+    safetyReason = unsafeReason;
   }
 
   sessionData.history = [
@@ -901,7 +946,9 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
         companyId: COMPANY_ID,
         userId: admin.id,
         type: "ai_alert",
-        message: safetyTripped
+        message: safetyReason === "presence"
+          ? `🚨 URGENT: ${contactName || phone} may be trying to visit/reach the office in person — the bot blocked a fabricated "team is on the way" reply. Call them now: ${phone}`
+          : safetyTripped
           ? `⚠️ Marketing bot blocked an unsafe reply (outcome/guarantee) to ${contactName || phone} and sent a safe handoff instead — please follow up personally.`
           : `📣 Marketing inquiry from ${contactName || phone}: "${message.slice(0, 60)}..."`
       });
