@@ -93,9 +93,32 @@ const MARKETING_SAFE_FALLBACK =
   "share any other questions 🙂";
 const MARKETING_PRESENCE_FALLBACK =
   "Thanks for reaching out! 🍁 Quick note — I'm a chat assistant, so I can't see " +
-  "our office or arrange an in-person meet on the spot, and our offices are by " +
-  "appointment (closed weekends). I've flagged this to our team to follow up. For " +
-  "anything time-sensitive, please call the office: +1 604-653-5031 🙏";
+  "our office or confirm in-person availability on the spot. I've alerted our team " +
+  "to follow up with you right away. For anything time-sensitive, please call the " +
+  "office: +1 604-653-5031 🙏";
+
+// Client wants to come in / reach someone in person / is already at the office.
+// The bot must NOT decide office availability — instead the OWNER gets a direct
+// WhatsApp ping (to OWNER_ALERT_WHATSAPP) so a human steps in immediately.
+const VISIT_INTENT_RE = /\b(come\s+(in|over|now|to|by|down)|coming\s+(in|over|to)|drop\s+by|walk[\s-]?in|in\s+person|face[\s-]?to[\s-]?face|visit|at\s+the\s+(office|door|building|front)|outside\s+(the\s+)?(building|office)|door\s+is\s+locked|nobody\s+is\s+here|reach\s+(you|someone)|meet\s+(you|in\s+person)|office\s+(open|hours|address))\b/i;
+
+const __ownerAlertAt = new Map<string, number>();
+async function alertOwnerByWhatsApp(key: string, message: string): Promise<void> {
+  const raw = String(process.env.OWNER_ALERT_WHATSAPP || "").trim();
+  if (!raw) return;
+  // Debounce: at most one ping per contact per 10 minutes (avoid spamming the
+  // owner when a client sends several visit-related messages in a row).
+  const now = Date.now();
+  const last = __ownerAlertAt.get(key) || 0;
+  if (now - last < 10 * 60 * 1000) return;
+  __ownerAlertAt.set(key, now);
+  try {
+    const { sendWhatsAppText } = await import("@/lib/whatsapp");
+    for (const n of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+      await sendWhatsAppText(n, message).catch(() => {});
+    }
+  } catch { /* non-fatal */ }
+}
 
 async function sendMarketingMessage(to: string, message: string) {
   const phone = to.replace(/\D/g, "");
@@ -188,6 +211,18 @@ function detectServiceInterest(text: string): string | null {
 
 async function handleMarketingMessage(phone: string, message: string, contactName?: string, referral?: string) {
   await saveMarketingMessage(phone, message, "inbound", contactName);
+
+  // ── Office-visit / in-person intent → ping the OWNER directly ──
+  // The bot must never decide office availability. If the client wants to come
+  // in, reach someone in person, or is already at the office, alert the owner on
+  // WhatsApp right away so a human handles it (the bot still replies, but only
+  // with "I'm confirming with the team" — never a fabricated "they're waiting").
+  if (VISIT_INTENT_RE.test(message)) {
+    await alertOwnerByWhatsApp(
+      phone,
+      `🚨 Possible OFFICE VISIT / in-person request on the marketing WhatsApp from ${contactName || phone} (${phone}):\n\n"${message.slice(0, 220)}"\n\nThe bot will NOT promise availability — please reach out to them directly.`
+    );
+  }
 
   // Map referral source — if user clicked an FB/IG ad, "referral" header has source name
   let source: string | undefined;
@@ -302,7 +337,7 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 700,
-      system: `⏰ RIGHT NOW it is ${new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver", weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })} (Pacific time, Newton's local time). Newton's offices are CLOSED on weekends (Saturday & Sunday) and holidays, and in-person meetings are by appointment on weekdays only. If it is currently a weekend, a holiday, or outside normal business hours, the office is CLOSED — do NOT suggest visiting today and do NOT imply anyone is available in person.
+      system: `⏰ RIGHT NOW it is ${new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver", weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })} (Pacific time, Newton's local time). CRITICAL: you do NOT know whether the office is open right now or who is physically present — it varies day to day and you cannot see it. NEVER assert the office is open or closed, and NEVER say anyone is there or on the way. For ANY in-person/visit request, do not promise anything — tell the client you're confirming with the team (who are alerted automatically) and they'll get right back to them.
 
 You are Newton Immigration's WhatsApp consultant. Think of yourself as the experienced front-desk advisor at a respected immigration firm — warm, sharp, knowledgeable. Not a chatbot. Not a sales rep with a quota. A trusted advisor who happens to also know which services Newton offers.
 
@@ -590,14 +625,14 @@ BANNED THINKING:
    ❌ NEVER say "the team is waiting", "someone is coming down", "they'll let you in",
       "they're on their way", "should be a minute", or anything implying a person is
       physically present or en route. This is almost always FALSE and you have no way to know.
-   ❌ NEVER claim the office is open. The office is CLOSED on weekends (Saturday & Sunday)
-      and holidays, and in-person meetings are BY APPOINTMENT ONLY during weekday business
-      hours — never a same-day "right now" walk-in.
-   ✅ If a client wants to visit: share the address, but say a visit must be BOOKED first and
-      the team will confirm a specific date/time. Do not promise anyone will be there.
+   ❌ NEVER claim the office is open OR closed, or that anyone is/isn't there — you cannot see
+      it and it varies day to day. Never green-light a same-day "right now" walk-in on your own.
+   ✅ If a client wants to visit: share the address if they ask, but DON'T promise availability —
+      say you're confirming with the team right now and they'll get right back with a time.
+      (The team is alerted automatically whenever someone wants to come in.)
    ✅ If a client is ALREADY at the office or can't reach anyone: be honest — tell them you're
       a chat assistant and can't see the office or dispatch anyone in person, that you're
-      flagging it to the team right now, and give the real office number (+1 604-653-5031).
+      alerting the team right now, and give the real office number (+1 604-653-5031).
       Do NOT fabricate that someone is coming or keep saying "one minute / they're on the way."
 
 🚨 For PR / Express Entry / PNP / Sponsorship questions when those ARE the immediate
@@ -916,6 +951,15 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
     reply = unsafeReason === "presence" ? MARKETING_PRESENCE_FALLBACK : MARKETING_SAFE_FALLBACK;
     safetyTripped = true;
     safetyReason = unsafeReason;
+    if (unsafeReason === "presence") {
+      // The bot just tried to fabricate office presence — ping the owner directly
+      // (they may have a client physically waiting). Forced (no debounce key reuse
+      // collision) via the same phone key; the 10-min debounce still applies.
+      await alertOwnerByWhatsApp(
+        phone,
+        `🚨 The marketing bot just tried to tell ${contactName || phone} (${phone}) that someone is at/coming to the office — BLOCKED. They may be waiting in person. Call them now: ${phone}`
+      );
+    }
   }
 
   sessionData.history = [
