@@ -42,12 +42,39 @@ export async function GET(request: NextRequest) {
       if (match) matchedBy = "name";
     }
 
-    if (!match) return NextResponse.json({ found: false });
+    // ── Fallback: the historical "Submitted applications" sheet ──
+    // Older clients aren't cases in the CRM, but their app number + phone were
+    // imported into submitted_apps. Search there if the case lookup missed.
+    if (!match) {
+      try {
+        const { lookupSubmittedAppByNumber, lookupSubmittedAppByName } = await import("@/lib/postgres-store");
+        const hit = appNumber
+          ? await lookupSubmittedAppByNumber(appNumber)
+          : await lookupSubmittedAppByName(name);
+        if (hit) {
+          const phoneDigits = String(hit.phone || "").replace(/\D/g, "");
+          return NextResponse.json({
+            found: true,
+            matchedBy: appNumber ? "application_number" : "name",
+            source: "submitted_sheet",
+            caseId: "",
+            clientName: hit.name || "",
+            formType: hit.appType || "",
+            hasPhone: phoneDigits.length > 0,
+            phone: phoneDigits,
+            phoneLast4: phoneDigits.slice(-4),
+            hasEmail: false,
+          });
+        }
+      } catch { /* table may not exist yet — fall through to not-found */ }
+      return NextResponse.json({ found: false });
+    }
 
     const phoneDigits = String((match as any).leadPhone || "").replace(/\D/g, "");
     return NextResponse.json({
       found: true,
       matchedBy,
+      source: "crm_case",
       caseId: match.id,
       clientName: match.client || "",
       formType: match.formType || "",

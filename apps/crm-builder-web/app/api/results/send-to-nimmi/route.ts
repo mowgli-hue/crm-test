@@ -119,6 +119,22 @@ export async function POST(request: NextRequest) {
     console.error("Nimmi case lookup failed (non-fatal):", (e as Error).message);
   }
 
+  // Fallback to the imported "Submitted applications" sheet for older clients who
+  // aren't cases in the CRM (so a manually-typed phone isn't required).
+  if (!phone) {
+    try {
+      const { lookupSubmittedAppByNumber, lookupSubmittedAppByName } = await import("@/lib/postgres-store");
+      const hit = appNumber ? await lookupSubmittedAppByNumber(appNumber) : (clientName ? await lookupSubmittedAppByName(clientName) : null);
+      if (hit) {
+        if (!clientName) clientName = String(hit.name || "");
+        if (!phone) phone = String(hit.phone || "");
+        if (!serviceSlug) serviceSlug = deriveServiceSlug(String(hit.appType || ""));
+      }
+    } catch (e) {
+      console.error("Nimmi submitted-apps lookup failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   if (!clientName) {
     return NextResponse.json({ error: "Could not determine the client name — enter it, or check the case exists." }, { status: 400 });
   }

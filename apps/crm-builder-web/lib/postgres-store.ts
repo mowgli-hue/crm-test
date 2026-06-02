@@ -458,6 +458,76 @@ export async function deleteCompanyMessagesFromTable(companyId: string): Promise
   await db.query(`delete from case_messages where company_id = $1`, [companyId]);
 }
 
+// ── SUBMITTED APPS (historical reference for result-sharing lookups) ──
+// Imported from the firm's "Submitted applications" sheet so that sharing a
+// result/letter by IRCC application number can find the client's phone even for
+// OLDER clients who aren't cases in the CRM. Keyed by the normalized app number.
+let __submittedAppsTableReady = false;
+async function ensureSubmittedAppsTable(): Promise<void> {
+  if (__submittedAppsTableReady) return;
+  const db = getPool();
+  await db.query(`
+    create table if not exists submitted_apps (
+      app_number text primary key,
+      name text,
+      phone text,
+      app_type text,
+      submission_date text,
+      raw_contact text,
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await db.query(`create index if not exists idx_submitted_apps_name on submitted_apps(lower(name))`);
+  __submittedAppsTableReady = true;
+}
+
+export async function upsertSubmittedApp(row: {
+  appNumber: string; name?: string; phone?: string; appType?: string;
+  submissionDate?: string; rawContact?: string;
+}): Promise<void> {
+  await ensureSubmittedAppsTable();
+  const db = getPool();
+  await db.query(
+    `insert into submitted_apps (app_number, name, phone, app_type, submission_date, raw_contact, updated_at)
+     values ($1,$2,$3,$4,$5,$6, now())
+     on conflict (app_number) do update set
+       name = coalesce(nullif(excluded.name,''), submitted_apps.name),
+       phone = coalesce(nullif(excluded.phone,''), submitted_apps.phone),
+       app_type = coalesce(nullif(excluded.app_type,''), submitted_apps.app_type),
+       submission_date = coalesce(nullif(excluded.submission_date,''), submitted_apps.submission_date),
+       raw_contact = coalesce(nullif(excluded.raw_contact,''), submitted_apps.raw_contact),
+       updated_at = now()`,
+    [row.appNumber, row.name || "", row.phone || "", row.appType || "", row.submissionDate || "", row.rawContact || ""]
+  );
+}
+
+export async function lookupSubmittedAppByNumber(appNumber: string): Promise<any | null> {
+  await ensureSubmittedAppsTable();
+  const db = getPool();
+  const norm = String(appNumber || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!norm) return null;
+  const res = await db.query(`select * from submitted_apps where app_number = $1 limit 1`, [norm]);
+  const r = res.rows[0];
+  return r ? { appNumber: r.app_number, name: r.name, phone: r.phone, appType: r.app_type, submissionDate: r.submission_date } : null;
+}
+
+export async function lookupSubmittedAppByName(name: string): Promise<any | null> {
+  await ensureSubmittedAppsTable();
+  const db = getPool();
+  const norm = String(name || "").trim().toLowerCase();
+  if (!norm) return null;
+  const res = await db.query(`select * from submitted_apps where lower(name) = $1 and coalesce(phone,'') <> '' order by updated_at desc limit 1`, [norm]);
+  const r = res.rows[0];
+  return r ? { appNumber: r.app_number, name: r.name, phone: r.phone, appType: r.app_type, submissionDate: r.submission_date } : null;
+}
+
+export async function countSubmittedApps(): Promise<number> {
+  await ensureSubmittedAppsTable();
+  const db = getPool();
+  const res = await db.query(`select count(*)::int as n from submitted_apps`);
+  return res.rows[0]?.n || 0;
+}
+
 export async function readStoreFromPostgres(): Promise<Partial<AppStore>> {
   await ensureSnapshotTable();
   const db = getPool();
