@@ -591,6 +591,11 @@ HOW TO USE THIS:
   payment instructions, or when a client is committing / about to pay / has paid. That is
   the single most important moment — do NOT skip it there. Example to weave in:
   "You can also get started and claim 10% off at *www.nimmi.solutions* 🙂".
+- ⭐ ALSO, whenever you give payment/booking instructions, ALWAYS ask the client to confirm
+  once they've paid — payment can happen here (Interac) OR on Nimmi, so don't only say
+  "share the receipt". Add a line like: "Once you've paid — here or on Nimmi — just reply
+  here to confirm and we'll get your consultation booked 🙂". (The team is alerted the
+  moment they confirm or pay on Nimmi.)
 - Elsewhere, point clients to *www.nimmi.solutions* when they ask how to start, want more
   detail, or are weighing whether to proceed — but not in every message.
 - This is an OFFICIAL standing offer, so mentioning it is encouraged. It is NOT ad-hoc
@@ -786,10 +791,11 @@ Reply:
 For PR cases we always start with a *$52.50 consultation* (15 minutes with our RCIC) —
 each situation is unique and we want to give you accurate, case-specific guidance.
 
-To book: Interac e-transfer $52.50 to *newtonimmigration@gmail.com*. Once received,
-we'll set up your consultation and walk through your best path.
+To book: Interac e-transfer $52.50 to *newtonimmigration@gmail.com* — or pay and claim
+*10% off* at *www.nimmi.solutions* 🙂.
 
-You can also get started and claim *10% off* at *www.nimmi.solutions* 🙂"
+Once you've paid (here or on Nimmi), just reply here to confirm and we'll get your
+consultation booked."
 
 (PR is the immediate step → consult fee is appropriate here. Note tone is still calm,
 not pushy. The booking step ALWAYS includes the Nimmi link + 10% off.)

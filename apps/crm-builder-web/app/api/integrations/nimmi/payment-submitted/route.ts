@@ -103,6 +103,24 @@ export async function POST(req: NextRequest) {
       ]
     );
 
+    // Ping the alert recipients — a client just PAID on Nimmi. This is the
+    // moment a human should jump in to book/handle them (no waiting on the
+    // client to also confirm over WhatsApp).
+    try {
+      const { notifyAlertRecipients } = await import("@/lib/owner-alerts");
+      const fullName = [first_name, last_name].filter(Boolean).join(" ").trim();
+      const svc = Array.isArray(services) ? services.join(", ") : String(services || "");
+      const phoneDigits = String(phone || "").replace(/\D/g, "");
+      await notifyAlertRecipients({
+        key: phoneDigits || String(nimmi_payment_id),
+        clientName: fullName || (email ? String(email) : "Nimmi client"),
+        clientPhone: phoneDigits || "—",
+        context: `💰 PAID on Nimmi: $${amount}${svc ? ` for ${svc}` : ""}. Please book/handle them.`,
+      });
+    } catch (e) {
+      console.error("[nimmi/payment-submitted] alert failed (non-fatal):", (e as Error).message);
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
