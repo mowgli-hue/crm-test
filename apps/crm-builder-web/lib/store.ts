@@ -1975,6 +1975,21 @@ export async function updateUserEmail(args: {
   return store.users[idx];
 }
 
+export async function updateUserRole(args: {
+  companyId: string; userId: string; newRole: Role;
+}): Promise<AppUser | null> {
+  const allowed: Role[] = ["Admin", "Marketing", "Processing", "ProcessingLead", "Reviewer"];
+  if (!allowed.includes(args.newRole)) return null;
+  return mutateStore((store) => {
+    const idx = store.users.findIndex(
+      (u) => u.companyId === args.companyId && u.id === args.userId && u.userType === "staff"
+    );
+    if (idx === -1) return null;
+    store.users[idx] = { ...store.users[idx], role: args.newRole };
+    return store.users[idx];
+  });
+}
+
 export async function listUsers(companyId: string): Promise<AppUser[]> {
   const store = await readStore();
   return store.users.filter((u) => u.companyId === companyId && u.userType === "staff");

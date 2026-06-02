@@ -5,3 +5,8 @@ dist
 .next
 coverage
 .DS_Store
+
+# Local agent runtime — contains live secrets, never commit
+newton-agent/
+# Stray nested copy created by accident
+crm-test/

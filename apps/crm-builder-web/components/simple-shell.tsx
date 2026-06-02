@@ -3931,6 +3931,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
     setBrandStatus("Portal sections restored.");
   }
 
+  async function changeUserRole(userId: string, role: string) {
+    try {
+      const res = await apiFetch("/admin/update-user-role", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, role }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setTeamUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: role as Role } : u)));
+        setTeamStatus(`✓ Role updated to ${role}. They'll see the new access on their next page load.`);
+      } else {
+        setTeamStatus(d.error || "Could not update role.");
+      }
+    } catch (e) {
+      setTeamStatus(String(e));
+    }
+  }
+
   async function addTeamMember() {
     if (!teamName.trim() || !teamEmail.trim() || !teamPassword.trim()) {
       setTeamStatus("Name, email and temporary password are required.");
@@ -6450,7 +6469,22 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                       )}
                                     </div>
                                     <div className="flex items-center gap-2 mt-0.5">
-                                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${roleCls}`}>{member.role}</span>
+                                      {sessionUser?.role === "Admin" && member.id !== sessionUser?.id ? (
+                                        <select
+                                          value={member.role}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={(e) => { e.stopPropagation(); void changeUserRole(member.id, e.target.value); }}
+                                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-slate-400 ${roleCls}`}
+                                        >
+                                          <option value="Admin">Admin</option>
+                                          <option value="Marketing">Marketing</option>
+                                          <option value="Processing">Processing</option>
+                                          <option value="ProcessingLead">ProcessingLead</option>
+                                          <option value="Reviewer">Reviewer</option>
+                                        </select>
+                                      ) : (
+                                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${roleCls}`}>{member.role}</span>
+                                      )}
                                       <span className="text-[11px] text-slate-400">{memberCases.length} case{memberCases.length !== 1 ? "s" : ""}</span>
                                       {urgentCount > 0 && <span className="text-[11px] font-semibold text-red-600">{urgentCount} urgent</span>}
                                       {noteCount > 0 && (
