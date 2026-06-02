@@ -52,7 +52,8 @@ export async function GET(request: NextRequest) {
       clientName: match.client || "",
       formType: match.formType || "",
       hasPhone: phoneDigits.length > 0,
-      phoneLast4: phoneDigits.slice(-4),
+      phone: phoneDigits,            // full number so staff can verify who it's going to
+      phoneLast4: phoneDigits.slice(-4), // kept for backwards-compat
       hasEmail: Boolean((match as any).leadEmail),
     });
   } catch (e) {

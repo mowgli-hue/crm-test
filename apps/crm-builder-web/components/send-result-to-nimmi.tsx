@@ -43,7 +43,7 @@ type Lookup =
   | { status: "loading" }
   | { status: "notfound" }
   | { status: "error"; message: string }
-  | { status: "found"; clientName: string; formType: string; hasPhone: boolean; phoneLast4: string; matchedBy: string };
+  | { status: "found"; clientName: string; formType: string; hasPhone: boolean; phone: string; phoneLast4: string; matchedBy: string };
 
 const box: React.CSSProperties = { border: "1px solid #e2e8f0", borderRadius: 10, padding: 16, background: "#fff", maxWidth: 560 };
 const label: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 600, color: "#475569", margin: "10px 0 4px" };
@@ -82,6 +82,7 @@ export default function SendResultToNimmi() {
         clientName: data.clientName || "",
         formType: data.formType || "",
         hasPhone: Boolean(data.hasPhone),
+        phone: data.phone || "",
         phoneLast4: data.phoneLast4 || "",
         matchedBy: data.matchedBy || "",
       });
@@ -170,7 +171,7 @@ export default function SendResultToNimmi() {
             ✓ Matched <strong>{lookup.clientName}</strong>{lookup.formType ? ` · ${lookup.formType}` : ""}
             {" · "}
             {lookup.hasPhone
-              ? <>📱 phone on file ending <strong>{lookup.phoneLast4}</strong></>
+              ? <>📱 <strong>+{lookup.phone || lookup.phoneLast4}</strong></>
               : <span style={{ color: "#b45309" }}>⚠️ no phone on file — enter one below</span>}
             <div style={{ fontSize: 11, color: "#15803d", marginTop: 2 }}>Matched by {lookup.matchedBy === "name" ? "client name" : "application number"}. Confirm this is the right person before sending.</div>
           </div>
