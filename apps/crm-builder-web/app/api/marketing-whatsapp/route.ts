@@ -100,11 +100,13 @@ const MARKETING_PRESENCE_FALLBACK =
 // Client wants to come in / reach someone in person / is already at the office.
 // The bot must NOT decide office availability — instead the OWNER gets a direct
 // WhatsApp ping (to OWNER_ALERT_WHATSAPP) so a human steps in immediately.
-const VISIT_INTENT_RE = /\b(come\s+(in|over|now|to|by|down)|coming\s+(in|over|to)|drop\s+by|walk[\s-]?in|in\s+person|face[\s-]?to[\s-]?face|visit|at\s+the\s+(office|door|building|front)|outside\s+(the\s+)?(building|office)|door\s+is\s+locked|nobody\s+is\s+here|reach\s+(you|someone)|meet\s+(you|in\s+person)|office\s+(open|hours|address))\b/i;
+// Wants to come in / reach someone in person / meet / book an appointment.
+const VISIT_INTENT_RE = /\b(come\s+(in|over|now|to|by|down)|coming\s+(in|over|to)|drop\s+by|walk[\s-]?in|in\s+person|face[\s-]?to[\s-]?face|visit|at\s+the\s+(office|door|building|front)|outside\s+(the\s+)?(building|office)|door\s+is\s+locked|nobody\s+is\s+here|reach\s+(you|someone)|meet(ing)?|appointment|availab\w*|book\s+(a\s+)?(time|slot|meeting|appointment|call)|office\s+(open|hours|address))\b/i;
 // Frustrated / upset client — a human should jump in.
 const FRUSTRATED_RE = /\b(angry|furious|frustrat\w*|ridiculous|waste\s+of\s+(my\s+)?time|terrible|worst|horrible|useless|complain\w*|refund|scam|cheat\w*|fraud|report\s+(you|this)|\bsue\b|lawyer|legal\s+action|fed\s+up|disappoint\w*|unprofessional|never\s+(coming|again)|cancel\s+everything)\b/i;
-// Ready to pay / commit — a hot lead worth grabbing live.
-const READY_TO_PAY_RE = /\b(ready\s+to\s+pay|i'?ll\s+pay|i\s+will\s+pay|payment\s+sent|sent\s+(the\s+)?(payment|e-?transfer)|paid\s+(it|now|the\s+fee|already)|made\s+the\s+payment|ready\s+to\s+(start|proceed|go\s+ahead))\b/i;
+// Ready to pay / has paid — a hot lead worth grabbing live. Broad on purpose:
+// a false ping on an interested lead is cheap; a missed payment is not.
+const READY_TO_PAY_RE = /\b(paid|payment|partial\s+fee|fees?\s+(paid|sent|done)|sent\s+(the\s+)?(payment|fee|money|e-?transfer|interac)|e-?transfer\w*|interac|made\s+(the\s+)?payment|deposit\w*|receipt|ready\s+to\s+(pay|start|proceed|go\s+ahead)|i'?ll\s+pay|i\s+will\s+pay)\b/i;
 
 const __ownerAlertAt = new Map<string, number>();
 // Template body params can't contain newlines or long whitespace runs.
@@ -1148,6 +1150,19 @@ export async function POST(request: NextRequest) {
       await ensureLead(from, contactName);
       // Use msgId as the row id so the UPDATE below targets the right row
       await saveMarketingMessage(from, placeholder, "inbound", contactName, msgId);
+
+      // A lead sending an image/document on the MARKETING number is almost always
+      // a payment receipt or an ID/doc they want looked at — a human should see
+      // it. Ping the alert recipients (debounced per client / 10 min). This is
+      // the path the original missed payment-screenshot took.
+      if (msgType === "image" || msgType === "document") {
+        await alertOwnerByWhatsApp({
+          key: from,
+          clientName: contactName || from,
+          clientPhone: from,
+          context: `Sent ${msgType === "image" ? "an image" : "a document"} on the marketing line (often a payment receipt) — please review.`,
+        });
+      }
 
       // ── Inline: download from Meta + upload to S3 + update placeholder ──
       // Meta webhook gives us ~5-10s before timing out; image/document
