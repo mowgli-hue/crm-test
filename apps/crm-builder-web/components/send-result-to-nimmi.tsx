@@ -22,6 +22,8 @@ import React, { useState } from "react";
 const RESULT_TYPES: { value: string; label: string }[] = [
   { value: "approval", label: "Approval 🎉" },
   { value: "refusal", label: "Refusal" },
+  { value: "submission", label: "Submission confirmation" },
+  { value: "request_letter", label: "Request / extension letter" },
   { value: "passport_request", label: "Passport request" },
   { value: "biometrics", label: "Biometrics" },
   { value: "medical", label: "Medical" },

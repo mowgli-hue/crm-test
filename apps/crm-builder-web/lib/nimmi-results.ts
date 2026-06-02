@@ -17,6 +17,8 @@ const NIMMI_BASE = (process.env.NIMMI_API_BASE || "https://www.nimmi.solutions")
 export type NimmiResultType =
   | "approval"
   | "refusal"
+  | "submission"
+  | "request_letter"
   | "passport_request"
   | "biometrics"
   | "medical"
