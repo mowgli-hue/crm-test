@@ -10,10 +10,13 @@
 //   POST { action:"learn" }  → analyse convos, save a DRAFT guide for review
 //   POST { action:"approve", guide } → store edited guide as the ACTIVE one
 //
-// Auth: Admin only.
+// Auth: Admin session for everything. A weekly Railway cron may also POST
+// { action:"learn" } with the system token (x-admin-token: AUTH_RECOVERY_TOKEN)
+// to regenerate a DRAFT for review — it can never approve/apply on its own.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
+import { isValidSystemToken } from "@/lib/auth-recovery-token";
 import { getPool, saveOfficeVoiceDraft, getOfficeVoiceState, approveOfficeVoice } from "@/lib/postgres-store";
 
 export const runtime = "nodejs";
@@ -76,11 +79,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const action = String(body?.action || "").trim();
 
-  // Auth: Admin session OR a valid cron secret (cron may ONLY regenerate a
-  // draft — never approve). Lets a weekly scheduler refresh the draft for review.
-  const cronSecret = String(process.env.OFFICE_VOICE_CRON_SECRET || "").trim();
-  const providedCron = request.headers.get("x-cron-secret") || "";
-  const isCron = cronSecret.length > 0 && providedCron === cronSecret && action === "learn";
+  // Auth: Admin session OR the system token (the same AUTH_RECOVERY_TOKEN that
+  // Railway cron already uses for the daily digest, via x-admin-token or ?token=).
+  // The system token may ONLY regenerate a draft — never approve.
+  const sysToken = request.headers.get("x-admin-token") || new URL(request.url).searchParams.get("token");
+  const isCron = isValidSystemToken(sysToken) && action === "learn";
   let actor: { name?: string; id: string } | null = null;
   if (!isCron) {
     const gate = await requireAdmin(request);
