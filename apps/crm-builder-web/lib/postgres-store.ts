@@ -528,6 +528,90 @@ export async function countSubmittedApps(): Promise<number> {
   return res.rows[0]?.n || 0;
 }
 
+// ─── Sent results / submissions log ───────────────────────────────────
+// A running record of every result/submission/letter we send a client over
+// WhatsApp. Templates deliver outside the 24h window, but until the client
+// replies we'd otherwise have NO record of who we messaged. This log captures
+// the phone + details at send time so there's always a trail (and a sheet to
+// export). Append-only; one row per send.
+
+let __sentResultsLogTableReady = false;
+async function ensureSentResultsLogTable(): Promise<void> {
+  if (__sentResultsLogTableReady) return;
+  const db = getPool();
+  await db.query(`
+    create table if not exists sent_results_log (
+      id text primary key,
+      company_id text,
+      case_id text,
+      client_name text,
+      first_name text,
+      phone text,
+      email text,
+      app_number text,
+      result_type text,
+      service_slug text,
+      share_url text,
+      template_name text,
+      delivered boolean not null default false,
+      delivery_error text,
+      sent_by text,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await db.query(`create index if not exists idx_sent_results_log_created on sent_results_log(created_at desc)`);
+  await db.query(`create index if not exists idx_sent_results_log_phone on sent_results_log(phone)`);
+  __sentResultsLogTableReady = true;
+}
+
+export type SentResultLogRow = {
+  id: string; caseId?: string; clientName?: string; firstName?: string;
+  phone?: string; email?: string; appNumber?: string; resultType?: string;
+  serviceSlug?: string; shareUrl?: string; templateName?: string;
+  delivered: boolean; deliveryError?: string; sentBy?: string; createdAt: string;
+};
+
+export async function insertSentResultLog(row: {
+  companyId?: string; caseId?: string; clientName?: string; firstName?: string;
+  phone?: string; email?: string; appNumber?: string; resultType?: string;
+  serviceSlug?: string; shareUrl?: string; templateName?: string;
+  delivered: boolean; deliveryError?: string; sentBy?: string;
+}): Promise<void> {
+  await ensureSentResultsLogTable();
+  const db = getPool();
+  const id = `SRL-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.query(
+    `insert into sent_results_log
+       (id, company_id, case_id, client_name, first_name, phone, email, app_number,
+        result_type, service_slug, share_url, template_name, delivered, delivery_error, sent_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    [
+      id, row.companyId || null, row.caseId || null, row.clientName || null, row.firstName || null,
+      row.phone || null, row.email || null, row.appNumber || null, row.resultType || null,
+      row.serviceSlug || null, row.shareUrl || null, row.templateName || null,
+      Boolean(row.delivered), row.deliveryError || null, row.sentBy || null,
+    ]
+  );
+}
+
+export async function listSentResultsLog(limit = 1000): Promise<SentResultLogRow[]> {
+  await ensureSentResultsLogTable();
+  const db = getPool();
+  const res = await db.query(
+    `select * from sent_results_log order by created_at desc limit $1`,
+    [Math.min(Math.max(limit, 1), 5000)]
+  );
+  return res.rows.map((r: any) => ({
+    id: r.id, caseId: r.case_id || undefined, clientName: r.client_name || undefined,
+    firstName: r.first_name || undefined, phone: r.phone || undefined, email: r.email || undefined,
+    appNumber: r.app_number || undefined, resultType: r.result_type || undefined,
+    serviceSlug: r.service_slug || undefined, shareUrl: r.share_url || undefined,
+    templateName: r.template_name || undefined, delivered: Boolean(r.delivered),
+    deliveryError: r.delivery_error || undefined, sentBy: r.sent_by || undefined,
+    createdAt: r.created_at,
+  }));
+}
+
 // ─── Office voice guide ───────────────────────────────────────────────
 // A distilled "how the Newton office talks" style guide that gets injected
 // into the marketing bot's system prompt. We keep one ACTIVE row (what the bot

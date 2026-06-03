@@ -6,6 +6,7 @@ import AdminDashboardPage from "@/components/admin-dashboard-page";
 import AlertRecipientsManager from "@/components/alert-recipients-manager";
 import SubmittedAppsImport from "@/components/submitted-apps-import";
 import OfficeVoiceManager from "@/components/office-voice-manager";
+import SentResultsLog from "@/components/sent-results-log";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
@@ -5842,6 +5843,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             <>
               {(sessionUser?.role === "Admin") && <AlertRecipientsManager />}
               {(sessionUser?.role === "Admin") && <OfficeVoiceManager />}
+              {(sessionUser?.userType === "staff") && <SentResultsLog />}
               {(sessionUser?.role === "Admin") && <SubmittedAppsImport />}
               <section className="rounded-xl border border-slate-200 bg-white p-5">
                 <h3 className="text-base font-semibold">Company Branding</h3>

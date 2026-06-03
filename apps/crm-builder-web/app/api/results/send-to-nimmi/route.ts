@@ -27,7 +27,8 @@ import {
 } from "@/lib/nimmi-results";
 
 const VALID_RESULT_TYPES: NimmiResultType[] = [
-  "approval", "refusal", "passport_request", "biometrics", "medical", "aor", "additional_docs", "other",
+  "approval", "refusal", "submission", "request_letter",
+  "passport_request", "biometrics", "medical", "aor", "additional_docs", "other",
 ];
 const VALID_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/heic"];
 
@@ -171,6 +172,7 @@ export async function POST(request: NextRequest) {
   const sendWhatsApp = str("sendWhatsApp") !== "false"; // default true
   let whatsappSent = false;
   let whatsappError: string | undefined;
+  let usedTemplateName: string | undefined;
   if (sendWhatsApp && phone) {
     try {
       const wa = await import("@/lib/whatsapp");
@@ -190,6 +192,7 @@ export async function POST(request: NextRequest) {
       const templateLang = isApproval
         ? (process.env.NIMMI_APPROVAL_TEMPLATE_LANG || "en")
         : (process.env.NIMMI_RESULT_TEMPLATE_LANG || "en");
+      usedTemplateName = templateName;
 
       const tmpl = await wa.sendWhatsAppTemplate({
         to: phone,
@@ -223,6 +226,31 @@ export async function POST(request: NextRequest) {
     `📨 Nimmi result sent for ${clientName} (${resultType}) → ${result.shareUrl}` +
     ` | matchedToUser=${result.matchedToUser} | whatsapp=${whatsappSent ? "sent" : sendWhatsApp ? "FAILED:" + whatsappError : "skipped"}`
   );
+
+  // ── Log this send so there's always a record (phone + details), even before
+  // the client replies and opens the 24h window. Non-fatal if it fails. ──
+  try {
+    const { insertSentResultLog } = await import("@/lib/postgres-store");
+    const firstName = str("firstName") || clientName.split(/\s+/)[0];
+    await insertSentResultLog({
+      companyId: user.companyId,
+      caseId: matchedCaseId,
+      clientName,
+      firstName,
+      phone: phone || undefined,
+      email: email || undefined,
+      appNumber: appNumber || undefined,
+      resultType,
+      serviceSlug: serviceSlug || undefined,
+      shareUrl: result.shareUrl,
+      templateName: usedTemplateName,
+      delivered: whatsappSent,
+      deliveryError: whatsappError,
+      sentBy: user.name || user.id,
+    });
+  } catch (e) {
+    console.error("[send-to-nimmi] sent-log write failed (non-fatal):", (e as Error).message);
+  }
 
   return NextResponse.json({
     ok: true,
