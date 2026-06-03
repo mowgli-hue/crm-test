@@ -10,6 +10,33 @@ const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+// ── Office voice guide (cached) ──
+// The admin-approved "how the office talks" guide, loaded at most once every
+// 5 minutes. Returns a ready-to-inject prompt block (empty string if none set,
+// so the bot just behaves as before until a guide is approved).
+let __voiceCache: { block: string; at: number } = { block: "", at: 0 };
+async function getActiveOfficeVoiceCached(): Promise<string> {
+  const now = Date.now();
+  if (now - __voiceCache.at < 5 * 60 * 1000) return __voiceCache.block;
+  let block = "";
+  try {
+    const { getActiveOfficeVoice } = await import("@/lib/postgres-store");
+    const guide = await getActiveOfficeVoice();
+    if (guide) {
+      block =
+        `\n═══════════════════════════════════════════════\n` +
+        `OFFICE VOICE — MATCH THIS EXACTLY (learned from how Newton's own team replies):\n` +
+        `═══════════════════════════════════════════════\n${guide}\n` +
+        `═══════════════════════════════════════════════\n` +
+        `Use the office voice above for tone, language mix, length and greetings. ` +
+        `It OVERRIDES generic phrasing — but never overrides the safety, fee, and ` +
+        `stage rules elsewhere in this prompt.\n`;
+    }
+  } catch { /* non-fatal — fall back to no voice block */ }
+  __voiceCache = { block, at: now };
+  return block;
+}
+
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS marketing_inbox (
@@ -376,6 +403,13 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
   const session = await getMarketingSession(phone) || { data: { stage: "new" } };
   const sessionData = session.data;
 
+  // ── Office voice ──
+  // A learned "how the Newton office actually talks" guide (distilled from past
+  // human-typed replies, approved by an admin). Cached ~5 min so we don't hit
+  // the DB on every inbound message. Injected into the system prompt below so
+  // the bot mirrors the team's real tone/language instead of sounding generic.
+  const officeVoiceBlock = await getActiveOfficeVoiceCached();
+
   // ── New marketing AI prompt ──
   // Drives the eligibility-first → checklist → fee → confirm flow described
   // by Newton ownership on May 1, 2026. Critical rules:
@@ -406,6 +440,7 @@ ${NEWTON_DOCS}
 CONVERSATION STAGE: ${sessionData.stage || "new"}
 COLLECTED INFO: ${JSON.stringify(sessionData)}
 KNOWN SERVICE INTEREST: ${interest || lead?.service_interest || "unknown"}
+${officeVoiceBlock}
 
 ═══════════════════════════════════════════════
 HOW TO THINK (READ THIS FIRST):

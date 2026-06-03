@@ -528,6 +528,92 @@ export async function countSubmittedApps(): Promise<number> {
   return res.rows[0]?.n || 0;
 }
 
+// ─── Office voice guide ───────────────────────────────────────────────
+// A distilled "how the Newton office talks" style guide that gets injected
+// into the marketing bot's system prompt. We keep one ACTIVE row (what the bot
+// currently uses) plus DRAFT rows (freshly learned, awaiting review/approval).
+// Small text — fine to keep in its own table out of the hot JSON blob.
+
+export type OfficeVoiceRow = {
+  id: number;
+  guide: string;
+  status: "draft" | "active";
+  sampleCount: number;
+  createdAt: string;
+  approvedBy: string | null;
+};
+
+async function ensureOfficeVoiceTable() {
+  const db = getPool();
+  await db.query(`
+    create table if not exists office_voice_guide (
+      id serial primary key,
+      guide text not null,
+      status text not null default 'draft',
+      sample_count int not null default 0,
+      created_at timestamptz not null default now(),
+      approved_by text
+    )
+  `);
+}
+
+const mapVoiceRow = (r: any): OfficeVoiceRow => ({
+  id: r.id,
+  guide: r.guide,
+  status: r.status,
+  sampleCount: r.sample_count,
+  createdAt: r.created_at,
+  approvedBy: r.approved_by || null,
+});
+
+// Save a freshly-learned guide as a draft (awaiting review).
+export async function saveOfficeVoiceDraft(guide: string, sampleCount: number): Promise<OfficeVoiceRow> {
+  await ensureOfficeVoiceTable();
+  const db = getPool();
+  const res = await db.query(
+    `insert into office_voice_guide (guide, status, sample_count) values ($1, 'draft', $2) returning *`,
+    [guide, sampleCount]
+  );
+  return mapVoiceRow(res.rows[0]);
+}
+
+// The latest ACTIVE guide text the bot should use (or null if none approved yet).
+export async function getActiveOfficeVoice(): Promise<string | null> {
+  await ensureOfficeVoiceTable();
+  const db = getPool();
+  const res = await db.query(
+    `select guide from office_voice_guide where status = 'active' order by created_at desc limit 1`
+  );
+  return res.rowCount ? String(res.rows[0].guide || "").trim() || null : null;
+}
+
+// Latest active + latest draft, for the admin UI.
+export async function getOfficeVoiceState(): Promise<{ active: OfficeVoiceRow | null; draft: OfficeVoiceRow | null }> {
+  await ensureOfficeVoiceTable();
+  const db = getPool();
+  const [a, d] = await Promise.all([
+    db.query(`select * from office_voice_guide where status = 'active' order by created_at desc limit 1`),
+    db.query(`select * from office_voice_guide where status = 'draft' order by created_at desc limit 1`),
+  ]);
+  return {
+    active: a.rowCount ? mapVoiceRow(a.rows[0]) : null,
+    draft: d.rowCount ? mapVoiceRow(d.rows[0]) : null,
+  };
+}
+
+// Approve a guide: store the (possibly edited) text as the new ACTIVE row and
+// demote any previous active rows. Returns the new active row.
+export async function approveOfficeVoice(guide: string, approvedBy: string, sampleCount = 0): Promise<OfficeVoiceRow> {
+  await ensureOfficeVoiceTable();
+  const db = getPool();
+  await db.query(`update office_voice_guide set status = 'draft' where status = 'active'`);
+  const res = await db.query(
+    `insert into office_voice_guide (guide, status, sample_count, approved_by) values ($1, 'active', $2, $3) returning *`,
+    [guide, sampleCount, approvedBy]
+  );
+  return mapVoiceRow(res.rows[0]);
+}
+
 export async function readStoreFromPostgres(): Promise<Partial<AppStore>> {
   await ensureSnapshotTable();
   const db = getPool();
