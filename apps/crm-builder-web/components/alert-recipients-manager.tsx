@@ -12,6 +12,8 @@ export default function AlertRecipientsManager() {
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
 
   const load = async () => {
     try {
@@ -48,6 +50,17 @@ export default function AlertRecipientsManager() {
       if (res.ok) setRecipients(d.recipients || []);
     } catch { /* ignore */ }
     setBusy(false);
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await apiFetch("/admin/alert-recipients/test", { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      setTestResult(d);
+    } catch (e) { setTestResult({ ok: false, summary: String(e) }); }
+    setTesting(false);
   };
 
   return (
@@ -107,6 +120,51 @@ export default function AlertRecipientsManager() {
           </button>
         </div>
         {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+
+        {/* Test button — fires a real alert and reports exactly what WhatsApp said */}
+        <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
+          <button
+            onClick={sendTest}
+            disabled={testing || recipients.length === 0}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap"
+          >
+            {testing ? "Sending…" : "🧪 Send test alert"}
+          </button>
+          <span className="text-[11px] text-slate-400">
+            Sends a real test ping to everyone above and shows what happened.
+          </span>
+        </div>
+
+        {testResult && (
+          <div className={`rounded-xl border p-3 text-xs ${testResult.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+            <p className={`font-bold ${testResult.ok ? "text-emerald-700" : "text-red-700"}`}>
+              {testResult.summary || testResult.reason || (testResult.ok ? "Sent" : "Failed")}
+            </p>
+            {testResult.config && (
+              <p className="mt-1 text-slate-500">
+                Recipients: {testResult.config.totalRecipients ?? 0} · Template:{" "}
+                {testResult.config.templateConfigured
+                  ? <span className="text-emerald-700 font-medium">{testResult.config.templateName} ✓</span>
+                  : <span className="text-red-600 font-medium">not configured — alerts can only use free-form text (24h window)</span>}
+              </p>
+            )}
+            {Array.isArray(testResult.results) && testResult.results.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {testResult.results.map((r: any, i: number) => (
+                  <li key={i} className="rounded-lg bg-white/70 px-2 py-1.5">
+                    <span className="font-semibold text-slate-700">+{r.to}</span>{" "}
+                    {r.delivered
+                      ? <span className="text-emerald-700">delivered{r.template?.sent ? " (template)" : " (text)"}</span>
+                      : <span className="text-red-600">not delivered</span>}
+                    {r.template?.error && <div className="text-slate-500">template: {r.template.error}</div>}
+                    {r.freeFormText?.error && <div className="text-slate-500">text: {r.freeFormText.error}</div>}
+                    {r.note && <div className="text-amber-700 mt-0.5">{r.note}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         <p className="text-[11px] text-slate-400 leading-relaxed">
           Tip: for guaranteed delivery regardless of the 24-hour window, set up the
