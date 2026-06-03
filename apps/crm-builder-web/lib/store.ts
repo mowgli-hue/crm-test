@@ -813,7 +813,19 @@ export async function resolveUserFromSessionWithContext(
     const reqSubnet = reqIp ? deriveIpSubnet(reqIp) : "";
     const sessionUa = String(session.userAgent || "").trim();
     const uaMismatch = Boolean(sessionUa && reqUa && sessionUa !== reqUa);
-    const ipMismatch = Boolean(sessionSubnet && reqSubnet && sessionSubnet !== reqSubnet);
+
+    // IP-subnet binding is OPT-IN (off by default). Egress IPs legitimately
+    // rotate — mobile networks, CGNAT, load-balanced proxies, and CDN edges in
+    // front of the custom domain can change the subnet between two requests in
+    // the SAME session. Hard-deleting the session on that mismatch logged staff
+    // out mid-session (e.g. the case loads, then the notes call 401s) and a
+    // re-login wouldn't stick while the IP kept rotating. We keep the stable
+    // user-agent binding (a strong signal against stolen cookies) and only
+    // enforce IP when explicitly enabled.
+    const enforceIp =
+      String(process.env.ENFORCE_SESSION_IP_BINDING || "false").toLowerCase() === "true";
+    const ipMismatch =
+      enforceIp && Boolean(sessionSubnet && reqSubnet && sessionSubnet !== reqSubnet);
 
     if (uaMismatch || ipMismatch) {
       store.sessions = store.sessions.filter((s) => s.token !== token);
