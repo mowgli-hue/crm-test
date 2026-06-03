@@ -73,10 +73,22 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireAdmin(request);
-  if (gate.error) return gate.error;
   const body = await request.json().catch(() => ({}));
   const action = String(body?.action || "").trim();
+
+  // Auth: Admin session OR a valid cron secret (cron may ONLY regenerate a
+  // draft — never approve). Lets a weekly scheduler refresh the draft for review.
+  const cronSecret = String(process.env.OFFICE_VOICE_CRON_SECRET || "").trim();
+  const providedCron = request.headers.get("x-cron-secret") || "";
+  const isCron = cronSecret.length > 0 && providedCron === cronSecret && action === "learn";
+  let actor: { name?: string; id: string } | null = null;
+  if (!isCron) {
+    const gate = await requireAdmin(request);
+    if (gate.error) return gate.error;
+    actor = gate.user as any;
+  } else {
+    actor = { id: "cron", name: "weekly auto-relearn" };
+  }
 
   // ── Approve (store edited/approved guide as ACTIVE) ──
   if (action === "approve") {
@@ -85,7 +97,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Guide text is empty or too short to approve." }, { status: 400 });
     }
     const sampleCount = Number(body?.sampleCount || 0);
-    const active = await approveOfficeVoice(guide, gate.user!.name || gate.user!.id, sampleCount);
+    const active = await approveOfficeVoice(guide, actor!.name || actor!.id, sampleCount);
     return NextResponse.json({ ok: true, active });
   }
 
