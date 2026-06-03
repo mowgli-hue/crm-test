@@ -21,9 +21,13 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await ensureTable();
+  // Read by case_id ONLY (not company_id). Case IDs are globally unique in this
+  // single-firm deployment, and staff accounts have drifted between two company
+  // IDs ("CMP-1" vs "newton") over time — filtering by company_id made one
+  // teammate's notes invisible to another. case_id alone fixes that.
   const res = await pool.query(
-    `SELECT * FROM case_notes WHERE case_id = $1 AND company_id = $2 ORDER BY created_at ASC`,
-    [params.id, user.companyId]
+    `SELECT * FROM case_notes WHERE case_id = $1 ORDER BY created_at ASC`,
+    [params.id]
   );
   return NextResponse.json({ notes: res.rows });
 }
@@ -47,9 +51,11 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { noteId } = await request.json().catch(() => ({}));
   if (!noteId) return NextResponse.json({ error: "noteId required" }, { status: 400 });
+  // Delete by note id + case id (both unique); company_id intentionally omitted
+  // to avoid the same companyId-drift mismatch blocking legitimate deletes.
   await pool.query(
-    `DELETE FROM case_notes WHERE id = $1 AND company_id = $2`,
-    [noteId, user.companyId]
+    `DELETE FROM case_notes WHERE id = $1 AND case_id = $2`,
+    [noteId, params.id]
   );
   return NextResponse.json({ ok: true });
 }

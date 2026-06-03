@@ -922,6 +922,15 @@ export async function getCase(companyId: string, caseId: string): Promise<CaseIt
   return store.cases.find((c) => c.companyId === companyId && c.id === caseId) ?? null;
 }
 
+// Find a case by id WITHOUT scoping to a company. Use for single-firm features
+// (notes, review comments) where staff accounts have drifted between company
+// IDs ("CMP-1" vs "newton") and a company-scoped getCase would wrongly miss the
+// case. Case IDs are unique in this deployment.
+export async function getCaseAnyCompany(caseId: string): Promise<CaseItem | null> {
+  const store = await readStore();
+  return store.cases.find((c) => c.id === caseId) ?? null;
+}
+
 export async function createCase(input: {
   companyId: string;
   client: string;

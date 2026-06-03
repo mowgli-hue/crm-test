@@ -29,7 +29,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { getCase, listUsers, addNotification } from "@/lib/store";
+import { getCase, getCaseAnyCompany, listUsers, addNotification } from "@/lib/store";
 import { sendEmail, reviewCommentEmail, isEmailConfigured } from "@/lib/email";
 import { Pool } from "pg";
 
@@ -73,7 +73,9 @@ async function resolveRecipients(params: {
   authorUserId: string;
   parentId: string | null;
 }): Promise<Array<{ userId: string; name: string; email: string }>> {
-  const caseItem = await getCase(params.companyId, params.caseId);
+  // Company-agnostic lookup: a company-scoped getCase can miss the case when
+  // the author's account carries a different company id than the case.
+  const caseItem = (await getCase(params.companyId, params.caseId)) || (await getCaseAnyCompany(params.caseId));
   const allUsers = await listUsers(params.companyId);
   const recipients = new Map<string, { userId: string; name: string; email: string }>();
 
@@ -118,11 +120,15 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await ensureSchema();
+  // Read by case_id ONLY. Staff accounts have drifted between two company IDs
+  // ("CMP-1" vs "newton"), which made a reviewer's comment invisible to the
+  // processing staffer (and vice-versa) — the whole point of this thread is
+  // that BOTH sides see it. case_id is unique in this single-firm deployment.
   const r = await pool.query(
     `SELECT * FROM review_comments
-     WHERE case_id = $1 AND company_id = $2
+     WHERE case_id = $1
      ORDER BY created_at ASC`,
-    [params.id, user.companyId]
+    [params.id]
   );
   return NextResponse.json({ comments: r.rows });
 }
@@ -147,8 +153,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   // Validate parentId if provided (must exist + belong to this case)
   if (parentId) {
     const parentRes = await pool.query(
-      `SELECT id FROM review_comments WHERE id = $1 AND case_id = $2 AND company_id = $3`,
-      [parentId, params.id, user.companyId]
+      `SELECT id FROM review_comments WHERE id = $1 AND case_id = $2`,
+      [parentId, params.id]
     );
     if (parentRes.rowCount === 0) {
       return NextResponse.json({ error: "Parent comment not found" }, { status: 404 });
@@ -175,7 +181,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       });
 
       // In-app notifications for each recipient
-      const caseItem = await getCase(user.companyId, params.id);
+      const caseItem = (await getCase(user.companyId, params.id)) || (await getCaseAnyCompany(params.id));
       const caseClient = caseItem?.client || params.id;
       const caseFormType = caseItem?.formType || "Application";
       const verb = parentId ? "replied to a comment on" : "commented on";
@@ -240,8 +246,8 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   // Find root of thread: if this is a reply, walk up to top-level
   const rootRes = await pool.query(
     `SELECT id, parent_id FROM review_comments
-     WHERE id = $1 AND case_id = $2 AND company_id = $3`,
-    [commentId, params.id, user.companyId]
+     WHERE id = $1 AND case_id = $2`,
+    [commentId, params.id]
   );
   if (rootRes.rowCount === 0) {
     return NextResponse.json({ error: "Comment not found" }, { status: 404 });
@@ -254,16 +260,16 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       `UPDATE review_comments
        SET status = 'resolved', resolved_at = NOW(),
            resolved_by_user_id = $1, resolved_by_name = $2
-       WHERE (id = $3 OR parent_id = $3) AND company_id = $4`,
-      [user.id, user.name, rootId, user.companyId]
+       WHERE (id = $3 OR parent_id = $3)`,
+      [user.id, user.name, rootId]
     );
   } else {
     await pool.query(
       `UPDATE review_comments
        SET status = 'open', resolved_at = NULL,
            resolved_by_user_id = NULL, resolved_by_name = NULL
-       WHERE (id = $1 OR parent_id = $1) AND company_id = $2`,
-      [rootId, user.companyId]
+       WHERE (id = $1 OR parent_id = $1)`,
+      [rootId]
     );
   }
 
