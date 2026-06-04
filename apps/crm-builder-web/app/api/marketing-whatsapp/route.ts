@@ -213,6 +213,41 @@ async function sendMarketingMessage(to: string, message: string) {
   return data;
 }
 
+// Build the bot's conversation context from the REAL marketing_inbox thread, so
+// it sees EVERYTHING already said — including messages a human staffer typed and
+// templates sent from the checklist panel (which never touched sessionData.history).
+// Without this the bot re-greets and re-sends info a human already covered.
+// Returns Anthropic-shaped messages (alternating roles, starting with a user turn).
+async function buildHistoryFromInbox(phone: string): Promise<{ role: "user" | "assistant"; content: string }[]> {
+  try {
+    const last9 = phone.replace(/\D/g, "").slice(-9);
+    const res = await pool.query(
+      `SELECT message, direction, created_at FROM marketing_inbox
+        WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+        ORDER BY created_at DESC LIMIT 16`,
+      [last9]
+    );
+    const rows = (res.rows as any[]).reverse(); // back to chronological
+    const out: { role: "user" | "assistant"; content: string }[] = [];
+    for (const r of rows) {
+      const role: "user" | "assistant" = r.direction === "inbound" ? "user" : "assistant";
+      const content = String(r.message || "").slice(0, 1500).trim();
+      if (!content) continue;
+      // Merge consecutive same-role turns — the API requires alternating roles.
+      if (out.length && out[out.length - 1].role === role) {
+        out[out.length - 1].content += "\n\n" + content;
+      } else {
+        out.push({ role, content });
+      }
+    }
+    while (out.length && out[0].role !== "user") out.shift(); // must start with a user turn
+    return out;
+  } catch (e) {
+    console.error("buildHistoryFromInbox failed:", (e as Error).message);
+    return [];
+  }
+}
+
 async function saveMarketingMessage(phone: string, message: string, direction: string, name?: string, customId?: string) {
   try {
     const id = customId || `mkt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -409,6 +444,10 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
   // the DB on every inbound message. Injected into the system prompt below so
   // the bot mirrors the team's real tone/language instead of sounding generic.
   const officeVoiceBlock = await getActiveOfficeVoiceCached();
+
+  // Full conversation context from the real inbox thread (the current inbound
+  // message is already saved above, so this ends with the client's latest turn).
+  const convo = await buildHistoryFromInbox(phone);
 
   // ── New marketing AI prompt ──
   // Drives the eligibility-first → checklist → fee → confirm flow described
@@ -1032,10 +1071,12 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
 ✅ For _italic_ use single underscores.
 ✅ Match client's language (English/Punjabi).
 ✅ Keep replies focused — one purpose per message.`,
-      messages: [
-        ...(sessionData.history || []).slice(-8),
-        { role: "user", content: message }
-      ]
+      // Use the real inbox thread (includes human-typed + template messages) so
+      // the bot never repeats what was already said. Falls back to the in-session
+      // history or just the current message if the inbox read came back empty.
+      messages: convo.length > 0
+        ? convo
+        : [...(sessionData.history || []).slice(-8), { role: "user", content: message }]
     })
   });
 
