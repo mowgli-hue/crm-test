@@ -11670,10 +11670,14 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 });
                                 if (res?.ok) {
                                   setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: "" }));
-                                  // Re-fetch list
+                                  // Re-fetch the review list AND the notes list (the
+                                  // change is mirrored into Notes server-side, so refresh
+                                  // both so it shows in both tabs immediately).
                                   const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
                                   if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
-                                  setCaseActionStatus("✅ Review comment added — emailed assigned staff");
+                                  const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                                  if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
+                                  setCaseActionStatus("✅ Review change added — shows in Notes + Review and notifies the preparer");
                                 } else {
                                   setCaseActionStatus("❌ Failed to add comment");
                                 }
