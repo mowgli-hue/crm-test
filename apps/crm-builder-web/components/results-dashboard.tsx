@@ -135,13 +135,18 @@ export default function ResultsDashboard({ results, cases, onScrollToList }: Pro
     return m;
   }, [cases]);
 
-  // Annotate each result with: parsed date, matched case, short form type
+  // Annotate each result with: parsed date, matched case, short form type.
+  // Exclude "intake" entries — those are scanner intake confirmations, NOT
+  // actual IRCC decisions, and counting them inflated pending/total numbers
+  // (the old results list already filtered them out the same way).
   const annotated = useMemo(() => {
-    return results.map((r) => {
-      const date = parseFlex(r.resultDate) || parseFlex(r.createdAt);
-      const matched = caseByAppNum.get(String(r.applicationNumber || "").trim().toUpperCase()) || null;
-      return { ...r, date, matched, formType: matched ? shortFormType(matched.formType) : "Unmatched" };
-    });
+    return results
+      .filter((r) => (r as any).entryType !== "intake")
+      .map((r) => {
+        const date = parseFlex(r.resultDate) || parseFlex(r.createdAt);
+        const matched = caseByAppNum.get(String(r.applicationNumber || "").trim().toUpperCase()) || null;
+        return { ...r, date, matched, formType: matched ? shortFormType(matched.formType) : "Unmatched" };
+      });
   }, [results, caseByAppNum]);
 
   // ── Compute hero metrics ──

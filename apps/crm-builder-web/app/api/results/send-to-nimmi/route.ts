@@ -252,6 +252,37 @@ export async function POST(request: NextRequest) {
     console.error("[send-to-nimmi] sent-log write failed (non-fatal):", (e as Error).message);
   }
 
+  // ── Seed the client's WhatsApp chat thread with this outbound send ──
+  // Templates are sent from the Marketing number, so the client's reply (if any)
+  // lands in marketing_inbox. Dropping an outbound row here "starts the chat" so
+  // staff can see, in the inbox, that a result/submission went out and whether
+  // the client has replied yet. Non-fatal.
+  if (phone) {
+    try {
+      const { getPool } = await import("@/lib/postgres-store");
+      const db = getPool();
+      const digits = String(phone).replace(/\D/g, "");
+      const typeLabel: Record<string, string> = {
+        approval: "Approval", refusal: "Refusal", submission: "Submission confirmation",
+        request_letter: "Request / extension letter", passport_request: "Passport request",
+        biometrics: "Biometrics", medical: "Medical", aor: "AOR",
+        additional_docs: "Additional documents", other: "Update",
+      };
+      const label = typeLabel[resultType] || "Result";
+      const chatMsg =
+        `📤 ${label} sent${result.shareUrl ? ` — ${result.shareUrl}` : ""}` +
+        `${whatsappSent ? "" : " (delivery pending — client's 24h window may be closed)"}`;
+      const mid = `mkt-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await db.query(
+        `INSERT INTO marketing_inbox (id, phone, message, direction, contact_name, is_read, created_at)
+         VALUES ($1,$2,$3,'outbound',$4,TRUE,NOW())`,
+        [mid, digits, chatMsg, clientName || null]
+      );
+    } catch (e) {
+      console.error("[send-to-nimmi] chat-seed write failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     shareUrl: result.shareUrl,
