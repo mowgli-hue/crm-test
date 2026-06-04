@@ -5844,7 +5844,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             <>
               {(sessionUser?.role === "Admin") && <AlertRecipientsManager />}
               {(sessionUser?.role === "Admin") && <OfficeVoiceManager />}
-              {(sessionUser?.userType === "staff") && <SentResultsLog />}
               {(sessionUser?.role === "Admin") && <SubmittedAppsImport />}
               <section className="rounded-xl border border-slate-200 bg-white p-5">
                 <h3 className="text-base font-semibold">Company Branding</h3>
@@ -9459,151 +9458,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* Anchor for scroll-to-list link from the dashboard */}
               <div id="results-list-anchor" />
 
-              {/* Unmatched — collapsible */}
-              {unlinkedScannerUploads.length > 0 && (
-                <div className="rounded-xl border-2 border-amber-200 bg-amber-50 overflow-hidden">
-                  <button onClick={() => {
-                      const el = document.getElementById("unmatched-list");
-                      if (el) el.style.display = el.style.display === "none" ? "block" : "none";
-                    }}
-                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-amber-100 transition-all">
-                    <p className="text-sm font-bold text-amber-900">⚠️ {unlinkedScannerUploads.length} unmatched results</p>
-                    <span className="text-xs text-amber-700 font-semibold">tap to expand ▾</span>
-                  </button>
-                  <div id="unmatched-list" style={{display:"none"}}>
-                    <div className="divide-y divide-amber-100">
-                      {unlinkedScannerUploads.map(item => {
-                        const candidates = visibleCases
-                          .filter(c => {
-                            const cn = String(c.client||"").toLowerCase();
-                            const itemFirst = String(item.clientName||"").toLowerCase().split(" ")[0];
-                            return itemFirst.length > 2 && cn.includes(itemFirst);
-                          }).slice(0,4);
-                        const outcomeColor = item.outcome === "approved" ? "text-emerald-700" :
-                          item.outcome === "refused" ? "text-red-700" : "text-amber-700";
-                        return (
-                          <div key={item.id} className="px-4 py-2.5 bg-white">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`text-xs font-bold shrink-0 ${outcomeColor}`}>
-                                  {item.outcome === "approved" ? "✅" : item.outcome === "refused" ? "❌" : "📄"}
-                                </span>
-                                <p className="text-xs font-semibold text-slate-900 truncate">{item.clientName || "Unknown"} · {item.applicationNumber}</p>
-                              </div>
-                              {item.fileLink && <a href={`/api/results/legacy/${encodeURIComponent(item.id)}/download`} target="_blank" className="text-[10px] text-blue-600 shrink-0">PDF</a>}
-                            </div>
-                            <div className="flex flex-wrap gap-1.5 mt-1.5">
-                              {candidates.map(c => (
-                                <button key={c.id} onClick={() => void linkScannerUploadToCase(item.id, c.id)}
-                                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold hover:border-emerald-400 hover:bg-emerald-50">
-                                  {c.client}
-                                </button>
-                              ))}
-                              {candidates.length === 0 && <p className="text-[10px] text-slate-400">No match found</p>}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Sent results & submissions — the running log (moved here from Settings). */}
+              {(sessionUser?.userType === "staff") && <SentResultsLog />}
 
-              {/* Ready to notify */}
-              {pendingResultsQueue.filter(r => r.phone || r.matched_case_id).length > 0 && (
-                <div className="rounded-xl border-2 border-emerald-200 bg-white overflow-hidden">
-                  <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-3">
-                    <p className="text-sm font-bold text-emerald-900">🔔 Ready to Notify ({pendingResultsQueue.filter(r => r.phone || r.matched_case_id).length})</p>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {pendingResultsQueue.filter(r => r.phone || r.matched_case_id).map(item => {
-                      const matchedCase = visibleCases.find(c => c.id === item.matched_case_id);
-                      const phone = item.phone || matchedCase?.leadPhone || "";
-                      const outcomeColor = item.outcome === "approved" ? "text-emerald-700 bg-emerald-50" :
-                        item.outcome === "refused" ? "text-red-700 bg-red-50" : "text-amber-700 bg-amber-50";
-                      return (
-                        <div key={item.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-bold text-slate-900">{item.clientName || matchedCase?.client || "Client"}</p>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${outcomeColor}`}>
-                                {item.outcome === "approved" ? "✅ Approved" : item.outcome === "refused" ? "❌ Refused" : "📋 " + item.outcome}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-0.5">{item.applicationNumber} · {phone}</p>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            {item.fileLink && <a href={`/api/results/legacy/${encodeURIComponent(item.id)}/download`} target="_blank" className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold">PDF</a>}
-                            {phone && (
-                              <button onClick={() => void sendSubmissionOnWhatsApp(item)}
-                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
-                                📱 WhatsApp
-                              </button>
-                            )}
-                            <button onClick={() => void setLegacyResultInformedState(item, "informed")}
-                              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50">
-                              ✓ Done
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* All results history */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 flex items-center justify-between">
-                  <p className="text-sm font-bold text-slate-900">All Results ({legacyResults.filter(r => r.entryType !== "intake").length})</p>
-                  <input placeholder="Search name or app number..."
-                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:border-slate-400 w-48"
-                    onChange={e => {
-                      const q = e.target.value.toLowerCase();
-                      (window as any).__resultSearch = q;
-                      document.querySelectorAll('[data-result-row]').forEach((el: any) => {
-                        el.style.display = !q || el.dataset.resultSearch?.includes(q) ? '' : 'none';
-                      });
-                    }} />
-                </div>
-                {legacyResults.filter(r => r.entryType !== "intake").length === 0 ? (
-                  <p className="px-4 py-10 text-center text-sm text-slate-400">No results yet. Upload a JSON or PDF above.</p>
-                ) : (
-                  <div className="divide-y divide-slate-100 max-h-[600px] overflow-auto">
-                    {legacyResults.filter(r => r.entryType !== "intake").map(item => {
-                      const matchedCase = visibleCases.find(c => c.id === item.matched_case_id);
-                      const phone = item.phone || matchedCase?.leadPhone || "";
-                      const outcomeColor = item.outcome === "approved" ? "text-emerald-700" :
-                        item.outcome === "refused" ? "text-red-700" : "text-amber-700";
-                      const searchStr = `${item.clientName||""} ${item.applicationNumber||""} ${matchedCase?.client||""} ${phone}`.toLowerCase();
-                      return (
-                        <div key={item.id} data-result-row data-result-search={searchStr}
-                          className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50 flex-wrap">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-semibold text-slate-900">{item.clientName || matchedCase?.client || "Unknown"}</p>
-                              <span className={`text-xs font-bold ${outcomeColor}`}>
-                                {item.outcome === "approved" ? "✅" : item.outcome === "refused" ? "❌" : "📋"}
-                              </span>
-                              {item.informedToClient && <span className="text-[10px] font-bold text-emerald-600">Notified</span>}
-                            </div>
-                            <p className="text-xs text-slate-400">{item.applicationNumber} · {phone || "no phone"} · {item.resultDate || item.createdAt?.slice(0,10)}</p>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            {item.fileLink && <a href={`/api/results/legacy/${encodeURIComponent(item.id)}/download`} target="_blank" className="text-xs text-blue-600 font-semibold hover:underline">PDF</a>}
-                            {phone && !item.informedToClient && (
-                              <button onClick={() => void sendSubmissionOnWhatsApp(item)}
-                                className="rounded-lg bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600">
-                                📱
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             </section>
           ) : null}
 
