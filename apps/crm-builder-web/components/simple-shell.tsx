@@ -10857,10 +10857,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 {/* Delete on hover */}
                                 <button onClick={async (e) => {
                                   e.stopPropagation();
-                                  if (!confirm("Delete this message?")) return;
+                                  if (!confirm("Remove this message from the CRM only?\n\nThe client will STILL see it on their phone — WhatsApp does not allow recalling messages sent via the API. This only hides it from your inbox.")) return;
                                   await apiFetch("/inbox", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: m.id, action: "delete" }) }).catch(()=>null);
                                   setInboxMessages(prev => prev.filter(msg => msg.id !== m.id));
-                                }} className="absolute -top-2 right-1 hidden group-hover:flex w-5 h-5 rounded-full bg-slate-200 hover:bg-red-200 items-center justify-center text-[10px] text-slate-500 hover:text-red-600">
+                                }} title="Remove from CRM only (client still sees it)" className="absolute -top-2 right-1 hidden group-hover:flex w-5 h-5 rounded-full bg-slate-200 hover:bg-red-200 items-center justify-center text-[10px] text-slate-500 hover:text-red-600">
                                   ✕
                                 </button>
                               </div>

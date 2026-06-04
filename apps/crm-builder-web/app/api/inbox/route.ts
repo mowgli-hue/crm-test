@@ -135,21 +135,17 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (action === "delete" && id) {
-    // Get the message to find the WhatsApp message ID
-    const msgRes = await pool.query(`SELECT * FROM whatsapp_inbox WHERE id = $1`, [id]);
-    const msg = msgRes.rows[0];
-    
-    // Delete from WhatsApp (removes from client's chat too)
-    if (msg && msg.direction === "outbound") {
-      try {
-        const { deleteWhatsAppMessage } = await import("@/lib/whatsapp");
-        await deleteWhatsAppMessage(id);
-      } catch { /* non-fatal */ }
-    }
-    
-    // Delete from our DB
+    // NOTE: This removes the message from the CRM inbox ONLY. Meta's WhatsApp
+    // Cloud API does not support recalling/deleting a message that was already
+    // delivered, so the client still sees it on their phone. (We previously
+    // attempted a delete call here, but the Cloud API has no such endpoint — it
+    // was a no-op that misled staff into thinking the message was unsent.)
     await pool.query(`DELETE FROM whatsapp_inbox WHERE id = $1`, [id]);
-    return NextResponse.json({ ok: true, action: "deleted" });
+    return NextResponse.json({
+      ok: true,
+      action: "deleted",
+      note: "Removed from CRM only — the client still sees this message (WhatsApp does not allow recalling API-sent messages).",
+    });
   }
   
   if (id) {
