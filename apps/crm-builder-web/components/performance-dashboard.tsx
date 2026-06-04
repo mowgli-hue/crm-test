@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
 
-type Row = { name: string; role: string; errors: number; flaggedCases: number; casesAssigned: number };
+type ErrorDetail = { caseId: string; client: string; reviewer: string; text: string; date: string; status: string };
+type Row = { name: string; role: string; errors: number; flaggedCases: number; casesAssigned: number; details?: ErrorDetail[] };
 
 // Monthly team quality dashboard. Ranks preparers by "errors received" — the
 // fewer review changes raised on their cases, the cleaner their work. Managers
@@ -13,6 +14,7 @@ export default function PerformanceDashboard() {
   const [data, setData] = useState<{ month: string; rows: Row[]; totalErrors: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = async (mk: string) => {
     setLoading(true); setErr("");
@@ -81,11 +83,19 @@ export default function PerformanceDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {rows.map((r, i) => (
-                      <tr key={r.name} className={`hover:bg-slate-50 ${best && r.name === best.name ? "bg-emerald-50/50" : ""}`}>
+                    {rows.map((r, i) => {
+                      const isOpen = expanded === r.name;
+                      const canExpand = (r.details?.length || 0) > 0;
+                      return (
+                      <React.Fragment key={r.name}>
+                      <tr
+                        className={`${canExpand ? "cursor-pointer" : ""} hover:bg-slate-50 ${best && r.name === best.name ? "bg-emerald-50/50" : ""}`}
+                        onClick={() => canExpand && setExpanded(isOpen ? null : r.name)}
+                      >
                         <td className="px-3 py-2 text-slate-400">{i + 1}</td>
                         <td className="px-3 py-2 font-semibold text-slate-800">
                           {best && r.name === best.name ? "🌟 " : ""}{r.name}
+                          {canExpand && <span className="ml-1 text-slate-400">{isOpen ? "▾" : "▸"}</span>}
                         </td>
                         <td className="px-3 py-2 text-slate-500">{r.role || "—"}</td>
                         <td className="px-3 py-2">
@@ -99,7 +109,30 @@ export default function PerformanceDashboard() {
                         <td className="px-3 py-2 text-slate-600">{r.flaggedCases}</td>
                         <td className="px-3 py-2 text-slate-600">{r.casesAssigned}</td>
                       </tr>
-                    ))}
+                      {isOpen && (
+                        <tr className="bg-slate-50/60">
+                          <td colSpan={6} className="px-4 py-3">
+                            <p className="text-[11px] font-semibold text-slate-500 mb-2">
+                              The {r.details!.length} review {r.details!.length === 1 ? "flag" : "flags"} counted against {r.name} this month:
+                            </p>
+                            <ul className="space-y-2">
+                              {r.details!.map((d, j) => (
+                                <li key={j} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                                    <span className="text-[11px] font-semibold text-slate-700">{d.client || d.caseId} <span className="text-slate-400">· {d.caseId}</span></span>
+                                    <span className={`text-[10px] font-medium ${d.status === "resolved" ? "text-emerald-600" : "text-amber-600"}`}>{d.status === "resolved" ? "✓ resolved" : "open"}</span>
+                                  </div>
+                                  <p className="text-xs text-slate-700">{d.text || "(no text)"}</p>
+                                  <p className="text-[10px] text-slate-400 mt-0.5">by {d.reviewer || "reviewer"} · {new Date(d.date).toLocaleDateString()}</p>
+                                </li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

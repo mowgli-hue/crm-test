@@ -44,13 +44,14 @@ export async function GET(request: NextRequest) {
 
   // Top-level review comments (the flags) raised this month.
   const pool = getPool();
-  let comments: Array<{ case_id: string; created_at: string; author_name: string }> = [];
+  let comments: Array<{ case_id: string; created_at: string; author_name: string; body: string; status: string }> = [];
   try {
     const res = await pool.query(
-      `SELECT case_id, created_at, author_name
+      `SELECT case_id, created_at, author_name, body, status
          FROM review_comments
         WHERE parent_id IS NULL
-          AND created_at >= $1 AND created_at < $2`,
+          AND created_at >= $1 AND created_at < $2
+        ORDER BY created_at DESC`,
       [start, end]
     );
     comments = res.rows as any;
@@ -59,20 +60,26 @@ export async function GET(request: NextRequest) {
     console.error("[performance] review_comments read failed:", (e as Error).message);
   }
 
-  // Map case → assigned preparer (company-agnostic).
+  // Map case → assigned preparer (company-agnostic) + client name for display.
   const cases = await listAllCases();
   const caseToPreparer = new Map<string, string>();
+  const caseToClient = new Map<string, string>();
   for (const c of cases) {
     const who = String((c as any).assignedTo || "").trim();
     if (who && who !== "Unassigned") caseToPreparer.set(c.id, who);
+    caseToClient.set(c.id, String((c as any).client || ""));
   }
 
+  // One error detail = a single review flag, so the dashboard can drill down
+  // from a preparer's count to the actual comments behind it.
+  type ErrorDetail = { caseId: string; client: string; reviewer: string; text: string; date: string; status: string };
+
   // Aggregate errors per preparer.
-  type Row = { name: string; role: string; errors: number; flaggedCases: Set<string> };
+  type Row = { name: string; role: string; errors: number; flaggedCases: Set<string>; details: ErrorDetail[] };
   const byName = new Map<string, Row>();
   const ensureRow = (name: string, role = "") => {
     const key = name.toLowerCase();
-    if (!byName.has(key)) byName.set(key, { name, role, errors: 0, flaggedCases: new Set() });
+    if (!byName.has(key)) byName.set(key, { name, role, errors: 0, flaggedCases: new Set(), details: [] });
     return byName.get(key)!;
   };
 
@@ -92,6 +99,14 @@ export async function GET(request: NextRequest) {
     const r = ensureRow(preparer);
     r.errors += 1;
     r.flaggedCases.add(cm.case_id);
+    r.details.push({
+      caseId: cm.case_id,
+      client: caseToClient.get(cm.case_id) || "",
+      reviewer: cm.author_name || "",
+      text: String(cm.body || "").replace(/\s+/g, " ").trim().slice(0, 280),
+      date: cm.created_at,
+      status: cm.status || "open",
+    });
     totalErrors += 1;
   }
 
@@ -109,6 +124,7 @@ export async function GET(request: NextRequest) {
       errors: r.errors,
       flaggedCases: r.flaggedCases.size,
       casesAssigned: casesAssigned.get(r.name.toLowerCase()) || 0,
+      details: r.details,
     }))
     // Best first: fewest errors, then most cases handled (more work + clean = better).
     .sort((a, b) => a.errors - b.errors || b.casesAssigned - a.casesAssigned);
