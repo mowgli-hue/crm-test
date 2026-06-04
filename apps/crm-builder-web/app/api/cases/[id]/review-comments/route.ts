@@ -81,13 +81,16 @@ async function resolveRecipients(params: {
   const allUsers = await listAllStaff();
   const recipients = new Map<string, { userId: string; name: string; email: string }>();
 
+  // NOTE: we intentionally do NOT require an email here. The in-app notification
+  // must reach the preparer even if their account has no email on file (that was
+  // silently dropping the notification). Email is filtered separately at send.
   const addUser = (u: any) => {
     if (!u || u.id === params.authorUserId) return;
-    if (!u.email) return;
     if (u.active === false) return;
     if (recipients.has(u.id)) return;
-    recipients.set(u.id, { userId: u.id, name: u.name || "User", email: u.email });
+    recipients.set(u.id, { userId: u.id, name: u.name || "User", email: u.email || "" });
   };
+  const norm = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
   if (params.parentId) {
     // Reply → notify everyone who has commented in this thread (so the
@@ -101,10 +104,11 @@ async function resolveRecipients(params: {
       addUser(u);
     }
   } else {
-    // New top-level comment → notify case-assigned staff + ProcessingLeads
+    // New top-level comment → notify the case-assigned preparer (loose name
+    // match so spacing/case differences don't drop them) + ProcessingLeads/Admins.
     const assignedToName = caseItem?.assignedTo;
-    if (assignedToName && assignedToName !== "Unassigned") {
-      const assignedUser = allUsers.find((u: any) => u.name === assignedToName);
+    if (assignedToName && norm(assignedToName) !== "unassigned") {
+      const assignedUser = allUsers.find((u: any) => norm(u.name) === norm(assignedToName));
       addUser(assignedUser);
     }
     for (const u of allUsers) {
@@ -198,8 +202,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         }).catch(() => {});
       }
 
-      // Email notifications (only if configured)
-      if (recipients.length > 0 && isEmailConfigured()) {
+      // Email notifications — only to recipients who actually have an email on
+      // file (in-app notification above already reached everyone, email or not).
+      const emailTo = recipients.map(r => r.email).filter((e) => e && e.includes("@"));
+      if (emailTo.length > 0 && isEmailConfigured()) {
         const tpl = reviewCommentEmail({
           caseId: params.id,
           caseClient,
@@ -209,13 +215,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           isReply: Boolean(parentId),
         });
         await sendEmail({
-          to: recipients.map(r => r.email),
+          to: emailTo,
           subject: tpl.subject,
           html: tpl.html,
           replyTo: user.email,  // replies go directly to the commenter (nice UX)
         });
+        console.log(`📧 Review-comment email sent to ${emailTo.length} recipient(s) for ${id}`);
       } else if (recipients.length > 0) {
-        console.log(`📧 Email skipped (not configured) — would have notified ${recipients.length} recipient(s) for review comment ${id}`);
+        console.log(`📧 Review-comment email skipped (configured=${isEmailConfigured()}, emails=${emailTo.length}) — in-app notified ${recipients.length} for ${id}`);
       }
     } catch (e) {
       console.error("Review comment notification error (non-fatal):", e);
