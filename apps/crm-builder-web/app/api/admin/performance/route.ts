@@ -93,15 +93,21 @@ export async function GET(request: NextRequest) {
     return byName.get(key)!;
   };
 
-  // Who counts as a "reviewer" — their flags are what decide the errors. Driven
-  // by role so it stays correct as staff change (Ramandeep Kaur is a Reviewer).
+  // Who counts as a "reviewer" — their flags decide the errors. Driven by role
+  // so it stays correct as staff change. Newton's reviewer (Ramandeep Kaur) is a
+  // ProcessingLead, and dedicated Reviewers also qualify — both roles review and
+  // their flags count. Excluded accounts never count even if mis-roled.
+  const REVIEWER_ROLES = new Set(["reviewer", "processinglead"]);
   const staff = await listAllStaff();
   const reviewerNames = new Set(
-    staff.filter((s) => s.role === "Reviewer").map((s) => String(s.name || "").toLowerCase().trim())
+    staff.filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isExcluded(s.name))
+      .map((s) => String(s.name || "").toLowerCase().trim())
   );
-  const reviewerList = staff.filter((s) => s.role === "Reviewer").map((s) => s.name);
+  const reviewerList = staff
+    .filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isExcluded(s.name))
+    .map((s) => s.name);
   const isReviewerFlag = (cm: { author_role?: string; author_name?: string }) =>
-    String(cm.author_role || "").toLowerCase() === "reviewer" ||
+    REVIEWER_ROLES.has(String(cm.author_role || "").toLowerCase()) ||
     reviewerNames.has(String(cm.author_name || "").toLowerCase().trim());
 
   // Seed every preparer/processing staffer at zero so a clean record shows —
