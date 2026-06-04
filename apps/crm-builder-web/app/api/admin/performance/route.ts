@@ -110,14 +110,27 @@ export async function GET(request: NextRequest) {
     REVIEWER_ROLES.has(String(cm.author_role || "").toLowerCase()) ||
     reviewerNames.has(String(cm.author_name || "").toLowerCase().trim());
 
-  // Seed every preparer/processing staffer at zero so a clean record shows —
-  // but skip the excluded (non-preparer) accounts.
+  // Role lookup by name so assignee-seeded rows still show a role label.
+  const roleByName = new Map(staff.map((s) => [String(s.name || "").toLowerCase().trim(), s.role]));
+
+  // Seed every Processing / ProcessingLead staffer at zero so a clean record
+  // shows — but skip the excluded (non-preparer) accounts.
   for (const s of staff) {
     if (isExcluded(s.name)) continue;
     if (["Processing", "ProcessingLead"].includes(s.role)) {
       const r = ensureRow(s.name, s.role);
       r.role = s.role;
     }
+  }
+
+  // ALSO seed anyone who is actually assigned cases (a preparer), regardless of
+  // their account role — so people like Sukhman appear even if their role isn't
+  // "Processing", or they're tracked only by the name on the case. Excluded
+  // accounts are still skipped.
+  for (const who of new Set(caseToPreparer.values())) {
+    if (isExcluded(who)) continue;
+    const r = ensureRow(who);
+    if (!r.role) r.role = roleByName.get(who.toLowerCase().trim()) || "";
   }
 
   let totalErrors = 0;
