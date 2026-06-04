@@ -36,7 +36,8 @@ function monthRange(month: string): { start: string; end: string; label: string 
 // generic accounts, and anyone the firm doesn't want ranked here). Compared
 // case-insensitively against the staff display name.
 const EXCLUDED_NAMES = new Set(
-  ["karan", "akanksha", "neha", "lavisha", "rajwinder", "admin user", "anshika", "team", "simi das", "manisha"]
+  ["karan", "akanksha", "neha", "lavisha", "rajwinder", "admin user", "anshika", "team", "simi das", "manisha",
+   "eknoor", "aman", "simran"]
     .map((s) => s.toLowerCase().trim())
 );
 // Match an excluded entry against the FULL name or the FIRST name, so a list of
