@@ -174,6 +174,29 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     [id, params.id, user.companyId, parentId, text, user.id, user.name, user.role]
   );
 
+  // ── Mirror the review change into the Notes tab ──
+  // Reviewers' changes live in the Review tab, but staff also look in Notes.
+  // Drop a copy into case_notes so the change reliably shows in BOTH places.
+  // Non-fatal; the review comment is already saved above.
+  try {
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS case_notes (
+        id TEXT PRIMARY KEY, case_id TEXT NOT NULL, company_id TEXT NOT NULL,
+        text TEXT NOT NULL, added_by TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`
+    );
+    const noteId = `NOTE-rc-${id}`; // deterministic → a retry won't duplicate
+    const prefix = parentId ? "💬 Review reply" : "🔎 Review change";
+    await pool.query(
+      `INSERT INTO case_notes (id, case_id, company_id, text, added_by)
+       VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+      [noteId, params.id, user.companyId, `${prefix}: ${text}`, user.name || "Reviewer"]
+    );
+  } catch (e) {
+    console.error("[review-comments] notes mirror failed (non-fatal):", (e as Error).message);
+  }
+
   // ── Send notifications (email + in-app) ──
   // Run async, don't block the response. Email failure is logged but doesn't
   // fail the API call — comment is saved either way.
