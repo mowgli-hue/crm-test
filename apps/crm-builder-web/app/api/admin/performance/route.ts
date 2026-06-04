@@ -32,11 +32,21 @@ function monthRange(month: string): { start: string; end: string; label: string 
   return { start: start.toISOString(), end: end.toISOString(), label };
 }
 
+// Names that should NOT appear as preparers on this board (marketing / admin /
+// generic accounts, and anyone the firm doesn't want ranked here). Compared
+// case-insensitively against the staff display name.
+const EXCLUDED_NAMES = new Set(
+  ["karan", "akanksha", "neha", "lavisha", "rajwinder", "admin user", "anshika", "team", "simi das", "manisha"]
+    .map((s) => s.toLowerCase().trim())
+);
+const isExcluded = (name: string) => EXCLUDED_NAMES.has(String(name || "").toLowerCase().trim());
+
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.userType !== "staff" || !["Admin", "ProcessingLead"].includes(user.role)) {
-    return NextResponse.json({ error: "Forbidden — managers only" }, { status: 403 });
+  // Visible to every staff member (not just managers).
+  if (user.userType !== "staff") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const month = new URL(request.url).searchParams.get("month") || "";
@@ -44,10 +54,10 @@ export async function GET(request: NextRequest) {
 
   // Top-level review comments (the flags) raised this month.
   const pool = getPool();
-  let comments: Array<{ case_id: string; created_at: string; author_name: string; body: string; status: string }> = [];
+  let comments: Array<{ case_id: string; created_at: string; author_name: string; author_role: string; body: string; status: string }> = [];
   try {
     const res = await pool.query(
-      `SELECT case_id, created_at, author_name, body, status
+      `SELECT case_id, created_at, author_name, author_role, body, status
          FROM review_comments
         WHERE parent_id IS NULL
           AND created_at >= $1 AND created_at < $2
@@ -83,10 +93,22 @@ export async function GET(request: NextRequest) {
     return byName.get(key)!;
   };
 
-  // Seed every preparer/processing staffer at zero so a clean record shows.
+  // Who counts as a "reviewer" — their flags are what decide the errors. Driven
+  // by role so it stays correct as staff change (Ramandeep Kaur is a Reviewer).
   const staff = await listAllStaff();
+  const reviewerNames = new Set(
+    staff.filter((s) => s.role === "Reviewer").map((s) => String(s.name || "").toLowerCase().trim())
+  );
+  const reviewerList = staff.filter((s) => s.role === "Reviewer").map((s) => s.name);
+  const isReviewerFlag = (cm: { author_role?: string; author_name?: string }) =>
+    String(cm.author_role || "").toLowerCase() === "reviewer" ||
+    reviewerNames.has(String(cm.author_name || "").toLowerCase().trim());
+
+  // Seed every preparer/processing staffer at zero so a clean record shows —
+  // but skip the excluded (non-preparer) accounts.
   for (const s of staff) {
-    if (["Processing", "ProcessingLead", "Admin"].includes(s.role)) {
+    if (isExcluded(s.name)) continue;
+    if (["Processing", "ProcessingLead"].includes(s.role)) {
       const r = ensureRow(s.name, s.role);
       r.role = s.role;
     }
@@ -94,8 +116,11 @@ export async function GET(request: NextRequest) {
 
   let totalErrors = 0;
   for (const cm of comments) {
+    // Only the reviewer's flags decide quality.
+    if (!isReviewerFlag(cm)) continue;
     const preparer = caseToPreparer.get(cm.case_id);
     if (!preparer) continue; // comment on an unassigned/unknown case
+    if (isExcluded(preparer)) continue; // don't rank excluded accounts
     const r = ensureRow(preparer);
     r.errors += 1;
     r.flaggedCases.add(cm.case_id);
@@ -118,6 +143,7 @@ export async function GET(request: NextRequest) {
   }
 
   const rows = Array.from(byName.values())
+    .filter((r) => !isExcluded(r.name))
     .map((r) => ({
       name: r.name,
       role: r.role,
@@ -129,5 +155,12 @@ export async function GET(request: NextRequest) {
     // Best first: fewest errors, then most cases handled (more work + clean = better).
     .sort((a, b) => a.errors - b.errors || b.casesAssigned - a.casesAssigned);
 
-  return NextResponse.json({ ok: true, month: label, monthKey: month || start.slice(0, 7), totalErrors, rows });
+  return NextResponse.json({
+    ok: true,
+    month: label,
+    monthKey: month || start.slice(0, 7),
+    totalErrors,
+    reviewers: reviewerList,
+    rows,
+  });
 }

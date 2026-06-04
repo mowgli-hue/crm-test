@@ -11,7 +11,7 @@ export default function PerformanceDashboard() {
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const [month, setMonth] = useState(thisMonth);
-  const [data, setData] = useState<{ month: string; rows: Row[]; totalErrors: number } | null>(null);
+  const [data, setData] = useState<{ month: string; rows: Row[]; totalErrors: number; reviewers?: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -59,6 +59,14 @@ export default function PerformanceDashboard() {
           <p className="text-sm text-red-600">{err}</p>
         ) : (
           <>
+            <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5">
+              <p className="text-xs text-violet-900">
+                🔍 Errors are the review changes flagged by your reviewer{(data?.reviewers?.length || 0) === 1 ? "" : "s"}
+                {data?.reviewers && data.reviewers.length > 0 ? <> — <strong>{data.reviewers.join(", ")}</strong></> : ""}.
+                Their reviews decide quality. Updates live as reviews are logged.
+              </p>
+            </div>
+
             {best && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <p className="text-sm text-emerald-900">

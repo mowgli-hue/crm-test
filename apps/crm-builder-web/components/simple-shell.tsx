@@ -11300,8 +11300,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <p className="mt-0.5 text-xs text-slate-500">View team members, their cases, and leave notes.</p>
               </div>
 
-              {/* Monthly review-quality performance (managers only) */}
-              {(sessionUser?.role === "Admin" || sessionUser?.role === "ProcessingLead") && <PerformanceDashboard />}
+              {/* Monthly review-quality performance (visible to all team members) */}
+              {(sessionUser?.userType === "staff") && <PerformanceDashboard />}
 
               {/* ── Workload Bar Chart ──
                   Quick visual of which team members are over/under-allocated.
