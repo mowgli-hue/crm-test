@@ -39,7 +39,15 @@ const EXCLUDED_NAMES = new Set(
   ["karan", "akanksha", "neha", "lavisha", "rajwinder", "admin user", "anshika", "team", "simi das", "manisha"]
     .map((s) => s.toLowerCase().trim())
 );
-const isExcluded = (name: string) => EXCLUDED_NAMES.has(String(name || "").toLowerCase().trim());
+// Match an excluded entry against the FULL name or the FIRST name, so a list of
+// first names ("rajwinder", "lavisha") still removes full-name accounts like
+// "Rajwinder Kaur" / "Lavisha Dhingra".
+const isExcluded = (name: string) => {
+  const n = String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!n) return false;
+  if (EXCLUDED_NAMES.has(n)) return true;
+  return EXCLUDED_NAMES.has(n.split(" ")[0]);
+};
 
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
@@ -99,6 +107,34 @@ export async function GET(request: NextRequest) {
   // their flags count. Excluded accounts never count even if mis-roled.
   const REVIEWER_ROLES = new Set(["reviewer", "processinglead"]);
   const staff = await listAllStaff();
+
+  // Canonicalize an assignee name onto the real staff account so name variants
+  // (full name vs lowercase first name) collapse to ONE row instead of dupes
+  // like "Sukhman Kaur" AND "sukhman".
+  const staffNormToName = new Map<string, string>();
+  const staffFirstToNames = new Map<string, string[]>();
+  for (const s of staff) {
+    const disp = String(s.name || "").trim();
+    if (!disp) continue;
+    const n = disp.toLowerCase().replace(/\s+/g, " ").trim();
+    staffNormToName.set(n, disp);
+    const first = n.split(" ")[0];
+    const arr = staffFirstToNames.get(first) || [];
+    if (!arr.includes(disp)) arr.push(disp);
+    staffFirstToNames.set(first, arr);
+  }
+  const canonical = (raw: string): string => {
+    const n = String(raw || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (!n) return String(raw || "").trim();
+    if (staffNormToName.has(n)) return staffNormToName.get(n)!;
+    const byFirst = staffFirstToNames.get(n.split(" ")[0]);
+    if (byFirst && byFirst.length === 1) return byFirst[0];
+    return String(raw || "").trim();
+  };
+  // Collapse every case's assignee onto its canonical staff name.
+  for (const [cid, who] of Array.from(caseToPreparer.entries())) {
+    caseToPreparer.set(cid, canonical(who));
+  }
   const reviewerNames = new Set(
     staff.filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isExcluded(s.name))
       .map((s) => String(s.name || "").toLowerCase().trim())
