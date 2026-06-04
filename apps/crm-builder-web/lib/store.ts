@@ -2016,6 +2016,21 @@ export async function listUsers(companyId: string): Promise<AppUser[]> {
   return store.users.filter((u) => u.companyId === companyId && u.userType === "staff");
 }
 
+// All staff regardless of company id. Single-firm features (review-comment
+// recipients, performance dashboard) must not miss a teammate just because
+// their account drifted to a different company id ("CMP-1" vs "newton").
+export async function listAllStaff(): Promise<AppUser[]> {
+  const store = await readStore();
+  return store.users.filter((u) => u.userType === "staff");
+}
+
+// All cases regardless of company id (single-firm aggregations like the
+// performance dashboard that map a case → its assigned preparer).
+export async function listAllCases(): Promise<CaseItem[]> {
+  const store = await readStore();
+  return store.cases.slice();
+}
+
 export async function syncNewtonTeamUsers(companyId: string): Promise<{ created: number; updated: number }> {
   const store = await readStore();
   let created = 0;

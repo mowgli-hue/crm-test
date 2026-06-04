@@ -29,7 +29,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { getCase, getCaseAnyCompany, listUsers, addNotification } from "@/lib/store";
+import { getCase, getCaseAnyCompany, listAllStaff, addNotification } from "@/lib/store";
 import { sendEmail, reviewCommentEmail, isEmailConfigured } from "@/lib/email";
 import { Pool } from "pg";
 
@@ -76,7 +76,9 @@ async function resolveRecipients(params: {
   // Company-agnostic lookup: a company-scoped getCase can miss the case when
   // the author's account carries a different company id than the case.
   const caseItem = (await getCase(params.companyId, params.caseId)) || (await getCaseAnyCompany(params.caseId));
-  const allUsers = await listUsers(params.companyId);
+  // All staff (company-agnostic) so the assigned preparer is found and emailed
+  // even if their account carries a different company id than the reviewer's.
+  const allUsers = await listAllStaff();
   const recipients = new Map<string, { userId: string; name: string; email: string }>();
 
   const addUser = (u: any) => {

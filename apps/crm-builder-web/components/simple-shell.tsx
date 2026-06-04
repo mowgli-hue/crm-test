@@ -7,6 +7,7 @@ import AlertRecipientsManager from "@/components/alert-recipients-manager";
 import SubmittedAppsImport from "@/components/submitted-apps-import";
 import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
+import PerformanceDashboard from "@/components/performance-dashboard";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
@@ -11441,6 +11442,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <h2 className="text-lg font-bold text-slate-900">👥 Team</h2>
                 <p className="mt-0.5 text-xs text-slate-500">View team members, their cases, and leave notes.</p>
               </div>
+
+              {/* Monthly review-quality performance (managers only) */}
+              {(sessionUser?.role === "Admin" || sessionUser?.role === "ProcessingLead") && <PerformanceDashboard />}
 
               {/* ── Workload Bar Chart ──
                   Quick visual of which team members are over/under-allocated.
