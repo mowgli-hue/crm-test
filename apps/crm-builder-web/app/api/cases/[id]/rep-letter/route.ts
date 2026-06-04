@@ -662,12 +662,36 @@ ${isSuper ? "• Super Visa specific: Canadian sponsor (child/grandchild) must m
 • When citing: reference "section 12(2) of IRPA — Economic Class" and the specific program "Federal Skilled Worker Class — section 75 of IRPR" / "Canadian Experience Class — section 87.1 of IRPR" / etc.`;
   }
 
-  // Fallback — generic immigration application
-  return `GENERIC IMMIGRATION APPLICATION — KEY RULES:
-• Cite the specific application type and its governing regulation in IRPA / IRPR / Citizenship Act.
-• Address client's status and eligibility clearly.
-• List required forms by IMM number.
-• Address any inadmissibility / status issues directly.`;
+  // Generic open / employer-specific work permits (non-spousal, non-PGWP):
+  // LMIA-based, LMIA-exempt, IEC, BOWP, vulnerable-worker OWP, etc.
+  if (ft.includes("work permit") || ft.includes("owp") || ft.includes("lmia") || ft.includes("bowp") || ft.includes("c11") || ft.includes("c10")) {
+    return `WORK PERMIT — KEY RULES TO WEAVE IN (identify the EXACT sub-type from the notes):
+• Determine the stream: employer-specific (LMIA-based, or LMIA-exempt under an IRPR R204/R205/R207.1 code) vs open work permit (R205(c)(ii) etc.).
+• Employer-specific: cite the LMIA number OR the LMIA-exemption code (e.g. C11 entrepreneur, C12 intra-company, T13 CUSMA, A70 Mobilité Francophone). State employer name, job title, NOC/TEER, wage, and that the offer is genuine.
+• Open work permit: cite the open-permit basis (e.g. R205(c)(ii) spousal/PGWP, BOWP for a pending PR, vulnerable-worker A72).
+• Status: maintained status under R183(5)-(6) if applying before expiry; restoration under R182 if expired ≤ 90 days.
+• Form: IMM 1295 (outside Canada) or IMM 5710 (inside Canada).
+• Eligibility: admissibility (medical/criminality), genuine job offer, ability to perform the work.
+• When citing: reference the specific IRPR section for the stream and "section 200 of IRPR" for issuance criteria.`;
+  }
+
+  if (ft.includes("visitor record")) {
+    return `VISITOR RECORD (extend stay as a visitor inside Canada) — KEY RULES:
+• Form: IMM 5708. Apply ≥ 30 days before current status expires.
+• Maintained status under R183(5)-(6) while the application is processed (if applied before expiry); restoration under R182 if expired ≤ 90 days.
+• Officer must be satisfied the applicant will leave at the end of the authorized stay (R179(b)) — show ties + purpose + funds.
+• Evidence: valid passport, current status document, reason for extended stay, proof of funds, ties to home country.
+• When citing: reference "section 183 of IRPR" (conditions on temporary residents) and "R179".`;
+  }
+
+  // Fallback — research the exact type rather than producing a generic letter.
+  return `${(formType || "IMMIGRATION APPLICATION").toUpperCase()} — RESEARCH AND APPLY THE EXACT REQUIREMENTS:
+You are the RCIC. Do NOT write a generic letter. Treat this specific application type rigorously:
+• Identify the precise IRCC program this application falls under and the governing provision (IRPA / IRPR / Citizenship Act — cite the section).
+• Enumerate EVERY eligibility requirement IRCC sets for THIS exact application type, and address each one as its own bullet showing how the client meets it (use a bracketed placeholder if a required fact wasn't provided).
+• State the correct IMM form number(s) for this application type.
+• Apply the relevant status / deadline rule (maintained status R183, restoration R182, filing windows, etc.) where applicable.
+• Anticipate and answer the specific concerns an officer reviewing THIS application type would raise.`;
 }
 
 async function generateLetterBodyWithAI(p: AIBodyParams): Promise<AIBodyResult> {
@@ -712,6 +736,15 @@ The "CLIENT'S STORY / NOTES" field below contains instructions FROM the consulta
 You MUST follow the consultant's directions. The consultant knows the case better than you do.
 
 If the consultant gives generic notes ("just standard PGWP letter"), use the standard structure for that application type.
+
+═══════════════════════════════════════════════════════════════
+🚫 NEVER FABRICATE FACTS (this is critical)
+═══════════════════════════════════════════════════════════════
+Use ONLY facts that appear in the consultant's notes, the KNOWN FACTS list, or the attached evidence. NEVER invent specific dates, test scores (IELTS/CELPIP), dollar amounts, NOC/TEER codes, institution or program names, application numbers, or any other concrete detail.
+
+When a rule REQUIRES a specific fact that you have NOT been given, write a clearly-bracketed placeholder for staff to fill in — for example: "[program completion date]", "[IELTS overall band]", "[employer name]", "[NOC code]", "[amount]". A bracketed placeholder is correct and expected; a fabricated fact is a serious error that creates a misrepresentation risk under IRPA s. 40 (5-year ban). When in doubt, use a placeholder.
+
+This is why a thin story still produces a strong letter: you build the complete, correct, type-specific argument structure and mark the few missing facts with placeholders, rather than guessing.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT — return ONLY a JSON object, no prose, no markdown
@@ -1025,6 +1058,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const mode = String(body.mode || "").toLowerCase();
     let bodyLines: string[];
     let docs: string[];
+    // Track which path actually produced the letter so the preview can label it
+    // honestly ("✨ AI-drafted" vs "📋 Template").
+    let generationMode: "ai" | "template" = "template";
 
     if (editedBodyLines && editedBodyLines.length > 0) {
       // ── Path: staff passed back edited body. Use it verbatim, no AI re-run.
@@ -1038,9 +1074,12 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       // (We don't re-run AI on a download because the staff has already
       // approved the doc list at this stage.)
       docs = editedDocs && editedDocs.length > 0 ? editedDocs : fallbackDocs;
-    } else if (clientStory && clientStory.length >= 20 && process.env.ANTHROPIC_API_KEY) {
-      // Use Claude to weave the client's specific story into a properly-structured letter
-      // AND generate a tailored enclosed-doc list based on the case-specific facts.
+    } else if (process.env.ANTHROPIC_API_KEY) {
+      // Always use Claude when configured — even with a short/empty story.
+      // The model has the case facts + the application-type rules, so it writes
+      // a proper type-specific letter (with bracketed placeholders for any
+      // missing facts) instead of falling back to the generic static template.
+      // The weak template is now a true last resort (no API key, or AI errors).
       try {
         const aiResult = await generateLetterBodyWithAI({
           clientStory,
@@ -1062,6 +1101,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         // returned an empty array (rare), fall back to the static template
         // so we never ship a letter without an enclosed-doc list.
         docs = aiResult.docs.length > 0 ? aiResult.docs : fallbackDocs;
+        generationMode = "ai";
       } catch (e) {
         console.warn("AI letter body generation failed, falling back to template:", (e as Error).message);
         bodyLines = getBodyParagraphs({
@@ -1101,7 +1141,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         bodyLines,
         docs,
         // Echo back generation context the editor might want to display.
-        generated: clientStory && clientStory.length >= 20 ? "ai" : "template",
+        generated: generationMode,
       });
     }
 

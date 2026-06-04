@@ -7407,7 +7407,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Client's story / consultant notes <span style="color:#ef4444;">*</span></label>
                                 <textarea id="__rep_letter_story__" rows="10" placeholder="Example:&#10;&#10;Aarti began her studies at Capilano University and was progressing well. Due to outside influence she transferred to Granville College for one semester, but realized this was not the right fit. She returned to Capilano University to continue her Associate of Arts degree."
                                   style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;box-sizing:border-box;resize:vertical;">${existingNotes}</textarea>
-                                <p id="__rep_letter_count__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;">${existingNotes.length} characters · Minimum 20 for AI generation</p>
+                                <p id="__rep_letter_count__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;">${existingNotes.length} characters · AI drafts a tailored letter for this application type — the more detail you give, the stronger it is. Missing facts become [bracketed placeholders] to fill in.</p>
 
                                 <div style="margin-top:12px;">
                                   <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Client pronouns</label>
@@ -7444,7 +7444,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             const counter = document.getElementById("__rep_letter_count__")!;
                             textarea?.addEventListener("input", () => {
                               const len = textarea.value.length;
-                              counter.textContent = `${len} characters · Minimum 20 for AI generation`;
+                              counter.textContent = `${len} characters · AI drafts a tailored letter for this application type — more detail = stronger. Missing facts become [placeholders].`;
                             });
 
                             // Pronoun toggle
