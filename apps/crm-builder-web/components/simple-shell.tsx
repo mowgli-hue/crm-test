@@ -11723,15 +11723,31 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           return sorted.map(thread => {
                             const replies = all.filter(c => c.parent_id === thread.id)
                               .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                            const isResolved = thread.status === "resolved";
+                            const st = thread.status === "resolved" ? "resolved" : thread.status === "addressed" ? "addressed" : "open";
+                            const isResolved = st === "resolved";
+                            // Helper: advance this thread and refresh both Review + Notes.
+                            const setThreadStatus = async (newStatus: string) => {
+                              const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ commentId: thread.id, status: newStatus }),
+                              });
+                              if (res?.ok) {
+                                const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                                if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
+                              }
+                            };
+                            const cardBorder = st === "resolved" ? "border-slate-200 bg-slate-50" : st === "addressed" ? "border-amber-300 bg-amber-50" : "border-rose-200 bg-white";
                             return (
                               <div key={thread.id}
-                                className={`rounded-xl border-2 ${isResolved ? "border-slate-200 bg-slate-50" : "border-rose-200 bg-white"} p-3 space-y-2`}>
+                                className={`rounded-xl border-2 ${cardBorder} p-3 space-y-2`}>
                                 {/* Top-level comment */}
                                 <div className="flex justify-between items-start gap-2">
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className={`text-[11px] font-bold ${isResolved ? "text-slate-500" : "text-rose-700"}`}>
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                      <span className={`text-[11px] font-bold ${isResolved ? "text-slate-500" : st === "addressed" ? "text-amber-700" : "text-rose-700"}`}>
                                         {thread.author_name}
                                       </span>
                                       {thread.author_role && (
@@ -11740,28 +11756,47 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                       <span className="text-[10px] text-slate-400">
                                         {new Date(thread.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
                                       </span>
-                                      {isResolved && (
+                                      {st === "open" && (
+                                        <span className="text-[10px] font-bold text-rose-700 bg-rose-100 rounded-full px-2">● Needs changes</span>
+                                      )}
+                                      {st === "addressed" && (
+                                        <span className="text-[10px] font-bold text-amber-800 bg-amber-200 rounded-full px-2">⏳ Changes done — awaiting review</span>
+                                      )}
+                                      {st === "resolved" && (
                                         <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2">✓ Resolved</span>
                                       )}
                                     </div>
                                     <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-800"}`}>{thread.body}</p>
                                   </div>
-                                  <button
-                                    onClick={async () => {
-                                      const newStatus = isResolved ? "open" : "resolved";
-                                      const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
-                                        method: "PATCH",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ commentId: thread.id, status: newStatus }),
-                                      });
-                                      if (res?.ok) {
-                                        const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
-                                        if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
-                                      }
-                                    }}
-                                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-bold ${isResolved ? "bg-slate-200 text-slate-700 hover:bg-slate-300" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}>
-                                    {isResolved ? "Re-open" : "✓ Resolve"}
-                                  </button>
+                                  <div className="shrink-0 flex flex-col gap-1">
+                                    {/* OPEN → preparer confirms the fix */}
+                                    {st === "open" && (
+                                      <button onClick={() => void setThreadStatus("addressed")}
+                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200">
+                                        ✓ Mark changes done
+                                      </button>
+                                    )}
+                                    {/* ADDRESSED → reviewer verifies & closes, or sends back */}
+                                    {st === "addressed" && (
+                                      <>
+                                        <button onClick={() => void setThreadStatus("resolved")}
+                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+                                          ✓ Verify &amp; close
+                                        </button>
+                                        <button onClick={() => void setThreadStatus("open")}
+                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-rose-100 text-rose-700 hover:bg-rose-200">
+                                          ↩ Send back
+                                        </button>
+                                      </>
+                                    )}
+                                    {/* RESOLVED → reviewer can reopen */}
+                                    {st === "resolved" && (
+                                      <button onClick={() => void setThreadStatus("open")}
+                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-slate-200 text-slate-700 hover:bg-slate-300">
+                                        ↩ Re-open
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
 
                                 {/* Replies */}

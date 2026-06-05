@@ -255,12 +255,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   return NextResponse.json({ ok: true, id });
 }
 
-// ─── PATCH: mark thread resolved (or re-open) ───
+// ─── PATCH: advance a review thread through the loop ───
 //
-// Body: { commentId: string, status: "open" | "resolved" }
-// commentId can be top-level OR a reply — we resolve the entire thread by
-// finding the root and updating all related rows. Simpler: just update the
-// one row's status. Show "resolved" badge on the comment that was resolved.
+// Body: { commentId: string, status: "open" | "addressed" | "resolved" }
+// Systematic loop:
+//   open      — reviewer flagged a change; preparer needs to fix it.
+//   addressed — the preparer clicked "Changes done"; the REVIEWER is notified
+//               to verify. (This is the missing confirm-step.)
+//   resolved  — the reviewer verified & closed it; the PREPARER is notified.
+//   (re)open  — reviewer reopened it; the PREPARER is notified.
+// commentId can be a top-level comment OR a reply — we advance the whole thread.
+// Each transition also drops a line into Notes so the loop is visible there.
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -269,41 +274,88 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const commentId = String(body?.commentId || "");
   const status = String(body?.status || "");
   if (!commentId) return NextResponse.json({ error: "commentId required" }, { status: 400 });
-  if (status !== "open" && status !== "resolved") {
-    return NextResponse.json({ error: "status must be open or resolved" }, { status: 400 });
+  if (!["open", "addressed", "resolved"].includes(status)) {
+    return NextResponse.json({ error: "status must be open, addressed, or resolved" }, { status: 400 });
   }
 
   await ensureSchema();
 
-  // Find root of thread: if this is a reply, walk up to top-level
+  // Find the root of the thread (a reply walks up to its parent).
   const rootRes = await pool.query(
-    `SELECT id, parent_id FROM review_comments
+    `SELECT id, parent_id, author_user_id, author_name FROM review_comments
      WHERE id = $1 AND case_id = $2`,
     [commentId, params.id]
   );
   if (rootRes.rowCount === 0) {
     return NextResponse.json({ error: "Comment not found" }, { status: 404 });
   }
-  const rootId = rootRes.rows[0].parent_id || rootRes.rows[0].id;
+  const rootRow = rootRes.rows[0];
+  const rootId = rootRow.parent_id || rootRow.id;
 
-  // Update root + all replies to same status
+  // Reviewer = the author of the ROOT (top-level) comment.
+  let reviewerUserId: string | null = rootRow.author_user_id || null;
+  if (rootRow.parent_id) {
+    const r = await pool.query(`SELECT author_user_id FROM review_comments WHERE id = $1`, [rootId]);
+    if (r.rowCount) reviewerUserId = r.rows[0].author_user_id || null;
+  }
+
+  // Apply the status to the whole thread.
   if (status === "resolved") {
     await pool.query(
-      `UPDATE review_comments
-       SET status = 'resolved', resolved_at = NOW(),
-           resolved_by_user_id = $1, resolved_by_name = $2
-       WHERE (id = $3 OR parent_id = $3)`,
+      `UPDATE review_comments SET status='resolved', resolved_at=NOW(), resolved_by_user_id=$1, resolved_by_name=$2 WHERE (id=$3 OR parent_id=$3)`,
       [user.id, user.name, rootId]
     );
   } else {
     await pool.query(
-      `UPDATE review_comments
-       SET status = 'open', resolved_at = NULL,
-           resolved_by_user_id = NULL, resolved_by_name = NULL
-       WHERE (id = $1 OR parent_id = $1)`,
-      [rootId]
+      `UPDATE review_comments SET status=$1, resolved_at=NULL, resolved_by_user_id=NULL, resolved_by_name=NULL WHERE (id=$2 OR parent_id=$2)`,
+      [status, rootId]
     );
   }
 
-  return NextResponse.json({ ok: true });
+  // ── Notify the right person + mirror the transition into Notes (non-fatal) ──
+  (async () => {
+    try {
+      const caseItem = (await getCase(user.companyId, params.id)) || (await getCaseAnyCompany(params.id));
+      const client = caseItem?.client || params.id;
+      const norm = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const allUsers = await listAllStaff();
+      const preparer = caseItem?.assignedTo && norm(caseItem.assignedTo) !== "unassigned"
+        ? allUsers.find((u: any) => norm(u.name) === norm(caseItem!.assignedTo)) : null;
+
+      let notifyUserId: string | null = null;
+      let notifyMsg = "";
+      let noteText = "";
+      if (status === "addressed") {
+        notifyUserId = reviewerUserId;            // tell the reviewer the preparer says it's fixed
+        notifyMsg = `✅ ${user.name} marked changes done on ${client} (${params.id}) — ready for your review`;
+        noteText = `✅ Changes done — marked by ${user.name} (awaiting reviewer verification)`;
+      } else if (status === "resolved") {
+        notifyUserId = preparer?.id || null;      // tell the preparer it's closed
+        notifyMsg = `✓ ${user.name} verified & closed a review on ${client} (${params.id})`;
+        noteText = `✓ Review resolved by ${user.name}`;
+      } else {
+        notifyUserId = preparer?.id || null;      // reopened → tell the preparer to act
+        notifyMsg = `↩ ${user.name} reopened a review change on ${client} (${params.id})`;
+        noteText = `↩ Review reopened by ${user.name}`;
+      }
+
+      if (notifyUserId && notifyUserId !== user.id) {
+        await addNotification({
+          companyId: user.companyId, userId: notifyUserId, type: "review_comment",
+          message: notifyMsg, link: `/?case=${encodeURIComponent(params.id)}#review-comments`,
+        }).catch(() => {});
+      }
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS case_notes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, company_id TEXT NOT NULL, text TEXT NOT NULL, added_by TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
+      );
+      await pool.query(
+        `INSERT INTO case_notes (id, case_id, company_id, text, added_by) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+        [`NOTE-rcst-${rootId}-${status}`, params.id, user.companyId, noteText, user.name || "Staff"]
+      );
+    } catch (e) {
+      console.error("[review-comments PATCH] notify/mirror failed (non-fatal):", (e as Error).message);
+    }
+  })();
+
+  return NextResponse.json({ ok: true, status });
 }
