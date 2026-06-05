@@ -7451,8 +7451,27 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
                                   <div className="shrink-0 flex flex-col gap-1">
                                     {String(thread.id).startsWith("cn-") ? (
-                                      /* Read-only entry from the Under-Review panel — manage it there */
-                                      <span className="rounded-lg px-2 py-1 text-[9px] font-semibold text-slate-400 border border-slate-200 text-center">via Under-Review panel</span>
+                                      /* Entry raised via the Under-Review panel. The preparer can mark
+                                         changes done right here (no need to reopen the panel). */
+                                      st === "addressed" ? (
+                                        <span className="rounded-lg px-2 py-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 text-center">✓ Changes done</span>
+                                      ) : (
+                                        <button onClick={async () => {
+                                          const who = sessionUser?.name || "staff";
+                                          await apiFetch(`/cases/${selectedCase.id}/notes`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ text: `✅ Changes done by ${who} — ready for re-review.`, addedBy: who }) }).catch(()=>null);
+                                          void updateCaseProcessing(selectedCase.id, { reviewStatus: "changes_done" } as any);
+                                          setCases(prev => prev.map(c => c.id === selectedCase.id ? ({...c, reviewStatus: "changes_done"} as any) : c));
+                                          await apiFetch("/notify", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ targetName: thread.author_name, message: `✅ ${who} marked changes done on ${selectedCase.client} (${selectedCase.id})`, caseId: selectedCase.id }) }).catch(()=>null);
+                                          const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                          if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                          const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                                          if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
+                                          setCaseActionStatus("✅ Changes marked done — reviewer notified");
+                                          setTimeout(() => setCaseActionStatus(""), 3000);
+                                        }} className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+                                          ✓ Mark changes done
+                                        </button>
+                                      )
                                     ) : (<>
                                     {/* OPEN → preparer confirms the fix */}
                                     {st === "open" && (
