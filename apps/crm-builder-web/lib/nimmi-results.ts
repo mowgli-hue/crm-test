@@ -63,6 +63,20 @@ function jsonHeaders(): Record<string, string> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Fetch with a hard timeout so a slow/hanging upstream (Nimmi or S3) fails fast
+// with a clear error instead of stalling the whole request into a gateway 502.
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const isAbort = (e: unknown) =>
+  (e as any)?.name === "AbortError" || String((e as Error)?.message || "").toLowerCase().includes("abort");
+
 export async function pushResultToNimmi(input: PushResultInput): Promise<PushResultOutput> {
   if (!isNimmiConfigured()) return { ok: false, error: "CRM_API_SECRET is not set" };
   if (!input.clientName?.trim()) return { ok: false, error: "clientName is required" };
@@ -74,7 +88,7 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
   // ── Step 1: prepare-upload ──
   let prep: any;
   try {
-    const res = await fetch(`${NIMMI_BASE}/api/admin/results/from-crm/prepare-upload`, {
+    const res = await fetchWithTimeout(`${NIMMI_BASE}/api/admin/results/from-crm/prepare-upload`, {
       method: "POST",
       headers: jsonHeaders(),
       body: JSON.stringify({
@@ -87,13 +101,13 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
         filename: input.fileName,
         contentType: input.contentType,
       }),
-    });
+    }, 25000);
     prep = await res.json().catch(() => ({}));
     if (!res.ok || !prep?.ok) {
       return { ok: false, error: `prepare-upload ${res.status}: ${prep?.error || "failed"}` };
     }
   } catch (e) {
-    return { ok: false, error: `prepare-upload error: ${(e as Error).message}` };
+    return { ok: false, error: isAbort(e) ? "Nimmi prepare-upload timed out — it may be slow right now. Please try again." : `prepare-upload error: ${(e as Error).message}` };
   }
 
   const resultId: string = prep.resultId;
@@ -124,11 +138,11 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
     try {
       const putHeaders: Record<string, string> = { "Content-Type": input.contentType };
       if (sseValue) putHeaders["x-amz-server-side-encryption"] = sseValue;
-      const res = await fetch(uploadUrl, {
+      const res = await fetchWithTimeout(uploadUrl, {
         method: "PUT",
         headers: putHeaders,
         body: input.fileBuffer as any,
-      });
+      }, 30000);
       if (res.ok) return { ok: true, status: res.status };
       // Surface the S3 error body (XML) so 403s are diagnosable — it names the
       // exact reason, e.g. SignatureDoesNotMatch / AccessDenied / expired URL.
@@ -153,26 +167,31 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
 
   // ── Step 3: finalize (with the spec's retry guidance) ──
   const finalize = async (): Promise<{ status: number; data: any }> => {
-    const res = await fetch(`${NIMMI_BASE}/api/admin/results/from-crm/finalize`, {
-      method: "POST",
-      headers: jsonHeaders(),
-      body: JSON.stringify({
-        resultId,
-        s3Key,
-        clientName: input.clientName,
-        phone: input.phone,
-        email: input.email,
-        appNumber: input.appNumber,
-        serviceSlug: input.serviceSlug,
-        resultType: input.resultType,
-        filename: input.fileName,
-        contentType: input.contentType,
-        fileSizeBytes: input.fileBuffer.length,
-        rcicNote: input.rcicNote,
-        matchedUserId,
-      }),
-    });
-    return { status: res.status, data: await res.json().catch(() => ({})) };
+    try {
+      const res = await fetchWithTimeout(`${NIMMI_BASE}/api/admin/results/from-crm/finalize`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          resultId,
+          s3Key,
+          clientName: input.clientName,
+          phone: input.phone,
+          email: input.email,
+          appNumber: input.appNumber,
+          serviceSlug: input.serviceSlug,
+          resultType: input.resultType,
+          filename: input.fileName,
+          contentType: input.contentType,
+          fileSizeBytes: input.fileBuffer.length,
+          rcicNote: input.rcicNote,
+          matchedUserId,
+        }),
+      }, 25000);
+      return { status: res.status, data: await res.json().catch(() => ({})) };
+    } catch (e) {
+      // Never throw — return a sentinel status so the caller surfaces a clean error.
+      return { status: 0, data: { error: isAbort(e) ? "finalize timed out" : (e as Error).message } };
+    }
   };
 
   let fin = await finalize();
