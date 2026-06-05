@@ -2362,6 +2362,18 @@ export async function listLegacyResults(companyId: string): Promise<LegacyResult
     .sort((a, b) => `${b.resultDate}T${b.createdAt}`.localeCompare(`${a.resultDate}T${a.createdAt}`));
 }
 
+// Wipe the historical/bulk-uploaded results for a company so the Results screen
+// can start fresh (used when going live and sending only from the CRM going
+// forward). Returns how many were removed. Company-agnostic-safe: only removes
+// rows whose companyId matches, leaving any other tenant's data intact.
+export async function clearLegacyResults(companyId: string): Promise<number> {
+  return mutateStore(async (store) => {
+    const before = store.legacyResults.length;
+    store.legacyResults = store.legacyResults.filter((r) => r.companyId !== companyId);
+    return before - store.legacyResults.length;
+  });
+}
+
 export async function addLegacyResult(input: {
   companyId: string;
   entryType?: "result" | "submission";

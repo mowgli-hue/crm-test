@@ -9337,6 +9337,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   <p className="text-xs text-slate-400 mt-0.5">IRCC decisions — notify clients via WhatsApp</p>
                 </div>
                 <div className="flex gap-2 flex-wrap">
+                  {/* Start fresh — Admin only: clears uploaded historical results */}
+                  {sessionUser?.role === "Admin" && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Start fresh?\n\nThis permanently clears ALL uploaded historical results from this screen so you can begin clean and track only results you send from the CRM going forward.\n\nIt does NOT touch cases, submissions, or the sent-results log.\n\nContinue?")) return;
+                        const res = await apiFetch("/admin/clear-results", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ confirm: true }) }).catch(()=>null);
+                        const d = await res?.json().catch(()=>({}));
+                        if (res?.ok) {
+                          setLegacyResults([]);
+                          alert(`✅ Cleared ${d.removed ?? 0} old results. Starting fresh.`);
+                        } else {
+                          alert(`❌ ${d?.error || "Could not clear results"}`);
+                        }
+                      }}
+                      className="cursor-pointer rounded-xl border-2 border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
+                    >
+                      🧹 Start fresh (clear old results)
+                    </button>
+                  )}
                   {/* Upload JSON */}
                   <label className="cursor-pointer rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
                     📂 Upload JSON
