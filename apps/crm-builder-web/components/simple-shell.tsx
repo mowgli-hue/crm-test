@@ -7268,6 +7268,278 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                     <div className="p-5">
 
+                    {caseDetailTab === "ai" && (
+                      <div className="h-[500px]">
+                        <AiAssistantPanel caseId={selectedCase.id} caseItem={selectedCase} />
+                      </div>
+                    )}
+                    {caseDetailTab === "notes" ? (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <textarea
+                            id="case-note-input"
+                            placeholder="Add an internal note about this case..."
+                            rows={3}
+                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none resize-none"
+                          />
+                          <div className="flex gap-2">
+                          <button onClick={async () => {
+                            // AI suggests note content
+                            const el = document.getElementById("case-note-input") as HTMLTextAreaElement;
+                            const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"draft_notes"})}).catch(()=>null);
+                            const d = await res?.json().catch(()=>({}));
+                            if (d?.text && el) el.value = d.text;
+                          }} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">
+                            🤖 AI Draft
+                          </button>
+                          <button onClick={async () => {
+                            const el = document.getElementById("case-note-input") as HTMLTextAreaElement;
+                            const text = el?.value?.trim();
+                            if (!text) return;
+                            const res = await apiFetch(`/cases/${selectedCase.id}/notes`, {
+                              method: "POST",
+                              headers: {"Content-Type": "application/json"},
+                              body: JSON.stringify({ text, addedBy: sessionUser?.name })
+                            }).catch(() => null);
+                            if (res?.ok) {
+                              el.value = "";
+                              const d = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                              if (d?.notes) setCaseNotes(prev => ({...prev, [selectedCase.id]: d.notes}));
+                              setCaseActionStatus("✅ Note added");
+                              setTimeout(() => setCaseActionStatus(""), 3000);
+                            } else {
+                              setCaseActionStatus("❌ Failed to add note");
+                              setTimeout(() => setCaseActionStatus(""), 3000);
+                            }
+                          }} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700">
+                            + Add Note
+                          </button>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {(caseNotes[selectedCase.id] || []).length === 0 ? (
+                            <p className="text-xs text-slate-400 text-center py-4">No notes yet — add the first one above</p>
+                          ) : (
+                            [...(caseNotes[selectedCase.id] || [])].reverse().map(note => (
+                              <div key={note.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs font-bold text-slate-700">{note.added_by || "Staff"}</p>
+                                  <p className="text-[10px] text-slate-400">{note.created_at ? new Date(note.created_at).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}</p>
+                                </div>
+                                <p className="text-sm text-slate-800 whitespace-pre-wrap">{note.text}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {caseDetailTab === "review" ? (
+                      <div className="space-y-4">
+                        {/* ── Header explanation ── */}
+                        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                          <p className="text-xs text-rose-900 leading-relaxed">
+                            💬 <strong>Review Comments</strong> — for back-and-forth between reviewer and processing staff on this case.
+                            <br/>
+                            New comments + replies email everyone in the thread (assigned staff + lead). Mark a thread <strong>resolved</strong> once fixed.
+                          </p>
+                        </div>
+
+                        {/* ── Compose new review comment ── */}
+                        <div className="rounded-xl border-2 border-slate-200 p-3 bg-white">
+                          <textarea
+                            value={reviewCommentDraft[selectedCase.id] || ""}
+                            onChange={e => setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: e.target.value }))}
+                            placeholder={`Leave a review comment about this case... (e.g. "Q14 answer is wrong, should be No not Yes")`}
+                            rows={3}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-rose-400 leading-relaxed"
+                          />
+                          <div className="flex justify-between items-center mt-2">
+                            <p className="text-[10px] text-slate-400">
+                              {(reviewCommentDraft[selectedCase.id] || "").length} characters · everyone in thread gets emailed
+                            </p>
+                            <button
+                              disabled={(reviewCommentDraft[selectedCase.id] || "").trim().length < 5}
+                              onClick={async () => {
+                                const text = (reviewCommentDraft[selectedCase.id] || "").trim();
+                                if (text.length < 5) return;
+                                const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ body: text }),
+                                });
+                                if (res?.ok) {
+                                  setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: "" }));
+                                  // Re-fetch the review list AND the notes list (the
+                                  // change is mirrored into Notes server-side, so refresh
+                                  // both so it shows in both tabs immediately).
+                                  const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                  if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                  const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                                  if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
+                                  setCaseActionStatus("✅ Review change added — shows in Notes + Review and notifies the preparer");
+                                } else {
+                                  setCaseActionStatus("❌ Failed to add comment");
+                                }
+                                setTimeout(() => setCaseActionStatus(""), 4000);
+                              }}
+                              className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+                              + Add Review Comment
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* ── Threads list ── */}
+                        {(() => {
+                          const all = reviewComments[selectedCase.id] || [];
+                          const topLevel = all.filter(c => !c.parent_id);
+                          if (topLevel.length === 0) {
+                            return <p className="text-xs text-slate-400 text-center py-6">No review comments yet</p>;
+                          }
+                          // Sort: open first, then resolved; within group, newest first
+                          const sorted = [...topLevel].sort((a, b) => {
+                            if (a.status !== b.status) return a.status === "open" ? -1 : 1;
+                            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                          });
+                          return sorted.map(thread => {
+                            const replies = all.filter(c => c.parent_id === thread.id)
+                              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                            const st = thread.status === "resolved" ? "resolved" : thread.status === "addressed" ? "addressed" : "open";
+                            const isResolved = st === "resolved";
+                            // Helper: advance this thread and refresh both Review + Notes.
+                            const setThreadStatus = async (newStatus: string) => {
+                              const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ commentId: thread.id, status: newStatus }),
+                              });
+                              if (res?.ok) {
+                                const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
+                                if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
+                              }
+                            };
+                            const cardBorder = st === "resolved" ? "border-slate-200 bg-slate-50" : st === "addressed" ? "border-amber-300 bg-amber-50" : "border-rose-200 bg-white";
+                            return (
+                              <div key={thread.id}
+                                className={`rounded-xl border-2 ${cardBorder} p-3 space-y-2`}>
+                                {/* Top-level comment */}
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                      <span className={`text-[11px] font-bold ${isResolved ? "text-slate-500" : st === "addressed" ? "text-amber-700" : "text-rose-700"}`}>
+                                        {thread.author_name}
+                                      </span>
+                                      {thread.author_role && (
+                                        <span className="text-[9px] uppercase tracking-wide text-slate-400">{thread.author_role}</span>
+                                      )}
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(thread.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
+                                      </span>
+                                      {st === "open" && (
+                                        <span className="text-[10px] font-bold text-rose-700 bg-rose-100 rounded-full px-2">● Needs changes</span>
+                                      )}
+                                      {st === "addressed" && (
+                                        <span className="text-[10px] font-bold text-amber-800 bg-amber-200 rounded-full px-2">⏳ Changes done — awaiting review</span>
+                                      )}
+                                      {st === "resolved" && (
+                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2">✓ Resolved</span>
+                                      )}
+                                    </div>
+                                    <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-800"}`}>{thread.body}</p>
+                                  </div>
+                                  <div className="shrink-0 flex flex-col gap-1">
+                                    {/* OPEN → preparer confirms the fix */}
+                                    {st === "open" && (
+                                      <button onClick={() => void setThreadStatus("addressed")}
+                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200">
+                                        ✓ Mark changes done
+                                      </button>
+                                    )}
+                                    {/* ADDRESSED → reviewer verifies & closes, or sends back */}
+                                    {st === "addressed" && (
+                                      <>
+                                        <button onClick={() => void setThreadStatus("resolved")}
+                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+                                          ✓ Verify &amp; close
+                                        </button>
+                                        <button onClick={() => void setThreadStatus("open")}
+                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-rose-100 text-rose-700 hover:bg-rose-200">
+                                          ↩ Send back
+                                        </button>
+                                      </>
+                                    )}
+                                    {/* RESOLVED → reviewer can reopen */}
+                                    {st === "resolved" && (
+                                      <button onClick={() => void setThreadStatus("open")}
+                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-slate-200 text-slate-700 hover:bg-slate-300">
+                                        ↩ Re-open
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Replies */}
+                                {replies.length > 0 && (
+                                  <div className="ml-4 pl-3 border-l-2 border-slate-200 space-y-2">
+                                    {replies.map(reply => (
+                                      <div key={reply.id}>
+                                        <div className="flex items-center gap-2 mb-0.5">
+                                          <span className="text-[11px] font-bold text-blue-700">{reply.author_name}</span>
+                                          {reply.author_role && (
+                                            <span className="text-[9px] uppercase tracking-wide text-slate-400">{reply.author_role}</span>
+                                          )}
+                                          <span className="text-[10px] text-slate-400">
+                                            {new Date(reply.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
+                                          </span>
+                                        </div>
+                                        <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-700"}`}>{reply.body}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reply box (only show on open threads) */}
+                                {!isResolved && (
+                                  <div className="ml-4 pl-3 border-l-2 border-slate-100">
+                                    <textarea
+                                      value={reviewReplyDraft[thread.id] || ""}
+                                      onChange={e => setReviewReplyDraft(prev => ({ ...prev, [thread.id]: e.target.value }))}
+                                      placeholder="Reply..."
+                                      rows={2}
+                                      className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400 leading-relaxed"
+                                    />
+                                    <div className="flex justify-end mt-1">
+                                      <button
+                                        disabled={(reviewReplyDraft[thread.id] || "").trim().length < 2}
+                                        onClick={async () => {
+                                          const text = (reviewReplyDraft[thread.id] || "").trim();
+                                          if (text.length < 2) return;
+                                          const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ body: text, parentId: thread.id }),
+                                          });
+                                          if (res?.ok) {
+                                            setReviewReplyDraft(prev => ({ ...prev, [thread.id]: "" }));
+                                            const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
+                                            if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
+                                          }
+                                        }}
+                                        className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                                        Reply
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    ) : null}
+
                     {caseDetailTab === "profile" ? (
                       <div className="mt-3 space-y-3">
                         {/* Identity & Contact */}
@@ -11637,278 +11909,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               </div>
             </div>
           ) : null}
-
-                    {caseDetailTab === "ai" && (
-                      <div className="h-[500px]">
-                        <AiAssistantPanel caseId={selectedCase.id} caseItem={selectedCase} />
-                      </div>
-                    )}
-                    {caseDetailTab === "notes" ? (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <textarea
-                            id="case-note-input"
-                            placeholder="Add an internal note about this case..."
-                            rows={3}
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none resize-none"
-                          />
-                          <div className="flex gap-2">
-                          <button onClick={async () => {
-                            // AI suggests note content
-                            const el = document.getElementById("case-note-input") as HTMLTextAreaElement;
-                            const res = await apiFetch(`/cases/${selectedCase.id}/ai-smart`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"draft_notes"})}).catch(()=>null);
-                            const d = await res?.json().catch(()=>({}));
-                            if (d?.text && el) el.value = d.text;
-                          }} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">
-                            🤖 AI Draft
-                          </button>
-                          <button onClick={async () => {
-                            const el = document.getElementById("case-note-input") as HTMLTextAreaElement;
-                            const text = el?.value?.trim();
-                            if (!text) return;
-                            const res = await apiFetch(`/cases/${selectedCase.id}/notes`, {
-                              method: "POST",
-                              headers: {"Content-Type": "application/json"},
-                              body: JSON.stringify({ text, addedBy: sessionUser?.name })
-                            }).catch(() => null);
-                            if (res?.ok) {
-                              el.value = "";
-                              const d = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
-                              if (d?.notes) setCaseNotes(prev => ({...prev, [selectedCase.id]: d.notes}));
-                              setCaseActionStatus("✅ Note added");
-                              setTimeout(() => setCaseActionStatus(""), 3000);
-                            } else {
-                              setCaseActionStatus("❌ Failed to add note");
-                              setTimeout(() => setCaseActionStatus(""), 3000);
-                            }
-                          }} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700">
-                            + Add Note
-                          </button>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          {(caseNotes[selectedCase.id] || []).length === 0 ? (
-                            <p className="text-xs text-slate-400 text-center py-4">No notes yet — add the first one above</p>
-                          ) : (
-                            [...(caseNotes[selectedCase.id] || [])].reverse().map(note => (
-                              <div key={note.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                                <div className="flex items-center justify-between mb-1">
-                                  <p className="text-xs font-bold text-slate-700">{note.added_by || "Staff"}</p>
-                                  <p className="text-[10px] text-slate-400">{note.created_at ? new Date(note.created_at).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}</p>
-                                </div>
-                                <p className="text-sm text-slate-800 whitespace-pre-wrap">{note.text}</p>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {caseDetailTab === "review" ? (
-                      <div className="space-y-4">
-                        {/* ── Header explanation ── */}
-                        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                          <p className="text-xs text-rose-900 leading-relaxed">
-                            💬 <strong>Review Comments</strong> — for back-and-forth between reviewer and processing staff on this case.
-                            <br/>
-                            New comments + replies email everyone in the thread (assigned staff + lead). Mark a thread <strong>resolved</strong> once fixed.
-                          </p>
-                        </div>
-
-                        {/* ── Compose new review comment ── */}
-                        <div className="rounded-xl border-2 border-slate-200 p-3 bg-white">
-                          <textarea
-                            value={reviewCommentDraft[selectedCase.id] || ""}
-                            onChange={e => setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: e.target.value }))}
-                            placeholder={`Leave a review comment about this case... (e.g. "Q14 answer is wrong, should be No not Yes")`}
-                            rows={3}
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:border-rose-400 leading-relaxed"
-                          />
-                          <div className="flex justify-between items-center mt-2">
-                            <p className="text-[10px] text-slate-400">
-                              {(reviewCommentDraft[selectedCase.id] || "").length} characters · everyone in thread gets emailed
-                            </p>
-                            <button
-                              disabled={(reviewCommentDraft[selectedCase.id] || "").trim().length < 5}
-                              onClick={async () => {
-                                const text = (reviewCommentDraft[selectedCase.id] || "").trim();
-                                if (text.length < 5) return;
-                                const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ body: text }),
-                                });
-                                if (res?.ok) {
-                                  setReviewCommentDraft(prev => ({ ...prev, [selectedCase.id]: "" }));
-                                  // Re-fetch the review list AND the notes list (the
-                                  // change is mirrored into Notes server-side, so refresh
-                                  // both so it shows in both tabs immediately).
-                                  const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
-                                  if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
-                                  const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
-                                  if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
-                                  setCaseActionStatus("✅ Review change added — shows in Notes + Review and notifies the preparer");
-                                } else {
-                                  setCaseActionStatus("❌ Failed to add comment");
-                                }
-                                setTimeout(() => setCaseActionStatus(""), 4000);
-                              }}
-                              className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
-                              + Add Review Comment
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* ── Threads list ── */}
-                        {(() => {
-                          const all = reviewComments[selectedCase.id] || [];
-                          const topLevel = all.filter(c => !c.parent_id);
-                          if (topLevel.length === 0) {
-                            return <p className="text-xs text-slate-400 text-center py-6">No review comments yet</p>;
-                          }
-                          // Sort: open first, then resolved; within group, newest first
-                          const sorted = [...topLevel].sort((a, b) => {
-                            if (a.status !== b.status) return a.status === "open" ? -1 : 1;
-                            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-                          });
-                          return sorted.map(thread => {
-                            const replies = all.filter(c => c.parent_id === thread.id)
-                              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                            const st = thread.status === "resolved" ? "resolved" : thread.status === "addressed" ? "addressed" : "open";
-                            const isResolved = st === "resolved";
-                            // Helper: advance this thread and refresh both Review + Notes.
-                            const setThreadStatus = async (newStatus: string) => {
-                              const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ commentId: thread.id, status: newStatus }),
-                              });
-                              if (res?.ok) {
-                                const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
-                                if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
-                                const nd = await apiFetch(`/cases/${selectedCase.id}/notes`).then(r => r?.json()).catch(() => ({}));
-                                if (nd?.notes) setCaseNotes(prev => ({ ...prev, [selectedCase.id]: nd.notes }));
-                              }
-                            };
-                            const cardBorder = st === "resolved" ? "border-slate-200 bg-slate-50" : st === "addressed" ? "border-amber-300 bg-amber-50" : "border-rose-200 bg-white";
-                            return (
-                              <div key={thread.id}
-                                className={`rounded-xl border-2 ${cardBorder} p-3 space-y-2`}>
-                                {/* Top-level comment */}
-                                <div className="flex justify-between items-start gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                      <span className={`text-[11px] font-bold ${isResolved ? "text-slate-500" : st === "addressed" ? "text-amber-700" : "text-rose-700"}`}>
-                                        {thread.author_name}
-                                      </span>
-                                      {thread.author_role && (
-                                        <span className="text-[9px] uppercase tracking-wide text-slate-400">{thread.author_role}</span>
-                                      )}
-                                      <span className="text-[10px] text-slate-400">
-                                        {new Date(thread.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
-                                      </span>
-                                      {st === "open" && (
-                                        <span className="text-[10px] font-bold text-rose-700 bg-rose-100 rounded-full px-2">● Needs changes</span>
-                                      )}
-                                      {st === "addressed" && (
-                                        <span className="text-[10px] font-bold text-amber-800 bg-amber-200 rounded-full px-2">⏳ Changes done — awaiting review</span>
-                                      )}
-                                      {st === "resolved" && (
-                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2">✓ Resolved</span>
-                                      )}
-                                    </div>
-                                    <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-800"}`}>{thread.body}</p>
-                                  </div>
-                                  <div className="shrink-0 flex flex-col gap-1">
-                                    {/* OPEN → preparer confirms the fix */}
-                                    {st === "open" && (
-                                      <button onClick={() => void setThreadStatus("addressed")}
-                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200">
-                                        ✓ Mark changes done
-                                      </button>
-                                    )}
-                                    {/* ADDRESSED → reviewer verifies & closes, or sends back */}
-                                    {st === "addressed" && (
-                                      <>
-                                        <button onClick={() => void setThreadStatus("resolved")}
-                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
-                                          ✓ Verify &amp; close
-                                        </button>
-                                        <button onClick={() => void setThreadStatus("open")}
-                                          className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-rose-100 text-rose-700 hover:bg-rose-200">
-                                          ↩ Send back
-                                        </button>
-                                      </>
-                                    )}
-                                    {/* RESOLVED → reviewer can reopen */}
-                                    {st === "resolved" && (
-                                      <button onClick={() => void setThreadStatus("open")}
-                                        className="rounded-lg px-2.5 py-1 text-[10px] font-bold bg-slate-200 text-slate-700 hover:bg-slate-300">
-                                        ↩ Re-open
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Replies */}
-                                {replies.length > 0 && (
-                                  <div className="ml-4 pl-3 border-l-2 border-slate-200 space-y-2">
-                                    {replies.map(reply => (
-                                      <div key={reply.id}>
-                                        <div className="flex items-center gap-2 mb-0.5">
-                                          <span className="text-[11px] font-bold text-blue-700">{reply.author_name}</span>
-                                          {reply.author_role && (
-                                            <span className="text-[9px] uppercase tracking-wide text-slate-400">{reply.author_role}</span>
-                                          )}
-                                          <span className="text-[10px] text-slate-400">
-                                            {new Date(reply.created_at).toLocaleString("en-CA", { dateStyle: "short", timeStyle: "short" })}
-                                          </span>
-                                        </div>
-                                        <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-700"}`}>{reply.body}</p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {/* Reply box (only show on open threads) */}
-                                {!isResolved && (
-                                  <div className="ml-4 pl-3 border-l-2 border-slate-100">
-                                    <textarea
-                                      value={reviewReplyDraft[thread.id] || ""}
-                                      onChange={e => setReviewReplyDraft(prev => ({ ...prev, [thread.id]: e.target.value }))}
-                                      placeholder="Reply..."
-                                      rows={2}
-                                      className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400 leading-relaxed"
-                                    />
-                                    <div className="flex justify-end mt-1">
-                                      <button
-                                        disabled={(reviewReplyDraft[thread.id] || "").trim().length < 2}
-                                        onClick={async () => {
-                                          const text = (reviewReplyDraft[thread.id] || "").trim();
-                                          if (text.length < 2) return;
-                                          const res = await apiFetch(`/cases/${selectedCase.id}/review-comments`, {
-                                            method: "POST",
-                                            headers: { "Content-Type": "application/json" },
-                                            body: JSON.stringify({ body: text, parentId: thread.id }),
-                                          });
-                                          if (res?.ok) {
-                                            setReviewReplyDraft(prev => ({ ...prev, [thread.id]: "" }));
-                                            const d = await apiFetch(`/cases/${selectedCase.id}/review-comments`).then(r => r?.json()).catch(() => ({}));
-                                            if (d?.comments) setReviewComments(prev => ({ ...prev, [selectedCase.id]: d.comments }));
-                                          }
-                                        }}
-                                        className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                        Reply
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    ) : null}
 
           </div>
         </main>
