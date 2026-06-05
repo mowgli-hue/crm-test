@@ -2605,8 +2605,12 @@ export async function fulfillCaseDocRequest(input: {
 
 export async function listTasks(companyId: string, caseId?: string): Promise<TaskItem[]> {
   const store = await readStore();
+  // Single-firm deployment: match by caseId only (companyId intentionally not
+  // enforced). Staff/cases drifted between "CMP-1" and "newton", which hid tasks
+  // from teammates whose account carried the other id. caseId/assignment is the
+  // real scope here.
   return store.tasks
-    .filter((t) => t.companyId === companyId && (!caseId || t.caseId === caseId))
+    .filter((t) => (!caseId || t.caseId === caseId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -2720,9 +2724,13 @@ export async function updateTaskStatus(
 
 export async function listNotifications(companyId: string, userId: string): Promise<NotificationItem[]> {
   const store = await readStore();
-  const currentUser = store.users.find((u) => u.companyId === companyId && u.id === userId) || null;
+  // Match by userId only (not companyId). A notification is created with the
+  // ACTOR's companyId but addressed to the recipient's userId; if their company
+  // ids differ (the CMP-1/newton drift), a companyId filter hid the recipient's
+  // own notifications. userId is globally unique, so this is the correct scope.
+  const currentUser = store.users.find((u) => u.id === userId) || null;
   const saved = store.notifications
-    .filter((n) => n.companyId === companyId && n.userId === userId)
+    .filter((n) => n.userId === userId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const now = Date.now();
   const urgent = store.cases
