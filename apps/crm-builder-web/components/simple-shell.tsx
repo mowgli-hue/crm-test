@@ -8,6 +8,7 @@ import SubmittedAppsImport from "@/components/submitted-apps-import";
 import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
+import ReviewItemsPanel from "@/components/review-items-panel";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
@@ -5305,6 +5306,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
             </div>
           ) : screen === "dashboard" ? (
             <>
+              {/* Persistent review action-items (only renders when you have any) */}
+              {sessionUser?.userType === "staff" && (
+                <div className="mb-4">
+                  <ReviewItemsPanel onOpenCase={(cid) => { setSelectedCaseId(cid); setCaseDetailTab("review"); setScreen("cases"); }} />
+                </div>
+              )}
               {/* ── Role-aware personal workspace ── */}
               {(() => {
                 const myName = sessionUser?.name || "";
