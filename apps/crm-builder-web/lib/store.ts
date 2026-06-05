@@ -2031,6 +2031,25 @@ export async function listAllCases(): Promise<CaseItem[]> {
   return store.cases.slice();
 }
 
+// When a team member is removed (deactivated), move every case still assigned to
+// them to "Unassigned" so nothing is left orphaned under a removed name. Matches
+// by display name (case/space-insensitive), company-agnostic. Returns the count.
+export async function unassignCasesForUser(userName: string): Promise<number> {
+  const norm = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const target = norm(userName);
+  if (!target) return 0;
+  return mutateStore((store) => {
+    let n = 0;
+    for (const c of store.cases) {
+      if (norm((c as any).assignedTo) === target) {
+        (c as any).assignedTo = "Unassigned";
+        n++;
+      }
+    }
+    return n;
+  });
+}
+
 export async function syncNewtonTeamUsers(companyId: string): Promise<{ created: number; updated: number }> {
   const store = await readStore();
   let created = 0;

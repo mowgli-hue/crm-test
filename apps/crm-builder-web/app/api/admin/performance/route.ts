@@ -109,6 +109,21 @@ export async function GET(request: NextRequest) {
   const REVIEWER_ROLES = new Set(["reviewer", "processinglead"]);
   const staff = await listAllStaff();
 
+  // Removed (deactivated) staff should not appear on the board at all. Build a
+  // name set (full + first name) so assignee variants also drop off.
+  const inactiveNames = new Set<string>();
+  for (const s of staff) {
+    if ((s as any).active === false) {
+      const n = String(s.name || "").toLowerCase().replace(/\s+/g, " ").trim();
+      if (n) { inactiveNames.add(n); inactiveNames.add(n.split(" ")[0]); }
+    }
+  }
+  const isInactive = (name: string) => {
+    const n = String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
+    return Boolean(n) && (inactiveNames.has(n) || inactiveNames.has(n.split(" ")[0]));
+  };
+  const isHidden = (name: string) => isExcluded(name) || isInactive(name);
+
   // Canonicalize an assignee name onto the real staff account so name variants
   // (full name vs lowercase first name) collapse to ONE row instead of dupes
   // like "Sukhman Kaur" AND "sukhman".
@@ -137,11 +152,11 @@ export async function GET(request: NextRequest) {
     caseToPreparer.set(cid, canonical(who));
   }
   const reviewerNames = new Set(
-    staff.filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isExcluded(s.name))
+    staff.filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isHidden(s.name))
       .map((s) => String(s.name || "").toLowerCase().trim())
   );
   const reviewerList = staff
-    .filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isExcluded(s.name))
+    .filter((s) => REVIEWER_ROLES.has(String(s.role || "").toLowerCase()) && !isHidden(s.name))
     .map((s) => s.name);
   const isReviewerFlag = (cm: { author_role?: string; author_name?: string }) =>
     REVIEWER_ROLES.has(String(cm.author_role || "").toLowerCase()) ||
@@ -153,7 +168,7 @@ export async function GET(request: NextRequest) {
   // Seed every Processing / ProcessingLead staffer at zero so a clean record
   // shows — but skip the excluded (non-preparer) accounts.
   for (const s of staff) {
-    if (isExcluded(s.name)) continue;
+    if (isHidden(s.name)) continue;
     if (["Processing", "ProcessingLead"].includes(s.role)) {
       const r = ensureRow(s.name, s.role);
       r.role = s.role;
@@ -165,7 +180,7 @@ export async function GET(request: NextRequest) {
   // "Processing", or they're tracked only by the name on the case. Excluded
   // accounts are still skipped.
   for (const who of new Set(caseToPreparer.values())) {
-    if (isExcluded(who)) continue;
+    if (isHidden(who)) continue;
     const r = ensureRow(who);
     if (!r.role) r.role = roleByName.get(who.toLowerCase().trim()) || "";
   }
@@ -176,7 +191,7 @@ export async function GET(request: NextRequest) {
     if (!isReviewerFlag(cm)) continue;
     const preparer = caseToPreparer.get(cm.case_id);
     if (!preparer) continue; // comment on an unassigned/unknown case
-    if (isExcluded(preparer)) continue; // don't rank excluded accounts
+    if (isHidden(preparer)) continue; // don't rank excluded or removed accounts
     const r = ensureRow(preparer);
     r.errors += 1;
     r.flaggedCases.add(cm.case_id);
@@ -199,7 +214,7 @@ export async function GET(request: NextRequest) {
   }
 
   const rows = Array.from(byName.values())
-    .filter((r) => !isExcluded(r.name))
+    .filter((r) => !isHidden(r.name))
     .map((r) => ({
       name: r.name,
       role: r.role,

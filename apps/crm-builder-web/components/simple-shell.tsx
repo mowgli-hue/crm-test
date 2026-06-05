@@ -806,6 +806,7 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const [teamEmail, setTeamEmail] = useState("");
   const [teamRole, setTeamRole] = useState<Role>("Processing");
   const [teamPassword, setTeamPassword] = useState("");
+  const [showInactiveTeam, setShowInactiveTeam] = useState(false);
   const [teamDriveLink, setTeamDriveLink] = useState("");
   const [teamStatus, setTeamStatus] = useState("");
   const [teamPasswordDrafts, setTeamPasswordDrafts] = useState<Record<string, string>>({});
@@ -4017,7 +4018,16 @@ We will notify you as soon as we receive a decision. This usually takes a few we
     }
     const updated = payload.user as TeamUserItem;
     setTeamUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, active: updated.active } : u)));
-    setTeamStatus(`${updated.name} is now ${updated.active === false ? "inactive" : "active"}.`);
+    if (updated.active === false) {
+      const n = Number(payload.casesUnassigned || 0);
+      setTeamStatus(`${updated.name} removed — hidden from the team, performance board, and assignment lists.${n > 0 ? ` ${n} case${n === 1 ? "" : "s"} set to Unassigned.` : ""}`);
+      // Reflect the unassigned cases locally.
+      if (n > 0) {
+        setCases((prev) => prev.map((c) => (String(c.assignedTo || "").toLowerCase().trim() === updated.name.toLowerCase().trim() ? { ...c, assignedTo: "Unassigned" } as any : c)));
+      }
+    } else {
+      setTeamStatus(`${updated.name} reactivated.`);
+    }
   }
 
   async function resetTeamMemberPassword(userId: string) {
@@ -6429,13 +6439,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   {/* ── Staff profiles ── */}
                   {teamUsers.filter((u) => u.id).length > 0 && (
                     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                      <div className="border-b border-slate-100 px-5 py-4">
-                        <p className="text-sm font-semibold text-slate-900">Staff Profiles</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Click any member to view their cases, performance, and leave team notes.</p>
+                      <div className="border-b border-slate-100 px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Staff Profiles</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Click any member to view their cases, performance, and leave team notes.</p>
+                        </div>
+                        {teamUsers.filter((u) => u.id && u.active === false).length > 0 && (
+                          <button
+                            onClick={() => setShowInactiveTeam((v) => !v)}
+                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                          >
+                            {showInactiveTeam ? "Hide removed" : `Show removed (${teamUsers.filter((u) => u.id && u.active === false).length})`}
+                          </button>
+                        )}
                       </div>
 
                       <div className="divide-y divide-slate-100">
-                        {teamUsers.filter((u) => u.id).map((member) => {
+                        {teamUsers.filter((u) => u.id && (showInactiveTeam || u.active !== false)).map((member) => {
                           const memberCases = cases.filter((c) => String(c.assignedTo || "").toLowerCase() === member.name.toLowerCase());
                           const urgentCount = memberCases.filter((c) => isUrgentCase(c)).length;
                           const isOpen = staffProfileUserId === member.id;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { getUserById, setUserActive } from "@/lib/store";
+import { getUserById, setUserActive, unassignCasesForUser } from "@/lib/store";
 
 export async function PATCH(
   request: NextRequest,
@@ -25,7 +25,17 @@ export async function PATCH(
 
   const updated = await setUserActive(user.companyId, params.id, body.active);
   if (!updated) return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+  // On removal (deactivate), pull them off all their cases so nothing is left
+  // assigned to a removed person. Reactivating does NOT auto-restore assignments.
+  let casesUnassigned = 0;
+  if (body.active === false) {
+    try { casesUnassigned = await unassignCasesForUser(updated.name); }
+    catch (e) { console.error("unassignCasesForUser failed (non-fatal):", (e as Error).message); }
+  }
+
   return NextResponse.json({
+    casesUnassigned,
     user: {
       id: updated.id,
       name: updated.name,
