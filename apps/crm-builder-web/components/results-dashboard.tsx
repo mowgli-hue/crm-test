@@ -199,12 +199,25 @@ export default function ResultsDashboard({ results, cases, onScrollToList }: Pro
       (r) => !r.informedToClient && (r.outcome === "approved" || r.outcome === "request_letter")
     ).length;
 
+    // OVERALL (all-time) approval rate — most of the firm's results are bulk
+    // historical uploads with old IRCC decision dates, so a "this month" rate
+    // reads as zero even when there are hundreds of approvals. The headline tile
+    // shows this overall number so it always reflects the actual results.
+    const allDecided = annotated.filter((r) => r.outcome === "approved" || r.outcome === "refused");
+    const allApproved = allDecided.filter((r) => r.outcome === "approved");
+    const overallApprovalRate = allDecided.length > 0
+      ? Math.round((allApproved.length / allDecided.length) * 100)
+      : null;
+
     return {
       thisMonthApprovalRate,
       lastMonthApprovalRate,
       trendDelta,
       thisMonthApproved: thisMonthApproved.length,
       thisMonthDecided: thisMonthDecided.length,
+      overallApprovalRate,
+      overallApproved: allApproved.length,
+      overallDecided: allDecided.length,
       pendingDecisions,
       winsThisWeek,
       refusalsThisWeek,
@@ -297,27 +310,29 @@ export default function ResultsDashboard({ results, cases, onScrollToList }: Pro
            HERO METRICS — 4 big stat cards
          ════════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Approval rate this month */}
+        {/* Approval rate — OVERALL (all results), so it reflects actual data even
+            when this month's decisions are zero (most results are historical). */}
         <MetricCard
           label="Approval Rate"
-          subtitle="this month"
+          subtitle="overall"
           value={
-            metrics.thisMonthApprovalRate !== null
-              ? `${metrics.thisMonthApprovalRate}%`
+            metrics.overallApprovalRate !== null
+              ? `${metrics.overallApprovalRate}%`
               : "—"
           }
           subValue={
-            metrics.thisMonthDecided > 0
-              ? `${metrics.thisMonthApproved} of ${metrics.thisMonthDecided} decisions`
+            metrics.overallDecided > 0
+              ? `${metrics.overallApproved} of ${metrics.overallDecided} decisions` +
+                (metrics.thisMonthDecided > 0 ? ` · ${metrics.thisMonthApprovalRate}% this month` : "")
               : "no decisions yet"
           }
           trendDelta={metrics.trendDelta}
           gradient="from-emerald-50 to-teal-50"
           accent="emerald"
           emoji={
-            metrics.thisMonthApprovalRate !== null && metrics.thisMonthApprovalRate >= 80
+            metrics.overallApprovalRate !== null && metrics.overallApprovalRate >= 80
               ? "🎯"
-              : metrics.thisMonthApprovalRate !== null && metrics.thisMonthApprovalRate >= 60
+              : metrics.overallApprovalRate !== null && metrics.overallApprovalRate >= 60
               ? "👍"
               : "📊"
           }
