@@ -344,6 +344,17 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
           companyId: user.companyId, userId: notifyUserId, type: "review_comment",
           message: notifyMsg, link: `/?case=${encodeURIComponent(params.id)}#review-comments`,
         }).catch(() => {});
+        // Also email the recipient when SMTP is configured (reliable out-of-app).
+        try {
+          const recip = allUsers.find((u: any) => u.id === notifyUserId);
+          if (recip?.email && isEmailConfigured()) {
+            await sendEmail({
+              to: [recip.email],
+              subject: `[Newton CRM] Review update — ${client} (${params.id})`,
+              html: `<p>${notifyMsg}</p><p>Open the case in the CRM and go to the <strong>Review</strong> tab to act on it.</p>`,
+            });
+          }
+        } catch { /* non-fatal */ }
       }
       await pool.query(
         `CREATE TABLE IF NOT EXISTS case_notes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, company_id TEXT NOT NULL, text TEXT NOT NULL, added_by TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
