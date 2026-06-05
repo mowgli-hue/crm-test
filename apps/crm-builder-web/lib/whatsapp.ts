@@ -44,6 +44,10 @@ export async function sendWhatsAppTemplate(params: {
   const phone = normalizeWhatsAppPhone(params.to);
   if (!phone || phone.length < 10) return { success: false, error: "Invalid phone number" };
 
+  // 15s hard timeout — same as sendWhatsAppText. Without it a hung Meta API call
+  // can stall a webhook handler past Meta's retry window → duplicate sends / 502s.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     console.log(`📤 WA Template Send: to=${phone} | phoneId=${phoneId ? phoneId.slice(0,6)+"..." : "MISSING"} | template=${params.templateName} | lang=${params.languageCode} | hasParams=${(params.components?.length || 0) > 0}`);
     const res = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
@@ -59,15 +63,19 @@ export async function sendWhatsAppTemplate(params: {
           language: { code: params.languageCode },
           ...(params.components && params.components.length > 0 ? { components: params.components } : {})
         }
-      })
+      }),
+      signal: controller.signal,
     });
     const data = await res.json() as { messages?: { id: string }[]; error?: { message: string } };
     console.log(`📬 WA Template response: status=${res.status} | ${JSON.stringify(data).slice(0,150)}`);
     if (!res.ok) return { success: false, error: data?.error?.message || "API error" };
     return { success: true, messageId: data?.messages?.[0]?.id };
   } catch (err) {
+    const isTimeout = (err as Error)?.name === "AbortError" || String(err).includes("aborted");
     console.error("WA template send error:", err);
-    return { success: false, error: String(err) };
+    return { success: false, error: isTimeout ? "Network timeout — Meta API unreachable" : String(err) };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

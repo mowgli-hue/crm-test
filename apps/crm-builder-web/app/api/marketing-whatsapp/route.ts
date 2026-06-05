@@ -482,6 +482,10 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
   //   • Don't promise specific timing ("1 business day", "2 weeks", etc.)
   //   • WhatsApp calls NOT available — always direct calls to +1 604-653-5031
   //   • All docs sent later go to Processing Team WhatsApp +1 604-779-5700
+  const __aiCtrl = new AbortController();
+  const __aiTimer = setTimeout(() => __aiCtrl.abort(), 22000);
+  let reply = "Thank you for contacting Newton Immigration! 🍁 How can we help you today?";
+  try {
   const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -1101,13 +1105,18 @@ RESPONSE FORMAT: Reply ONLY with the WhatsApp message to send. No JSON, no pream
       messages: convo.length > 0
         ? convo
         : [...(sessionData.history || []).slice(-8), { role: "user", content: message }]
-    })
+    }),
+    signal: __aiCtrl.signal,
   });
 
-  let reply = "Thank you for contacting Newton Immigration! 🍁 How can we help you today?";
   if (aiRes.ok) {
     const aiData = await aiRes.json() as any;
     reply = aiData.content?.[0]?.text || reply;
+  }
+  } catch (e) {
+    console.error("Marketing AI call failed/timed out:", (e as Error).message);
+  } finally {
+    clearTimeout(__aiTimer);
   }
 
   // ── Compliance safety net ──
