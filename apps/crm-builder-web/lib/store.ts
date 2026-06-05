@@ -1768,7 +1768,7 @@ export async function updateCaseFinancials(
   id: string,
   patch: Partial<CaseItem["servicePackage"]>
 ): Promise<CaseItem | null> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
   const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
@@ -1794,12 +1794,12 @@ export async function updateCaseFinancials(
     },
     balanceAmount: remaining
   };
-  await writeStore(store);
   return store.cases[idx];
+  });
 }
 
 export async function recordCasePayment(companyId: string, id: string, amount: number): Promise<CaseItem | null> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
   const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
@@ -1832,8 +1832,8 @@ export async function recordCasePayment(companyId: string, id: string, amount: n
       balanceAmount: remaining
     }
   };
-  await writeStore(store);
   return store.cases[idx];
+  });
 }
 
 export async function updateCaseLinks(
@@ -1939,7 +1939,7 @@ export async function addInvoice(
   title: string,
   amount: number
 ): Promise<CaseItem | null> {
-  const store = await readStore();
+  return mutateStore(async (store) => {
   const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
@@ -1951,7 +1951,9 @@ export async function addInvoice(
   };
   const currentInvoices = current.invoices ?? [];
   const invoice = {
-    id: `INV-${1000 + currentInvoices.length + 1}`,
+    // Unique ID — the old `INV-(length+1)` scheme collided when invoices were
+    // added concurrently or after one was removed (two invoices, same number).
+    id: `INV-${randomUUID().slice(0, 8).toUpperCase()}`,
     title,
     amount,
     status: "sent" as const,
@@ -1967,8 +1969,8 @@ export async function addInvoice(
     },
     balanceAmount: Number(current.balanceAmount || 0) + amount
   };
-  await writeStore(store);
   return store.cases[idx];
+  });
 }
 
 // Update a user's email in place. Match by exact name OR by current email
