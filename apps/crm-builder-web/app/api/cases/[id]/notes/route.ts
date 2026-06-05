@@ -25,11 +25,37 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   // single-firm deployment, and staff accounts have drifted between two company
   // IDs ("CMP-1" vs "newton") over time — filtering by company_id made one
   // teammate's notes invisible to another. case_id alone fixes that.
-  const res = await pool.query(
-    `SELECT * FROM case_notes WHERE case_id = $1 ORDER BY created_at ASC`,
+  //
+  // We also merge in REVIEW CHANGES (top-level review comments) directly, so the
+  // Notes tab ALWAYS shows them regardless of whether they were added before or
+  // after the review→Notes mirror feature shipped. We skip the mirror's own
+  // copies (id starts with 'NOTE-rc-') to avoid showing each change twice.
+  const notesRes = await pool.query(
+    `SELECT id, text, added_by, created_at FROM case_notes
+      WHERE case_id = $1 AND id NOT LIKE 'NOTE-rc-%'`,
     [params.id]
   );
-  return NextResponse.json({ notes: res.rows });
+  const rows: Array<{ id: string; text: string; added_by: string; created_at: string }> = notesRes.rows as any;
+
+  try {
+    const rc = await pool.query(
+      `SELECT id, body, author_name, created_at FROM review_comments
+        WHERE case_id = $1 AND parent_id IS NULL
+        ORDER BY created_at ASC`,
+      [params.id]
+    );
+    for (const r of rc.rows as any[]) {
+      rows.push({
+        id: `rc-${r.id}`,
+        text: `🔎 Review change: ${r.body}`,
+        added_by: r.author_name || "Reviewer",
+        created_at: r.created_at,
+      });
+    }
+  } catch { /* review_comments table may not exist yet — ignore */ }
+
+  rows.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  return NextResponse.json({ notes: rows });
 }
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
