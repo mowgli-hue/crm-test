@@ -74,6 +74,9 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Track the last time a HUMAN staffer replied in a thread, so the bot can
+  // back off and not talk over them. (ADD COLUMN IF NOT EXISTS is idempotent.)
+  await pool.query(`ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS last_human_reply_at TIMESTAMPTZ`);
 }
 
 // ── Output safety net (compliance) ──
@@ -371,6 +374,27 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
 
   // Check if AI auto-reply is disabled for this thread
   const lead = await getLead(phone);
+
+  // Pause the bot if a HUMAN staffer replied to this thread recently — don't
+  // talk over them. (30-minute cool-off; staff still get notified below.)
+  const HUMAN_COOLOFF_MS = 30 * 60 * 1000;
+  const lastHuman = lead?.last_human_reply_at ? new Date(lead.last_human_reply_at).getTime() : 0;
+  if (lastHuman && Date.now() - lastHuman < HUMAN_COOLOFF_MS) {
+    console.log(`🤝 Human replied to ${phone} recently — bot staying quiet`);
+    try {
+      const { addNotification, listUsers } = await import("@/lib/store");
+      const users = await listUsers(COMPANY_ID);
+      const recipients = users.filter((u: any) => ["Admin", "Marketing", "ProcessingLead"].includes(u.role));
+      for (const r of recipients.slice(0, 3)) {
+        await addNotification({
+          companyId: COMPANY_ID, userId: r.id, type: "ai_alert",
+          message: `📣 ${contactName || phone} replied (you're handling this chat): "${message.slice(0, 50)}${message.length > 50 ? "..." : ""}"`,
+        });
+      }
+    } catch { /* non-fatal */ }
+    return;
+  }
+
   if (lead && lead.ai_enabled === false) {
     console.log(`🤚 AI disabled for ${phone} — staff handles manually`);
     // Still notify staff in CRM so they see the message

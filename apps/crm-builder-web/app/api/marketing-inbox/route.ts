@@ -315,12 +315,15 @@ export async function POST(request: NextRequest) {
       [String(phone).replace(/\D/g, "").slice(-9)]
     );
 
-    // Auto-advance lead stage from "new" -> "contacted" once staff replies
+    // Auto-advance lead stage from "new" -> "contacted" once staff replies, AND
+    // stamp last_human_reply_at so the bot backs off (won't talk over staff).
+    await pool.query(`ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS last_human_reply_at TIMESTAMPTZ`).catch(() => {});
     await pool.query(
-      `INSERT INTO marketing_leads (phone, stage, updated_at)
-       VALUES ($1, 'contacted', NOW())
+      `INSERT INTO marketing_leads (phone, stage, updated_at, last_human_reply_at)
+       VALUES ($1, 'contacted', NOW(), NOW())
        ON CONFLICT (phone) DO UPDATE
          SET stage = CASE WHEN marketing_leads.stage = 'new' THEN 'contacted' ELSE marketing_leads.stage END,
+             last_human_reply_at = NOW(),
              updated_at = NOW()`,
       [phone]
     );
