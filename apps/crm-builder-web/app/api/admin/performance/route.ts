@@ -79,6 +79,34 @@ export async function GET(request: NextRequest) {
     console.error("[performance] review_comments read failed:", (e as Error).message);
   }
 
+  // ALSO count the team's "⚠️ CHANGES NEEDED" flags — these are raised via the
+  // Under-Review panel and saved as case_notes (NOT review_comments). Each one is
+  // a round of changes a reviewer sent back, so it counts as an error on the
+  // board the same way. (The review→notes mirror uses a different prefix, so
+  // there's no double-counting.)
+  try {
+    const res2 = await pool.query(
+      `SELECT case_id, created_at, added_by, text
+         FROM case_notes
+        WHERE text LIKE '⚠️ CHANGES NEEDED%'
+          AND created_at >= $1 AND created_at < $2`,
+      [start, end]
+    );
+    for (const r of res2.rows as any[]) {
+      const clean = String(r.text || "").replace(/^⚠️ CHANGES NEEDED \(by [^)]*\):\s*/u, "").trim();
+      comments.push({
+        case_id: r.case_id,
+        created_at: r.created_at,
+        author_name: r.added_by || "Reviewer",
+        author_role: "Reviewer",          // raised by a reviewer by design
+        body: clean || String(r.text || ""),
+        status: "open",
+      });
+    }
+  } catch (e) {
+    console.error("[performance] case_notes CHANGES NEEDED read failed:", (e as Error).message);
+  }
+
   // Map case → assigned preparer (company-agnostic) + client name for display.
   const cases = await listAllCases();
   const caseToPreparer = new Map<string, string>();
