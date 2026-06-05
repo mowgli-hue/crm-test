@@ -7450,6 +7450,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     <p className={`text-sm whitespace-pre-wrap ${isResolved ? "text-slate-500" : "text-slate-800"}`}>{thread.body}</p>
                                   </div>
                                   <div className="shrink-0 flex flex-col gap-1">
+                                    {String(thread.id).startsWith("cn-") ? (
+                                      /* Read-only entry from the Under-Review panel — manage it there */
+                                      <span className="rounded-lg px-2 py-1 text-[9px] font-semibold text-slate-400 border border-slate-200 text-center">via Under-Review panel</span>
+                                    ) : (<>
                                     {/* OPEN → preparer confirms the fix */}
                                     {st === "open" && (
                                       <button onClick={() => void setThreadStatus("addressed")}
@@ -7477,6 +7481,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                         ↩ Re-open
                                       </button>
                                     )}
+                                    </>)}
                                   </div>
                                 </div>
 
@@ -7500,8 +7505,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   </div>
                                 )}
 
-                                {/* Reply box (only show on open threads) */}
-                                {!isResolved && (
+                                {/* Reply box (open threads only; not for read-only Under-Review entries) */}
+                                {!isResolved && !String(thread.id).startsWith("cn-") && (
                                   <div className="ml-4 pl-3 border-l-2 border-slate-100">
                                     <textarea
                                       value={reviewReplyDraft[thread.id] || ""}

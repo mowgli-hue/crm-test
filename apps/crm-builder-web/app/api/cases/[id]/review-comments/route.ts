@@ -136,7 +136,41 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
      ORDER BY created_at ASC`,
     [params.id]
   );
-  return NextResponse.json({ comments: r.rows });
+  const comments: any[] = [...r.rows];
+
+  // ALSO surface the team's "⚠️ CHANGES NEEDED" flags here. Those are raised via
+  // the Under-Review panel and stored as case_notes, so the Review tab would
+  // otherwise look empty even though the reviewer sent changes. We add them as
+  // read-only review entries (id 'cn-…') so both flows show in one place. Status
+  // is 'addressed' if a later "✅ Changes done" note exists for the case.
+  try {
+    const nr = await pool.query(
+      `SELECT id, text, added_by, created_at FROM case_notes
+        WHERE case_id = $1 AND (text LIKE '⚠️ CHANGES NEEDED%' OR text LIKE '✅ Changes done%')
+        ORDER BY created_at ASC`,
+      [params.id]
+    );
+    const doneAfter = (ts: string) =>
+      (nr.rows as any[]).some((x) => String(x.text || "").startsWith("✅ Changes done") && new Date(x.created_at) > new Date(ts));
+    for (const n of nr.rows as any[]) {
+      if (!String(n.text || "").startsWith("⚠️ CHANGES NEEDED")) continue;
+      const body = String(n.text || "").replace(/^⚠️ CHANGES NEEDED \(by [^)]*\):\s*/u, "").trim();
+      comments.push({
+        id: `cn-${n.id}`,
+        case_id: params.id,
+        parent_id: null,
+        body: body || n.text,
+        author_name: n.added_by || "Reviewer",
+        author_role: "Reviewer",
+        status: doneAfter(n.created_at) ? "addressed" : "open",
+        created_at: n.created_at,
+        source: "under_review_panel", // read-only; managed from the Under-Review panel
+      });
+    }
+  } catch { /* case_notes may not exist yet */ }
+
+  comments.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  return NextResponse.json({ comments });
 }
 
 // ─── POST: add new comment OR reply ───
