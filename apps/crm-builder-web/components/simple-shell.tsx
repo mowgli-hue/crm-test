@@ -5860,6 +5860,30 @@ We will notify you as soon as we receive a decision. This usually takes a few we
           {screen === "settings" ? (
             <>
               {(sessionUser?.role === "Admin") && <AlertRecipientsManager />}
+              {(sessionUser?.role === "Admin") && (
+                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 bg-slate-900">
+                    <h2 className="text-base font-bold text-white">✉️ Email (SMTP) test</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Check that Gmail is configured so review-flow + result emails actually send.</p>
+                  </div>
+                  <div className="p-5 flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={async () => {
+                        setTeamStatus("Sending test email…");
+                        const res = await apiFetch("/admin/test-email", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) }).catch(()=>null);
+                        const d = await res?.json().catch(()=>({}));
+                        if (d?.ok) alert(`✅ ${d.message || "Test email sent."}`);
+                        else alert(`❌ Email NOT working: ${d?.error || "unknown error"}`);
+                        setTeamStatus("");
+                      }}
+                      className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700"
+                    >
+                      Send test email to me
+                    </button>
+                    <span className="text-[11px] text-slate-400">Sends to your account email ({sessionUser?.email || "—"}). Check inbox + spam.</span>
+                  </div>
+                </div>
+              )}
               {(sessionUser?.role === "Admin") && <OfficeVoiceManager />}
               {(sessionUser?.role === "Admin") && <SubmittedAppsImport />}
               <section className="rounded-xl border border-slate-200 bg-white p-5">
