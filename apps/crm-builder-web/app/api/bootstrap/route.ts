@@ -41,7 +41,12 @@ export async function POST(request: NextRequest) {
 
     const companyId = process.env.DEFAULT_COMPANY_ID || "newton";
     const email = (body.email || "newtonimmigration@gmail.com").toLowerCase().trim();
-    const password = body.password || "Newton2024!";
+    // Require an explicit password — never seed a privileged admin with a known
+    // hardcoded default ("Newton2024!" was a guessable backdoor).
+    const password = String(body.password || "").trim();
+    if (password.length < 8) {
+      return NextResponse.json({ error: "A password (min 8 chars) is required to bootstrap an admin." }, { status: 400 });
+    }
     const name = body.name || "Admin User";
 
     // Hash password using app security module

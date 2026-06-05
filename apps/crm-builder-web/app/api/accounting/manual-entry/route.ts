@@ -75,6 +75,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (user.userType !== "staff" || user.role !== "Admin") {
+    return NextResponse.json({ error: "Forbidden — Admin only (accounting)" }, { status: 403 });
+  }
 
   const body = await request.json().catch(() => ({}));
   const paymentDate = String(body?.payment_date || body?.paymentDate || "").trim();
@@ -112,6 +115,9 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (user.userType !== "staff" || user.role !== "Admin") {
+    return NextResponse.json({ error: "Forbidden — Admin only (accounting)" }, { status: 403 });
+  }
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });

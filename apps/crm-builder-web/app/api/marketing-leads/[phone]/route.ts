@@ -44,6 +44,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { phone:
 export async function DELETE(request: NextRequest, { params }: { params: { phone: string } }) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Deleting a lead is destructive — restrict to Admin / Marketing / ProcessingLead.
+  if (user.userType !== "staff" || !["Admin", "Marketing", "ProcessingLead"].includes(user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const phone = decodeURIComponent(params.phone).replace(/\s+/g, "");
   try {
