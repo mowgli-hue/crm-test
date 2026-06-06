@@ -2438,6 +2438,20 @@ export async function addLegacyResult(input: {
     if (sub?.phone) lookupPhone = sub.phone;
   }
 
+  // Match by PHONE second — a phone number is a real, unique identifier (names
+  // collide, phones don't). Compare on the last 10 digits so country-code /
+  // formatting differences (+1, spaces, dashes) don't cause a miss. Only used
+  // when the app-number match didn't already nail it.
+  const phoneDigits = (v: string) => String(v || "").replace(/\D/g, "");
+  const inputPhoneTail = phoneDigits(lookupPhone).slice(-10);
+  const matchByPhone = !matchByAppNo && inputPhoneTail.length >= 10
+    ? store.cases.find(
+        (c) =>
+          c.companyId === input.companyId &&
+          phoneDigits(String(c.leadPhone || "")).slice(-10) === inputPhoneTail
+      ) ?? null
+    : null;
+
   // Fallback: match by client name. Loose substring matching ("includes") +
   // first()-match used to grab the WRONG/older case for common names. Now: collect
   // candidates, prefer an EXACT full-name match, and among ties pick the MOST
@@ -2446,7 +2460,7 @@ export async function addLegacyResult(input: {
   const inputName = String(input.clientName || "").trim().toLowerCase().replace(/\s+/g, " ");
   const inputFirstName = inputName.split(" ")[0];
   let matchByName: CaseItem | null = null;
-  if (!matchByAppNo && inputName.length > 2) {
+  if (!matchByAppNo && !matchByPhone && inputName.length > 2) {
     const mostRecent = (list: CaseItem[]) =>
       list.slice().sort((a, b) =>
         String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))
@@ -2465,7 +2479,7 @@ export async function addLegacyResult(input: {
     }
   }
 
-  const matchedCase = forcedCase ?? matchByAppNo ?? matchByName ?? null;
+  const matchedCase = forcedCase ?? matchByAppNo ?? matchByPhone ?? matchByName ?? null;
 
   // If we matched by name and have an app number, save it to the case
   if (matchByName && appNo && !matchByName.applicationNumber) {

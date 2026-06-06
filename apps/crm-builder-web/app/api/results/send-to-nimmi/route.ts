@@ -103,9 +103,18 @@ export async function POST(request: NextRequest) {
     const cases = await listCases(user.companyId);
     const normApp = (s: string) => String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
     const normName = (s: string) => String(s || "").trim().toLowerCase();
+    const phoneTail = (s: string) => String(s || "").replace(/\D/g, "").slice(-10);
     let match = appNumber
       ? cases.find((c) => normApp((c as any).applicationNumber) && normApp((c as any).applicationNumber) === normApp(appNumber))
       : undefined;
+    // Phone is a real unique identifier — try it before falling back to name.
+    if (!match && phone && phoneTail(phone).length >= 10) {
+      const tail = phoneTail(phone);
+      const byPhone = cases.filter((c) => phoneTail((c as any).leadPhone) === tail);
+      match = byPhone.sort((a, b) =>
+        String((b as any).updatedAt || (b as any).createdAt || "").localeCompare(String((a as any).updatedAt || (a as any).createdAt || ""))
+      )[0];
+    }
     if (!match && clientName) {
       // Exact name match, and if several share the name, take the MOST RECENT
       // case — never an arbitrary old one (that caused results to attach to a
