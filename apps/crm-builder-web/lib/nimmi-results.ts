@@ -77,6 +77,20 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Pro
 const isAbort = (e: unknown) =>
   (e as any)?.name === "AbortError" || String((e as Error)?.message || "").toLowerCase().includes("abort");
 
+// Nimmi's API only accepts this core set of result types. The CRM offers a few
+// extra ones (submission confirmation, request/extension letter) for its own
+// labelling, but those must be mapped to a Nimmi-accepted value or the API
+// rejects the upload with "400 Invalid resultType". The CRM still records the
+// real type in its own sent-log; only the value sent to Nimmi is normalized.
+const NIMMI_ACCEPTED_TYPES = new Set([
+  "approval", "refusal", "passport_request", "biometrics", "medical", "aor", "additional_docs", "other",
+]);
+function toNimmiResultType(t: string): string {
+  if (NIMMI_ACCEPTED_TYPES.has(t)) return t;
+  if (t === "request_letter") return "additional_docs";
+  return "other"; // submission + anything Nimmi doesn't recognize
+}
+
 export async function pushResultToNimmi(input: PushResultInput): Promise<PushResultOutput> {
   if (!isNimmiConfigured()) return { ok: false, error: "CRM_API_SECRET is not set" };
   if (!input.clientName?.trim()) return { ok: false, error: "clientName is required" };
@@ -84,6 +98,9 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
   if (!input.fileName?.trim()) return { ok: false, error: "fileName is required" };
   if (!input.contentType?.trim()) return { ok: false, error: "contentType is required" };
   if (!input.fileBuffer?.length) return { ok: false, error: "empty file" };
+
+  // Value Nimmi will accept (the CRM's own type is kept for its records).
+  const nimmiResultType = toNimmiResultType(String(input.resultType || "other"));
 
   // ── Step 1: prepare-upload ──
   let prep: any;
@@ -97,7 +114,7 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
         email: input.email,
         appNumber: input.appNumber,
         serviceSlug: input.serviceSlug,
-        resultType: input.resultType,
+        resultType: toNimmiResultType(input.resultType),
         filename: input.fileName,
         contentType: input.contentType,
       }),
@@ -179,7 +196,7 @@ export async function pushResultToNimmi(input: PushResultInput): Promise<PushRes
           email: input.email,
           appNumber: input.appNumber,
           serviceSlug: input.serviceSlug,
-          resultType: input.resultType,
+          resultType: toNimmiResultType(input.resultType),
           filename: input.fileName,
           contentType: input.contentType,
           fileSizeBytes: input.fileBuffer.length,
