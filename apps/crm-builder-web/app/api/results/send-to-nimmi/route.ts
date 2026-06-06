@@ -107,7 +107,13 @@ export async function POST(request: NextRequest) {
       ? cases.find((c) => normApp((c as any).applicationNumber) && normApp((c as any).applicationNumber) === normApp(appNumber))
       : undefined;
     if (!match && clientName) {
-      match = cases.find((c) => normName(c.client) === normName(clientName));
+      // Exact name match, and if several share the name, take the MOST RECENT
+      // case — never an arbitrary old one (that caused results to attach to a
+      // stale case for repeat/common names).
+      const byName = cases.filter((c) => normName(c.client) === normName(clientName));
+      match = byName.sort((a, b) =>
+        String((b as any).updatedAt || (b as any).createdAt || "").localeCompare(String((a as any).updatedAt || (a as any).createdAt || ""))
+      )[0];
     }
     if (match) {
       matchedCaseId = match.id;
@@ -250,6 +256,35 @@ export async function POST(request: NextRequest) {
     });
   } catch (e) {
     console.error("[send-to-nimmi] sent-log write failed (non-fatal):", (e as Error).message);
+  }
+
+  // ── Record the result in the Results dashboard feed too ──
+  // The dashboard reads legacy_results; previously a SENT result never landed
+  // there, so approvals/refusals you sent didn't move the dashboard numbers.
+  // Map the result type → the dashboard's outcome buckets. Non-fatal.
+  try {
+    const { addLegacyResult } = await import("@/lib/store");
+    const outcome: "approved" | "refused" | "request_letter" | "other" =
+      resultType === "approval" ? "approved" :
+      resultType === "refusal" ? "refused" :
+      resultType === "request_letter" ? "request_letter" : "other";
+    await addLegacyResult({
+      companyId: user.companyId,
+      entryType: resultType === "submission" ? "submission" : "result",
+      clientName,
+      phone: phone || undefined,
+      applicationNumber: appNumber || "",
+      outcome,
+      resultDate: new Date().toISOString().slice(0, 10),
+      fileName,
+      fileLink: result.shareUrl,
+      forceMatchedCaseId: matchedCaseId,
+      createdByUserId: user.id,
+      createdByName: user.name || user.id,
+      notes: whatsappSent ? "Sent to client via WhatsApp" : "Uploaded (delivery pending)",
+    });
+  } catch (e) {
+    console.error("[send-to-nimmi] legacy-result write failed (non-fatal):", (e as Error).message);
   }
 
   // ── Seed the client's WhatsApp chat thread with this outbound send ──

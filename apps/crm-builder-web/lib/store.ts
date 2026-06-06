@@ -2438,20 +2438,32 @@ export async function addLegacyResult(input: {
     if (sub?.phone) lookupPhone = sub.phone;
   }
 
-  // Fallback: match by client name (normalize spaces, case-insensitive, first name match)
+  // Fallback: match by client name. Loose substring matching ("includes") +
+  // first()-match used to grab the WRONG/older case for common names. Now: collect
+  // candidates, prefer an EXACT full-name match, and among ties pick the MOST
+  // RECENT case (by updatedAt/createdAt) — never an arbitrary old one. Substring
+  // matching removed.
   const inputName = String(input.clientName || "").trim().toLowerCase().replace(/\s+/g, " ");
   const inputFirstName = inputName.split(" ")[0];
-  const matchByName = !matchByAppNo && inputName.length > 2
-    ? store.cases.find((c) => {
-        const caseName = String(c.client || "").trim().toLowerCase().replace(/\s+/g, " ");
-        const caseFirst = caseName.split(" ")[0];
-        return c.companyId === input.companyId &&
-          (caseName === inputName ||
-           caseName.includes(inputName) ||
-           inputName.includes(caseName) ||
-           (inputFirstName.length > 3 && caseFirst === inputFirstName));
-      }) ?? null
-    : null;
+  let matchByName: CaseItem | null = null;
+  if (!matchByAppNo && inputName.length > 2) {
+    const mostRecent = (list: CaseItem[]) =>
+      list.slice().sort((a, b) =>
+        String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))
+      )[0] ?? null;
+    const sameCompany = store.cases.filter((c) => c.companyId === input.companyId);
+    const exact = sameCompany.filter(
+      (c) => String(c.client || "").trim().toLowerCase().replace(/\s+/g, " ") === inputName
+    );
+    if (exact.length) {
+      matchByName = mostRecent(exact);
+    } else if (inputFirstName.length > 3) {
+      const byFirst = sameCompany.filter(
+        (c) => String(c.client || "").trim().toLowerCase().replace(/\s+/g, " ").split(" ")[0] === inputFirstName
+      );
+      matchByName = mostRecent(byFirst);
+    }
+  }
 
   const matchedCase = forcedCase ?? matchByAppNo ?? matchByName ?? null;
 
