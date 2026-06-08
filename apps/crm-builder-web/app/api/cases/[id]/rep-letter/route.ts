@@ -330,9 +330,31 @@ function getBodyParagraphs(p: BodyParams): string[] {
 // In particular newlines (\n, \r) crash drawText with "WinAnsi cannot encode 0x000a".
 // Use this for any string that goes directly into page.drawText() without
 // first being split into individual lines by wrapText.
+function transliterate(text: string): string {
+  const map: Record<string, string> = {
+    "–": "-", "—": "-", "‒": "-", "−": "-", "―": "-",
+    "‘": "'", "’": "'", "‚": "'", "′": "'",
+    "“": '"', "”": '"', "„": '"', "″": '"',
+    "…": "...",
+    " ": " ", " ": " ", " ": " ", " ": " ", " ": " ",
+    "•": "-", "·": "-", "⁃": "-",
+    "™": "(TM)", "®": "(R)", "©": "(C)",
+  };
+  let out = text.replace(/[‒-―‘-„′″…     •·⁃™®©−]/g, (c) => map[c] ?? c);
+  // Decompose accented Latin letters that fall outside WinAnsi (NFD + strip
+  // combining marks) so a name like "Nuñez" keeps its base letters instead of
+  // collapsing to "?". Latin-1 accents Helvetica already supports are untouched.
+  try {
+    const decomposed = out.normalize("NFD").replace(/[̀-ͯ]/g, "");
+    out = out.split("").map((ch, i) => (ch.charCodeAt(0) > 0xFF ? (decomposed[i] ?? ch) : ch)).join("");
+    out = out.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  } catch { /* normalize unsupported — leave as-is */ }
+  return out;
+}
+
 function sanitizeForPdf(text: string): string {
   if (!text) return "";
-  return String(text)
+  return transliterate(String(text))
     .replace(/\r/g, "")           // strip carriage returns
     .replace(/\n+/g, " ")          // newlines → spaces (caller is single-line)
     .replace(/\t/g, " ")           // tabs → spaces (drawText can't render tabs)
@@ -348,7 +370,7 @@ function sanitizeForPdf(text: string): string {
 // wrapText which splits on \n).
 function sanitizeMultilineForPdf(text: string): string {
   if (!text) return "";
-  return String(text)
+  return transliterate(String(text))
     .replace(/\r/g, "")
     .replace(/\t/g, " ")
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "")
@@ -1211,7 +1233,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const font = opts.font ?? fontReg;
       const color = opts.color ?? TEXT_BLACK;
       const indent = opts.indent ?? 0;
-      const lines = wrapText(text, font, size, contentWidth - indent);
+      // Transliterate smart-typography/accents and strip un-encodable chars
+      // BEFORE wrapping/measuring — otherwise pdf-lib's WinAnsi encoder turns
+      // em-dashes, curly quotes and accented names into "?" (or crashes).
+      const lines = wrapText(sanitizeMultilineForPdf(text), font, size, contentWidth - indent);
       const lh = size * 1.45;
       for (const line of lines) {
         ensureSpace(lh);
