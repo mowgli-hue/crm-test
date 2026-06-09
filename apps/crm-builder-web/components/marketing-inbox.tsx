@@ -858,6 +858,24 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
             Click any service → preview → send to current thread.
             Updates the lead's interest field too.
           </div>
+
+          {/* ── Re-engage client: reopen a closed 24h WhatsApp window ── */}
+          {/* Outside the 24h window WhatsApp drops normal messages. This sends an
+              approved template that always delivers and asks the client to reply,
+              which reopens the chat so your messages go through. */}
+          <div className="px-3 py-2.5 border-b border-slate-200 bg-white">
+            <button
+              onClick={() => thread && reengage(thread)}
+              disabled={!thread || reengaging}
+              title={!thread ? "Open a conversation first" : "If the client hasn't replied in 24h, WhatsApp blocks normal messages. This sends an approved 'please reply' message that always delivers and reopens the chat."}
+              className="w-full rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-[11px] font-bold text-sky-700 hover:bg-sky-100 disabled:opacity-50 flex items-center justify-center gap-1.5">
+              {reengaging ? "Sending…" : "🔔 Re-engage client (ask to reply)"}
+            </button>
+            <p className="mt-1 text-[10px] text-slate-400 leading-snug">
+              Use when your messages aren’t delivering — the chat closes 24h after the client’s last reply.
+            </p>
+          </div>
+
           <div className="flex-1 overflow-y-auto py-2">
             {/* Group by category for cleaner browsing */}
             {(["work", "study", "visit", "pr", "other"] as const).map(cat => {
