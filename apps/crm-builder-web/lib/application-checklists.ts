@@ -127,12 +127,16 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "language_test", label: "Language Test (IELTS/CELPIP/PTE)", required: false, keywords: ["ielts", "celpip", "pte", "language"], categories: ["language_test", "ielts"] },
     { key: "old_studies", label: "Old/Past College Documents (if transfer)", required: false, keywords: ["old college", "past stud", "previous college"] }
   ],
+  // Newton's inside-Canada TRV submission = passport (with stamps) + digital
+  // photo + current permit, plus the auto-generated IMM5476. That's the whole
+  // required set — proof of funds / ties are optional extras, NOT blockers, so
+  // intake/auto-prepare treats the case as ready once these three are in.
   trv_inside: [
-    { key: "passport", label: "Passport (all pages, clear copies)", required: true, keywords: ["passport"], categories: ["passport"] },
-    { key: "current_permit", label: "Current Status Document (study/work permit or TRV)", required: true, keywords: ["current permit", "permit", "status"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "passport", label: "Passport (bio page + all stamped pages)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "current_permit", label: "Current Permit / Status Document (study/work permit or TRV)", required: true, keywords: ["current permit", "permit", "status"], categories: ["study_permit", "work_permit", "visa"] },
     { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["digital photo", "photo"], categories: ["photo"] },
-    { key: "funds", label: "Proof of Funds", required: true, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
-    { key: "ties", label: "Proof of Ties to Home Country", required: false, keywords: ["ties", "property", "employment", "family"] }
+    { key: "funds", label: "Proof of Funds (optional)", required: false, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
+    { key: "ties", label: "Proof of Ties to Home Country (optional)", required: false, keywords: ["ties", "property", "employment", "family"] }
   ],
   visitor_visa: [
     { key: "passport", label: "Passport (all pages, valid min 6 months)", required: true, keywords: ["passport"] },

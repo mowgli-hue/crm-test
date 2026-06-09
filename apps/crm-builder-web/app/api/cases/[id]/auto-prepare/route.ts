@@ -176,6 +176,24 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   );
   results.repLetter = { ok: letter.ok, error: letter.error, personalized: Boolean(clientStory) };
 
+  // ── STEP 2.5: TRV — auto-build the "Client Information" package ──
+  // For inside-Canada TRV / visitor cases, preparing the application means
+  // assembling the single Client Information PDF (passport + digital photo +
+  // current permit + IMM5476). Now that required docs are confirmed complete
+  // (Step 1), build it automatically so staff open the case to a ready package.
+  // Best-effort and non-blocking — a failure is reported in the note, never an
+  // error to the caller. (Only TRV-like types: other profiles still build their
+  // package on the manual submission-package action to avoid Drive churn.)
+  const ftLower = formType.toLowerCase();
+  const isTrvLike =
+    ftLower.includes("trv") || ftLower.includes("visitor visa") ||
+    ftLower.includes("visitor record") || ftLower.includes("super visa") ||
+    ftLower.includes("supervisa");
+  if (isTrvLike) {
+    const pkg = await callStep(`/api/cases/${params.id}/submission-package`, systemToken);
+    results.clientInfoPackage = { ok: pkg.ok, error: pkg.error };
+  }
+
   // ── STEP 3: Pre-submission review checklist ──
   const checklist = getReviewChecklist(formType);
   const humanVerifyItems = checklist?.items.filter((i) => i.required && !i.autoVerifiable) ?? [];
@@ -207,6 +225,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   lines.push(`🤖 Auto-prepare ${readyForReview ? "completed" : "ran (held — not yet ready)"} (triggered by ${actorName}) — ${new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver" })}`);
   lines.push("");
   lines.push(`• Rep letter: ${results.repLetter.ok ? `drafted ✓${clientStory ? " (personalised from intake)" : " (generic template — no intake detail)"}` : `not done — ${results.repLetter.error}`}`);
+  if (results.clientInfoPackage) {
+    lines.push(`• Client Information package (TRV): ${results.clientInfoPackage.ok ? "built ✓ (passport + photo + current permit + IMM5476)" : `not built — ${results.clientInfoPackage.error}`}`);
+  }
   lines.push(`• Required documents: all received ✓ (${progress.receivedRequired.length})`);
   if (systemVerifiedItems.length > 0) {
     lines.push(`• System-verified, no need to re-check: ${systemVerifiedItems.length} item(s) (${systemVerifiedItems.map((i) => i.label).slice(0, 4).join("; ")}${systemVerifiedItems.length > 4 ? "; …" : ""})`);
