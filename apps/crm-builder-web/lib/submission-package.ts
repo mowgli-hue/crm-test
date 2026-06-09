@@ -1246,6 +1246,47 @@ export async function assemblePgwpSubmissionPackage(
     }
   }
 
+  // Step 7: SAFETY NET — copy EVERY uploaded doc that wasn't already placed.
+  //
+  // The profile-driven steps above only copy/bundle docs that matched a known
+  // category. Anything the categorizer marked "other" (a TRV invitation letter,
+  // purpose-of-visit letter, proof of funds/ties, employment letter, etc.) was
+  // silently dropped — so a case with ALL its supporting docs uploaded came out
+  // of the package missing half of them. Real bug: CASE-1612 (Mehak, TRV) had
+  // every doc but the package only carried the narrow TRV profile set.
+  //
+  // Here we copy any uploaded doc not already included into the submission
+  // folder (original format preserved, "Supporting - <name>"), so NOTHING the
+  // client uploaded is ever left out of the submission. Over-including is safe —
+  // staff review the folder — whereas dropping a doc is not.
+  try {
+    const usedIds = new Set<string>();
+    for (const job of copyJobs) if (job.doc.driveFileId) usedIds.add(job.doc.driveFileId);
+    for (const src of bundleSources) if (src.driveFileId) usedIds.add(src.driveFileId);
+
+    const leftovers = categorized.filter((d) => d.driveFileId && !usedIds.has(d.driveFileId));
+    let supportingCopied = 0;
+    for (const d of leftovers) {
+      try {
+        const baseName = String(d.name || "Document").replace(/^Supporting - /i, "");
+        const copied = await copyDriveFileToFolder({
+          sourceFileId: d.driveFileId!,
+          newName: `Supporting - ${baseName}`,
+          targetFolderId: submissionFolderId,
+        });
+        filesAdded.push({ name: `Supporting - ${baseName}`, link: copied.webViewLink, source: "copied" });
+        supportingCopied++;
+      } catch (e) {
+        warnings.push(`Supporting doc could not be copied (please add manually): ${d.name} — ${(e as Error).message.slice(0, 80)}`);
+      }
+    }
+    if (supportingCopied > 0) {
+      console.log(`[submission ${caseId}] step 7: +${supportingCopied} supporting doc(s) copied (were uncategorized/'other' and would have been dropped)`);
+    }
+  } catch (e) {
+    warnings.push(`Supporting-documents step failed: ${(e as Error).message}`);
+  }
+
   console.log(`[submission ${caseId}] ✅ DONE — ${filesAdded.length} files added, ${errors.length} errors, ${warnings.length} warnings`);
   return {
     ok: true,
