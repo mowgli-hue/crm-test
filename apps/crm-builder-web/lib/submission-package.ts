@@ -61,7 +61,11 @@ export type SubmissionPackageResult = {
   warnings?: string[];          // e.g., optional docs not found
 };
 
-type CategorizedDoc = DocumentItem & {
+// Omit DocumentItem's own `category` (a narrow "general" | "result" union) before
+// adding the richer DocCategory — otherwise the intersection collapses `category`
+// to `never` and poisons the whole type (every `.driveFileId`/`.name` access then
+// errors as "Property does not exist on type 'never'").
+type CategorizedDoc = Omit<DocumentItem, "category"> & {
   category: DocCategory;
   driveFileId: string | null;
 };
@@ -572,6 +576,12 @@ type FormProfile = {
   recommended: string[];
   // Display name for logs
   name: string;
+  // When set, the WHOLE submission is a single merged "Client Information" PDF
+  // built from these parts IN THIS ORDER — nothing else is copied/bundled.
+  // Used by TRV (inside Canada): passport (with stamps) → digital photo →
+  // current permit → IMM5476. Tokens: "passport" | "photo" | "currentPermit"
+  // | "imm5257" | "imm5476" (imm5476 is generated inline; the rest are uploads).
+  clientInfoMerge?: Array<"passport" | "photo" | "currentPermit" | "imm5257" | "imm5476">;
 };
 
 const PROFILE_PGWP: FormProfile = {
@@ -627,20 +637,16 @@ const PROFILE_STUDY_PERMIT_EXTENSION: FormProfile = {
 
 const PROFILE_TRV: FormProfile = {
   name: "TRV",
-  topLevel: [
-    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
-    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
-    { sourceKey: "imm5257",          template: "IMM5257e_<First>_<Last>" },
-    // 5476 (Use of Representative) is GENERATED inside the package flow —
-    // it doesn't come from primary. It's added separately below.
-  ],
-  bundleCategories: [
-    // Just the current permit (study/work) for the TRV stamp on passport.
-    // Bank statement / proof of funds also bundled if uploaded (optional).
-    "studyPermits", "workPermits", "bankStatements",
-  ],
+  // The TRV (inside-Canada) submission is ONE "Client Information" PDF — see
+  // clientInfoMerge below. No separate top-level files, no Client_Info bundle.
+  topLevel: [],
+  bundleCategories: [],
+  clientInfoMerge: ["passport", "photo", "currentPermit", "imm5476"],
   recommended: [
-    "Passport", "Digital photo", "IMM5257 (use 'Generate Forms')",
+    "Passport (bio page + all stamped pages)",
+    "Digital photo",
+    "Current permit (study/work)",
+    "IMM5476 (generated automatically)",
   ],
 };
 
@@ -932,6 +938,62 @@ export async function assemblePgwpSubmissionPackage(
   const filesAdded: SubmissionPackageResult["filesAdded"] = [];
   const warnings: string[] = [...initialWarnings];
 
+  // ── TRV special case: ONE merged "Client Information" PDF ──
+  // Newton's inside-Canada TRV/visitor submission is a single Client
+  // Information document containing, in order: passport (with stamps), digital
+  // photo, current permit, and the generated IMM5476 — nothing else. (Per the
+  // RCIC: "for TRV it's Client Information — current permit, digital photo,
+  // passport with stamps, 5476, that's all.") We build that one PDF and return.
+  if (profile.clientInfoMerge?.length) {
+    const mergeFiles: Array<{ filename: string; bytes: Buffer }> = [];
+    const missing: string[] = [];
+    for (const key of profile.clientInfoMerge) {
+      try {
+        if (key === "imm5476") {
+          const imm5476Bytes = await generateImm5476(buildImm5476Data(caseItem));
+          mergeFiles.push({ filename: "IMM5476.pdf", bytes: imm5476Bytes });
+          continue;
+        }
+        let doc: CategorizedDoc | undefined;
+        if (key === "passport") doc = primary.passport;
+        else if (key === "photo") doc = primary.photo;
+        else if (key === "imm5257") doc = primary.imm5257;
+        else if (key === "currentPermit") doc = primary.studyPermits?.[0] || primary.workPermits?.[0];
+        if (!doc?.driveFileId) { missing.push(key); continue; }
+        const bytes = await downloadDriveFileBytes(doc.driveFileId);
+        mergeFiles.push({ filename: doc.name, bytes });
+      } catch (e) {
+        missing.push(key);
+        warnings.push(`Client Information: could not add ${key} — ${(e as Error).message.slice(0, 80)}`);
+      }
+    }
+    if (mergeFiles.length === 0) {
+      return { ok: false, errors: ["Client Information: none of passport / photo / current permit / IMM5476 were available — upload them and retry."], warnings };
+    }
+    if (missing.length) {
+      warnings.push(`Client Information built, but these parts were missing (add manually if needed): ${missing.join(", ")}.`);
+    }
+    try {
+      const merged = await bundleClientInfo(mergeFiles);
+      const ciName = buildStandardName("Client_Information_<First>_<Last>", first, last, "pdf");
+      const uploaded = await uploadFileToDriveFolder({
+        folderId: submissionFolderId, fileName: ciName, fileBuffer: merged, mimeType: "application/pdf",
+      });
+      filesAdded.push({ name: ciName, link: uploaded.webViewLink, source: "generated" });
+      console.log(`[submission ${caseId}] TRV Client Information built from ${mergeFiles.length} part(s); missing: ${missing.join(",") || "none"}`);
+    } catch (e) {
+      return { ok: false, errors: [`Client Information merge failed: ${(e as Error).message}`], warnings };
+    }
+    return {
+      ok: true,
+      folderLink: subfolder.webViewLink,
+      folderId: submissionFolderId,
+      filesAdded,
+      errors: errors.length > 0 ? errors : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
+
   // Step 4: copy top-level docs with standardized names. Driven by the
   // form profile selected above — each entry maps a primary doc slot to
   // its standardized filename template.
@@ -1003,7 +1065,9 @@ export async function assemblePgwpSubmissionPackage(
         continue;
       }
       try {
-        const bytes = await downloadDriveFileBytes(job.doc.driveFileId);
+        // driveFileId is guaranteed non-null here: skipNameCheck above includes
+        // `!job.doc.driveFileId`, so a null id already pushed+continued.
+        const bytes = await downloadDriveFileBytes(job.doc.driveFileId!);
         if (bytes.length >= 10 * 1024 * 1024) {
           filteredJobs.push(job);
           continue;
@@ -1011,7 +1075,7 @@ export async function assemblePgwpSubmissionPackage(
         const mimeType = job.doc.name.toLowerCase().endsWith(".pdf") ? "application/pdf" :
           job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/) ? `image/${job.doc.name.toLowerCase().match(/\.(jpe?g|png|webp)$/)![1].replace("jpg", "jpeg")}` :
           "application/pdf";
-        const extracted = await ocr.run(job.doc.driveFileId, bytes, mimeType, caseItem.client || "Client");
+        const extracted = await ocr.run(job.doc.driveFileId!, bytes, mimeType, caseItem.client || "Client");
         if (extracted) {
           const docFirstName = String(extracted.firstName || "").toLowerCase();
           const docLastName = String(extracted.lastName || "").toLowerCase();
