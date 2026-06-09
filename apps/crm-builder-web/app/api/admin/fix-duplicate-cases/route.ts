@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { inspectCaseData, repairDuplicateCaseIds } from "@/lib/store";
+import { Pool } from "pg";
 
 export const runtime = "nodejs";
 
@@ -26,9 +27,35 @@ export async function GET(request: NextRequest) {
   if (user.userType !== "staff" || user.role !== "Admin") {
     return NextResponse.json({ error: "Forbidden — Admin only" }, { status: 403 });
   }
-  const phone = request.nextUrl.searchParams.get("phone") || undefined;
-  const report = await inspectCaseData(phone);
-  return NextResponse.json({ ok: true, report });
+  const sp = request.nextUrl.searchParams;
+  const phone = sp.get("phone") || undefined;
+  const caseId = sp.get("caseId") || undefined;
+  const name = sp.get("name") || undefined;
+  const report = await inspectCaseData({ phone, caseId, name });
+
+  // Also pull the marketing-lead row for this phone so we can see where its
+  // converted_case_id points (this is what makes a lead LOOK converted while no
+  // real case exists for them).
+  let marketingLead: any = null;
+  if (phone) {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2 });
+    try {
+      const digits = String(phone).replace(/\D/g, "");
+      const r = await pool.query(
+        `SELECT phone, contact_name, stage, service_interest, converted_case_id, assigned_to, updated_at
+           FROM marketing_leads
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = RIGHT($1, 10)`,
+        [digits]
+      );
+      marketingLead = r.rows;
+    } catch (e) {
+      marketingLead = { error: (e as Error).message };
+    } finally {
+      await pool.end().catch(() => {});
+    }
+  }
+
+  return NextResponse.json({ ok: true, report, marketingLead });
 }
 
 export async function POST(request: NextRequest) {

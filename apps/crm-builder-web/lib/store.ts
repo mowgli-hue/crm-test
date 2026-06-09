@@ -1157,11 +1157,15 @@ export async function createCase(input: {
 // then went invisible to whichever team scopes by the other company. These two
 // helpers report and repair that.
 
-export async function inspectCaseData(phone?: string): Promise<{
+type SlimCase = { id: string; client: string; companyId: string; formType?: string; leadPhone?: string; leadEmail?: string; assignedTo?: string; caseStatus?: string; processingStatus?: string; sourceLeadKey?: string; createdAt?: string };
+
+export async function inspectCaseData(opts?: { phone?: string; caseId?: string; name?: string }): Promise<{
   totalCases: number;
   companyCounts: Record<string, number>;
-  duplicateIds: Array<{ id: string; cases: Array<{ id: string; client: string; companyId: string; formType?: string; leadPhone?: string; assignedTo?: string; createdAt?: string }> }>;
-  phoneMatches: Array<{ id: string; client: string; companyId: string; formType?: string; leadPhone?: string; assignedTo?: string; createdAt?: string }>;
+  duplicateIds: Array<{ id: string; cases: SlimCase[] }>;
+  phoneMatches: SlimCase[];
+  caseMatch: SlimCase[];
+  nameMatches: SlimCase[];
 }> {
   const store = await readStore();
   const cases = store.cases || [];
@@ -1171,18 +1175,27 @@ export async function inspectCaseData(phone?: string): Promise<{
     companyCounts[String(c.companyId)] = (companyCounts[String(c.companyId)] || 0) + 1;
     (byId[String(c.id)] ||= []).push(c);
   }
-  const slim = (c: CaseItem) => ({
+  const slim = (c: CaseItem): SlimCase => ({
     id: c.id, client: c.client, companyId: c.companyId, formType: c.formType,
-    leadPhone: c.leadPhone, assignedTo: c.assignedTo, createdAt: c.createdAt,
+    leadPhone: c.leadPhone, leadEmail: c.leadEmail, assignedTo: c.assignedTo,
+    caseStatus: c.caseStatus, processingStatus: c.processingStatus,
+    sourceLeadKey: c.sourceLeadKey, createdAt: c.createdAt,
   });
   const duplicateIds = Object.entries(byId)
     .filter(([, list]) => list.length > 1)
     .map(([id, list]) => ({ id, cases: list.map(slim) }));
-  const tail = String(phone || "").replace(/\D/g, "").slice(-10);
+  const tail = String(opts?.phone || "").replace(/\D/g, "").slice(-10);
   const phoneMatches = tail
     ? cases.filter((c) => String(c.leadPhone || "").replace(/\D/g, "").slice(-10) === tail).map(slim)
     : [];
-  return { totalCases: cases.length, companyCounts, duplicateIds, phoneMatches };
+  const caseMatch = opts?.caseId
+    ? cases.filter((c) => String(c.id) === String(opts.caseId)).map(slim)
+    : [];
+  const nameNeedle = String(opts?.name || "").trim().toLowerCase();
+  const nameMatches = nameNeedle
+    ? cases.filter((c) => String(c.client || "").toLowerCase().includes(nameNeedle)).map(slim)
+    : [];
+  return { totalCases: cases.length, companyCounts, duplicateIds, phoneMatches, caseMatch, nameMatches };
 }
 
 // Repair duplicate ids: keep the OLDEST case for each colliding id, and assign
