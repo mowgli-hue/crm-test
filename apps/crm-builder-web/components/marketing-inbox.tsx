@@ -259,6 +259,14 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
   });
 
   const threadMsgs = thread ? [...(allThreads[thread]||[])].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime()) : [];
+  // 24h window state for the open thread. WhatsApp only delivers a free-form
+  // message within 24h of the client's LAST inbound message; outside that, the
+  // re-engage TEMPLATE must be sent first. Compute from the loaded messages so
+  // the moment staff open a stale chat, we can prompt them to send it.
+  const lastInboundAt = thread
+    ? threadMsgs.filter(m => m.direction === "inbound").reduce((mx, m) => Math.max(mx, new Date(m.created_at).getTime()), 0)
+    : 0;
+  const windowClosed = Boolean(thread) && !(lastInboundAt > 0 && (Date.now() - lastInboundAt) < 24 * 60 * 60 * 1000);
   // Resolve the display name for a thread by checking multiple sources in
   // priority order. Different staff actions store names in different places:
   //   - "Save Name" button updates: marketing_leads.contact_name (canonical) +
@@ -672,6 +680,23 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
 
           {/* Messages */}
           <div ref={messagesScrollRef} onScroll={onMessagesScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-1 bg-[#f0f2f5]">
+            {/* Closed-window prompt — appears the moment staff open a stale chat.
+                WhatsApp won't deliver a normal message; send the re-engage
+                template first and wait for the client's reply. */}
+            {windowClosed && (
+              <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 shadow-sm">
+                <p className="text-xs font-bold text-sky-900">⏳ This chat is closed (no reply in 24h)</p>
+                <p className="mt-1 text-[11px] text-sky-800 leading-snug">
+                  WhatsApp won’t deliver a normal message right now. Send the re-engage template first, then wait for the client to reply — that reopens the chat and your messages go through.
+                </p>
+                <button
+                  onClick={() => thread && reengage(thread)}
+                  disabled={reengaging}
+                  className="mt-2 rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-sky-700 disabled:opacity-50">
+                  {reengaging ? "Sending…" : "🔔 Send re-engage template"}
+                </button>
+              </div>
+            )}
             {threadMsgs.map((m,idx)=>{
               const isOut = m.direction==="outbound";
               const time = new Date(m.created_at).toLocaleTimeString("en-CA",{hour:"2-digit",minute:"2-digit",timeZone:"America/Vancouver"});

@@ -336,7 +336,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, messageId: sendRes.messageId, mediaId: sendRes.mediaId });
     }
 
-    // ── Text-only path (existing behavior, preserved) ──
+    // ── Text-only path ──
     const res = await fetch(`https://graph.facebook.com/v18.0/${MARKETING_PHONE_ID}/messages`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
