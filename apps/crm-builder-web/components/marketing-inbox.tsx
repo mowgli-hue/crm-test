@@ -176,6 +176,30 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
     setLeads(prev => ({ ...prev, [phone]: { ...(prev[phone] || {}), phone, ai_enabled: enabled } as Lead }));
   };
 
+  // Re-open a closed 24h window: sends the approved re-engagement template that
+  // asks the client to reply. Free-form text won't deliver outside the window;
+  // this does, and the client's reply reopens the chat.
+  const [reengaging, setReengaging] = useState(false);
+  const reengage = async (phone: string) => {
+    if (reengaging) return;
+    if (!confirm("Send a re-engagement message asking the client to reply? Use this when they haven't messaged in over 24h and your normal messages aren't being delivered.")) return;
+    setReengaging(true);
+    const res = await apiFetch("/marketing-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reengage", phone }),
+    });
+    setReengaging(false);
+    if (res?.ok) {
+      setMessages(prev => [...prev, {
+        id: `tmp-${Date.now()}`, phone, message: "🔔 Re-engagement sent (asked client to reply to reopen the chat).",
+        direction: "outbound", contact_name: null, is_read: true, created_at: new Date().toISOString(),
+      }]);
+    } else {
+      alert(res?.error || "Could not send the re-engagement message. Check the template is approved in WhatsApp.");
+    }
+  };
+
   const updateLeadStage = async (phone: string, stage: string) => {
     await apiFetch(`/marketing-leads/${encodeURIComponent(phone)}`, {
       method: "PATCH",
@@ -575,6 +599,13 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
               )}
               <button onClick={()=>setShowNameInput(showNameInput===thread?null:thread)}
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50">✏️ Name</button>
+
+              {/* Re-engage — reopen a closed 24h window via approved template */}
+              <button onClick={()=>reengage(thread)} disabled={reengaging}
+                title="Client not getting your messages? If they haven't replied in 24h the chat is closed. This sends an approved 'please reply' message that always delivers and reopens the chat."
+                className="rounded-lg border border-sky-300 bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50">
+                {reengaging ? "…" : "🔔 Ask to reply"}
+              </button>
 
               {/* WhatsApp call — opens WhatsApp on staff's device, ready to dial */}
               <a

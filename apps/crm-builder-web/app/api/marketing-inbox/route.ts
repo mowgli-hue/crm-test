@@ -150,6 +150,58 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // ── Re-engagement: reopen a closed 24h window ──
+    // WhatsApp drops free-form text outside the 24h customer-service window.
+    // This sends an APPROVED template (which delivers any time) inviting the
+    // client to reply — once they do, the window reopens and normal messages go
+    // through. Template name/lang come from env so staff can swap the approved
+    // template without a code change.
+    if (action === "reengage") {
+      const { phone } = body;
+      if (!phone) return NextResponse.json({ error: "Missing phone" }, { status: 400 });
+      const cleaned = String(phone).replace(/\D/g, "");
+      if (!cleaned) return NextResponse.json({ error: "Invalid phone" }, { status: 400 });
+
+      const templateName = process.env.REENGAGE_TEMPLATE_NAME || "reengage_v1";
+      const templateLang = process.env.REENGAGE_TEMPLATE_LANG || "en";
+
+      // First name for the {{1}} body param — pull the saved contact name.
+      const nameRes = await pool.query(
+        `SELECT contact_name FROM marketing_inbox
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 9) = $1
+            AND contact_name IS NOT NULL AND contact_name != ''
+          ORDER BY created_at DESC LIMIT 1`,
+        [cleaned.slice(-9)]
+      ).catch(() => ({ rows: [] as any[] }));
+      const firstName = String(nameRes.rows?.[0]?.contact_name || "").trim().split(/\s+/)[0] || "there";
+
+      const { sendWhatsAppTemplate } = await import("@/lib/whatsapp");
+      const tmpl = await sendWhatsAppTemplate({
+        to: cleaned,
+        templateName,
+        languageCode: templateLang,
+        phoneNumberId: MARKETING_PHONE_ID,
+        components: [
+          { type: "body", parameters: [{ type: "text", text: firstName }] },
+        ],
+      });
+      if (!tmpl.success) {
+        return NextResponse.json(
+          { error: `Re-engagement template failed: ${tmpl.error || "unknown"} (template "${templateName}"/${templateLang})` },
+          { status: 502 }
+        );
+      }
+
+      // Log it in the thread so staff see it went out.
+      const rid = `mkt-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await pool.query(
+        `INSERT INTO marketing_inbox (id, phone, message, direction, is_read, created_at)
+         VALUES ($1,$2,$3,'outbound',TRUE,NOW())`,
+        [rid, phone, `🔔 Re-engagement sent (asked client to reply to reopen the chat).`]
+      );
+      return NextResponse.json({ ok: true, messageId: tmpl.messageId, templateName });
+    }
+
     // ── Toggle AI auto-reply for a thread (default: true) ──
     if (action === "toggleAI") {
       const { phone, enabled } = body;
