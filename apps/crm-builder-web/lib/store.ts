@@ -1041,12 +1041,23 @@ export async function createCase(input: {
     if (cIdx !== -1) store.clients[cIdx] = client;
   }
 
-  const companyCases = store.cases.filter((c) => c.companyId === input.companyId);
-  const highestCaseNumber = companyCases.reduce((max, c) => {
+  // Case IDs must be GLOBALLY unique, not per-company. Previously this filtered
+  // by companyId, so when cases drifted across two company IDs (the CMP-1 seed
+  // vs. the "newton" WhatsApp/marketing flow) the counter ignored the other
+  // company's cases and reused a number that already existed there — e.g. a new
+  // conversion landed on CASE-1584 while CASE-1584 already belonged to another
+  // client under the other company. That duplicate then went invisible to the
+  // processing team (who scope by company). Compute the highest number across
+  // ALL cases, and guard against any pre-existing collision by bumping until the
+  // id is genuinely free.
+  const existingIds = new Set(store.cases.map((c) => String(c.id || "")));
+  const highestCaseNumber = store.cases.reduce((max, c) => {
     const parsed = Number(String(c.id || "").replace(/^CASE-/, ""));
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 1000);
-  const nextId = `CASE-${highestCaseNumber + 1}`;
+  let nextNum = highestCaseNumber + 1;
+  while (existingIds.has(`CASE-${nextNum}`)) nextNum++;
+  const nextId = `CASE-${nextNum}`;
   const dueInDays = Number.isFinite(Number(input.dueInDays)) && Number(input.dueInDays) > 0 ? Number(input.dueInDays) : 7;
   const deadlineDate = new Date(Date.now() + dueInDays * 24 * 60 * 60 * 1000).toISOString();
   const totalCharges =
@@ -1139,6 +1150,85 @@ export async function createCase(input: {
   });
 }
 
+// ── Duplicate-case diagnostics + repair ──────────────────────────────────
+// Cases drifted across two company IDs (CMP-1 seed vs. "newton" WhatsApp flow),
+// and the old per-company id counter reused numbers that already existed under
+// the other company — producing two cases with the SAME CASE-id. The duplicate
+// then went invisible to whichever team scopes by the other company. These two
+// helpers report and repair that.
+
+export async function inspectCaseData(phone?: string): Promise<{
+  totalCases: number;
+  companyCounts: Record<string, number>;
+  duplicateIds: Array<{ id: string; cases: Array<{ id: string; client: string; companyId: string; formType?: string; leadPhone?: string; assignedTo?: string; createdAt?: string }> }>;
+  phoneMatches: Array<{ id: string; client: string; companyId: string; formType?: string; leadPhone?: string; assignedTo?: string; createdAt?: string }>;
+}> {
+  const store = await readStore();
+  const cases = store.cases || [];
+  const companyCounts: Record<string, number> = {};
+  const byId: Record<string, CaseItem[]> = {};
+  for (const c of cases) {
+    companyCounts[String(c.companyId)] = (companyCounts[String(c.companyId)] || 0) + 1;
+    (byId[String(c.id)] ||= []).push(c);
+  }
+  const slim = (c: CaseItem) => ({
+    id: c.id, client: c.client, companyId: c.companyId, formType: c.formType,
+    leadPhone: c.leadPhone, assignedTo: c.assignedTo, createdAt: c.createdAt,
+  });
+  const duplicateIds = Object.entries(byId)
+    .filter(([, list]) => list.length > 1)
+    .map(([id, list]) => ({ id, cases: list.map(slim) }));
+  const tail = String(phone || "").replace(/\D/g, "").slice(-10);
+  const phoneMatches = tail
+    ? cases.filter((c) => String(c.leadPhone || "").replace(/\D/g, "").slice(-10) === tail).map(slim)
+    : [];
+  return { totalCases: cases.length, companyCounts, duplicateIds, phoneMatches };
+}
+
+// Repair duplicate ids: keep the OLDEST case for each colliding id, and assign
+// every newer duplicate a fresh, globally-unique CASE number. Optionally also
+// re-point those repaired cases to a canonical companyId so the processing team
+// (which scopes by company) can finally see them. Returns the list of changes.
+export async function repairDuplicateCaseIds(opts?: {
+  alignCompanyId?: string;       // if set, repaired cases get this companyId
+}): Promise<{ changes: Array<{ oldId: string; newId: string; client: string; fromCompany: string; toCompany: string }> }> {
+  return mutateStore(async (store) => {
+    const cases = store.cases || [];
+    const byId: Record<string, CaseItem[]> = {};
+    for (const c of cases) (byId[String(c.id)] ||= []).push(c);
+
+    // Track all numeric ids in use so re-assignment stays globally unique.
+    const usedNums = new Set<number>();
+    for (const c of cases) {
+      const n = Number(String(c.id || "").replace(/^CASE-/, ""));
+      if (Number.isFinite(n)) usedNums.add(n);
+    }
+    let nextNum = Math.max(1000, ...Array.from(usedNums)) + 1;
+    const freshId = () => { while (usedNums.has(nextNum)) nextNum++; usedNums.add(nextNum); return `CASE-${nextNum}`; };
+
+    const changes: Array<{ oldId: string; newId: string; client: string; fromCompany: string; toCompany: string }> = [];
+    for (const [id, list] of Object.entries(byId)) {
+      if (list.length < 2) continue;
+      // Keep the oldest (smallest createdAt); re-id the rest.
+      const sorted = list.slice().sort((a, b) =>
+        String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+      );
+      for (let i = 1; i < sorted.length; i++) {
+        const dup = sorted[i];
+        const oldId = String(dup.id);
+        const newId = freshId();
+        const fromCompany = String(dup.companyId);
+        const toCompany = opts?.alignCompanyId || fromCompany;
+        dup.id = newId;
+        dup.updatedAt = new Date().toISOString();
+        if (opts?.alignCompanyId) dup.companyId = opts.alignCompanyId;
+        changes.push({ oldId, newId, client: dup.client, fromCompany, toCompany });
+      }
+    }
+    return { changes };
+  });
+}
+
 export async function resetCompanyDataToSingleCase(input: {
   companyId: string;
   clientName: string;
@@ -1161,6 +1251,12 @@ export async function resetCompanyDataToSingleCase(input: {
     throw new Error("Case number must be 1000 or greater");
   }
   const caseId = `CASE-${Math.floor(caseNumber)}`;
+  // Refuse to create a second case with an id that already exists ANYWHERE in
+  // the store (any company) — duplicate ids are what made a converted lead
+  // invisible to the processing team.
+  if (store.cases.some((c) => String(c.id) === caseId)) {
+    throw new Error(`Case ${caseId} already exists — choose a different number.`);
+  }
   const formType = String(input.formType || "PGWP").trim() || "PGWP";
   const keepSessions = input.keepStaffSessions !== false;
 
