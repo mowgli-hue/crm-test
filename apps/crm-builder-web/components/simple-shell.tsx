@@ -7009,12 +7009,37 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 const newStatus = e.target.value as "docs_pending"|"under_review"|"submitted"|"other";
                                 if (newStatus === "under_review") {
                                   // Just change status — reviewer will claim it from UR panel
-                                  await updateCaseProcessing(selectedCase.id, { 
+                                  await updateCaseProcessing(selectedCase.id, {
                                     processingStatus: newStatus,
                                     reviewedBy: "",
                                     reviewStatus: "",
                                     reviewStartedAt: new Date().toISOString()
                                   });
+                                } else if (newStatus === "submitted") {
+                                  // Marking a case Submitted must capture the IRCC application
+                                  // number, then take staff straight to the Submission tab to
+                                  // finish the submission record. Cancelling leaves status as-is.
+                                  const appNum = window.prompt(
+                                    `Enter the IRCC application number for ${selectedCase.client} (${selectedCase.id}):`,
+                                    selectedCase.applicationNumber || ""
+                                  );
+                                  if (appNum === null) return; // cancelled — keep current status
+                                  const cleanAppNum = appNum.trim();
+                                  if (!cleanAppNum) {
+                                    if (!confirm("No application number entered. Mark Submitted without one? You can add it later in the Submission tab.")) return;
+                                  }
+                                  await updateCaseProcessing(selectedCase.id, {
+                                    processingStatus: "submitted",
+                                    applicationNumber: cleanAppNum || undefined,
+                                    submittedAt: new Date().toISOString(),
+                                  });
+                                  // Pre-fill the Submission tab and jump straight to it.
+                                  setSubmissionCaseId(selectedCase.id);
+                                  setSubmissionApplicationNumber(cleanAppNum);
+                                  setSubmissionClientName(selectedCase.client || "");
+                                  setSubmissionPhone(selectedCase.leadPhone || "");
+                                  setSelectedCaseId(selectedCase.id);
+                                  setScreen("submission");
                                 } else {
                                   await updateCaseProcessing(selectedCase.id, { processingStatus: newStatus });
                                 }
