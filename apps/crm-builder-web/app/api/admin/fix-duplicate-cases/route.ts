@@ -83,10 +83,10 @@ export async function POST(request: NextRequest) {
     try {
       const r = await pool.query(
         `UPDATE marketing_leads
-            SET converted_case_id = $2,
-                stage = CASE WHEN $2 IS NULL THEN stage ELSE 'converted' END,
+            SET converted_case_id = $2::text,
+                stage = CASE WHEN $2::text IS NULL THEN stage ELSE 'converted' END,
                 updated_at = NOW()
-          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = RIGHT($1, 10)
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = RIGHT($1::text, 10)
           RETURNING phone, contact_name, stage, converted_case_id`,
         [phone, caseId]
       );
