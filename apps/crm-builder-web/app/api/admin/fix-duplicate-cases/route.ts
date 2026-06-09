@@ -67,10 +67,38 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   if (body?.confirm !== true) {
     return NextResponse.json(
-      { error: "Confirmation required. Re-send with { confirm: true }. Optionally include alignCompanyId to move repaired cases to a company the processing team sees." },
+      { error: "Confirmation required. Re-send with { confirm: true }. Actions: omit `action` to repair duplicate ids; or { action:'relinkLead', phone, caseId } to point a marketing lead's converted_case_id at the right case (caseId empty/null clears it)." },
       { status: 400 }
     );
   }
+
+  // ── action: relinkLead ──
+  // Repoint a marketing lead's converted_case_id at the correct case (or clear
+  // it). Use this when a lead got stamped onto the wrong person's case.
+  if (body?.action === "relinkLead") {
+    const phone = String(body?.phone || "").replace(/\D/g, "");
+    if (!phone) return NextResponse.json({ error: "phone is required for relinkLead" }, { status: 400 });
+    const caseId = body?.caseId == null || String(body.caseId).trim() === "" ? null : String(body.caseId).trim();
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2 });
+    try {
+      const r = await pool.query(
+        `UPDATE marketing_leads
+            SET converted_case_id = $2,
+                stage = CASE WHEN $2 IS NULL THEN stage ELSE 'converted' END,
+                updated_at = NOW()
+          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = RIGHT($1, 10)
+          RETURNING phone, contact_name, stage, converted_case_id`,
+        [phone, caseId]
+      );
+      console.log(`[fix-duplicate-cases] ${user.name || user.id} relinked lead ${phone} -> ${caseId || "NULL"}`);
+      return NextResponse.json({ ok: true, action: "relinkLead", updated: r.rows });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    } finally {
+      await pool.end().catch(() => {});
+    }
+  }
+
   const alignCompanyId = typeof body?.alignCompanyId === "string" && body.alignCompanyId.trim()
     ? body.alignCompanyId.trim()
     : undefined;
