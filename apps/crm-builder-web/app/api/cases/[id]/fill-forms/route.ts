@@ -15,6 +15,8 @@ import { canStaffAccessCase } from "@/lib/rbac";
 import { getCase, addDocument, updateCaseLinks } from "@/lib/store";
 import { getRequiredForms } from "@/lib/application-forms";
 import { buildFormData, fillFormViaService, MAPPABLE_FORMS } from "@/lib/form-fill";
+import { mapIntakeToForm } from "@/lib/intake-to-form-mappers";
+import { parseIntakeWithAI, mergeAIIntoFormData } from "@/lib/intake-ai-parser";
 import { extractDriveFolderId, uploadFileToDriveFolder, createCaseDriveStructure } from "@/lib/google-drive";
 import { isValidSystemToken } from "@/lib/auth-recovery-token";
 
@@ -72,8 +74,26 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (!folderId) return NextResponse.json({ error: "No Drive folder available for this case." }, { status: 400 });
 
   const { first, last } = splitClient(String((caseItem as any).client));
-  const required = getRequiredForms(String((caseItem as any).formType || ""));
+  const formType = String((caseItem as any).formType || "");
+  const required = getRequiredForms(formType);
   const want = (body?.only && body.only.length) ? new Set(body.only.map((x) => x.toLowerCase())) : null;
+
+  // Build the MAIN application form's data once, using the proven pipeline:
+  // regex mapper (baseline, never fails) → AI parse of the messy intake answers
+  // (employment, address parts, marital, visit purpose, funds, work-permit type)
+  // → merge. This fills the detail sections, not just the personal core. The
+  // representative form (IMM5476) uses its own applicant-only mapper.
+  const intake = ((caseItem as any).pgwpIntake as Record<string, unknown>) || {};
+  let mainData: Record<string, any> = {};
+  let aiUsed = false;
+  try {
+    const regex = mapIntakeToForm(intake, formType);
+    mainData = regex;
+    try {
+      const ai = await parseIntakeWithAI(intake, formType);
+      if ((ai as any)?._ai_used) { mainData = mergeAIIntoFormData(regex, ai); aiUsed = true; }
+    } catch { /* AI optional — regex baseline still used */ }
+  } catch { /* mapper failed — fall back to personal-core buildFormData below */ }
 
   const filled: Array<{ form: string; link: string }> = [];
   const skipped: Array<{ form: string; reason: string }> = [];
@@ -85,7 +105,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     if (!MAPPABLE_FORMS.has(formId)) { skipped.push({ form: f.id, reason: "mapper not built yet — fill manually" }); continue; }
 
     try {
-      const data = buildFormData(formId, caseItem) || {};
+      // IMM5476 = rep form (applicant-only). Everything else = the main app form,
+      // which gets the full AI-parsed data when available (else personal core).
+      const data = formId === "imm5476"
+        ? (buildFormData("imm5476", caseItem) || {})
+        : (Object.keys(mainData).length ? mainData : (buildFormData(formId, caseItem) || {}));
       const bytes = await fillFormViaService(formId, data);
       const fileName = `${f.id}e_${first}_${last} (DRAFT).pdf`.replace(/\s+/g, "_");
       const up = await uploadFileToDriveFolder({ folderId, fileName, fileBuffer: bytes, mimeType: "application/pdf" });
@@ -106,6 +130,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     caseId: caseItem.id,
     filled,
     skipped,
-    note: "Drafts only — staff must verify every field and sign. Not submitted to IRCC.",
+    aiParsed: aiUsed,
+    note: `Drafts only — staff must verify every field and sign. Not submitted to IRCC.${aiUsed ? " Detail sections (work/visit/address/marital/employment) AI-filled from intake." : " Filled from the available structured data."}`,
   });
 }
