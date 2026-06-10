@@ -168,12 +168,19 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
 
   // ── Cross-cutting flags ──
   if (!assigned) {
-    a.reasons.push("No preparer assigned.");
     a.priority += 30;
-    if (a.stage === "awaiting_docs" || a.stage === "ready_to_prepare") {
+    if (a.stage === "awaiting_docs") {
+      // Don't message a client about a file nobody owns — assign first.
       a.stage = "needs_owner"; a.stageLabel = "Needs an owner";
-      a.nextAction = "Assign a preparer — then " + a.nextAction.charAt(0).toLowerCase() + a.nextAction.slice(1);
-      a.autoDoable = false; // don't auto-act on an unowned file
+      a.nextAction = "Assign a preparer, then request the missing documents.";
+      a.autoDoable = false;
+    } else {
+      // ready_to_prepare / forms outstanding / prepared: the agent CAN do the
+      // mechanical prep now, before assignment — the file is ready the moment a
+      // preparer picks it up. We just flag that it still needs an owner so it
+      // gets assigned for review afterwards. (autoDoable stays on.)
+      a.reasons.push("No preparer assigned yet — agent can prepare now; assign for review.");
+      a.stageLabel = `${a.stageLabel} · needs owner`;
     }
   }
   if (Number.isFinite(permitDaysLeft) && permitDaysLeft >= 0 && permitDaysLeft <= 30) {
