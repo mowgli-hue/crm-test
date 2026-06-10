@@ -2439,6 +2439,19 @@ export async function listDocuments(companyId: string, caseId: string): Promise<
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+// Company-agnostic: every document grouped by caseId. Used by the case-agent so
+// it can assess all cases in one store read instead of one lookup per case.
+export async function listAllDocumentsByCase(): Promise<Map<string, DocumentItem[]>> {
+  const store = await readStore();
+  const map = new Map<string, DocumentItem[]>();
+  for (const d of store.documents) {
+    const arr = map.get(d.caseId) || [];
+    arr.push(d);
+    map.set(d.caseId, arr);
+  }
+  return map;
+}
+
 export async function addDocument(input: {
   companyId: string;
   caseId: string;
