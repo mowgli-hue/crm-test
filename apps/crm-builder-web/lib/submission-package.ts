@@ -91,6 +91,22 @@ function splitClientName(fullName: string): { first: string; last: string } {
   return { first: parts[0], last: parts.slice(1).join(" ") };
 }
 
+// The fullest legal name for naming files/folders. The case.client field is
+// often incomplete (e.g. "Lovepreet" with no surname → files become
+// "Lovepreet_File"). The passport-derived intake usually has the real full name,
+// so prefer that: intake.fullName, else given + family, else case.client.
+function bestClientName(caseItem: CaseItem): string {
+  const intake = (caseItem.pgwpIntake as Record<string, any>) || {};
+  const full = String(intake.fullName || intake.full_name || "").trim();
+  if (full.split(/\s+/).filter(Boolean).length >= 2) return full;
+  const given = String(intake.firstName || intake.first_name || intake.givenName || intake.given_name || "").trim();
+  const family = String(intake.lastName || intake.last_name || intake.familyName || intake.family_name || "").trim();
+  if (given && family) return `${given} ${family}`;
+  const c = String(caseItem.client || "").trim();
+  if (c.split(/\s+/).filter(Boolean).length >= 2) return c;
+  return [c || given, family].filter(Boolean).join(" ").trim() || c || "Client";
+}
+
 function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9 _.-]/g, "").trim() || "File";
 }
@@ -928,10 +944,12 @@ export async function assemblePgwpSubmissionPackage(
   }
   console.log(`[submission ${caseId}] step 3: resolving target Drive folder ${caseFolderId.slice(0, 12)}...`);
 
-  const { first, last } = splitClientName(caseItem.client || "Client");
-  const subfolderName = buildStandardName("Submission_<First>_<Last>", first, last, "")
-    .replace(/^\.|\.$/g, "")
-    .replace(/\.+$/, "");
+  const { first, last } = splitClientName(bestClientName(caseItem));
+  // Folder named "Client Information - <Full Name>" per Newton's submission layout.
+  const subfolderName = `Client Information - ${[first, last].filter(Boolean).join(" ")}`
+    .replace(/[\/\\<>:"|?*]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   const subfolder = await getOrCreateDriveSubfolder(caseFolderId, subfolderName);
   const submissionFolderId = subfolder.id;
@@ -1326,32 +1344,31 @@ export async function assemblePgwpSubmissionPackage(
   // folder (original format preserved, "Supporting - <name>"), so NOTHING the
   // client uploaded is ever left out of the submission. Over-including is safe —
   // staff review the folder — whereas dropping a doc is not.
+  // The submission folder must contain ONLY the documents that get submitted —
+  // the curated, ordered set above (forms + supporting docs + Client_Info bundle).
+  // We do NOT dump every uploaded file in here (that produced duplicates and
+  // internal files like "Intake Answers.txt" in the folder). Instead, if there
+  // are uploaded docs the profile didn't place AND they look like real, relevant
+  // documents (a PDF/image categorised as "other", not an internal/system file),
+  // we just FLAG them so staff can add them manually if they belong — keeping the
+  // folder clean.
   try {
     const usedIds = new Set<string>();
     for (const job of copyJobs) if (job.doc.driveFileId) usedIds.add(job.doc.driveFileId);
     for (const src of bundleSources) if (src.driveFileId) usedIds.add(src.driveFileId);
 
-    const leftovers = categorized.filter((d) => d.driveFileId && !usedIds.has(d.driveFileId));
-    let supportingCopied = 0;
-    for (const d of leftovers) {
-      try {
-        const baseName = String(d.name || "Document").replace(/^Supporting - /i, "");
-        const copied = await copyDriveFileToFolder({
-          sourceFileId: d.driveFileId!,
-          newName: `Supporting - ${baseName}`,
-          targetFolderId: submissionFolderId,
-        });
-        filesAdded.push({ name: `Supporting - ${baseName}`, link: copied.webViewLink, source: "copied" });
-        supportingCopied++;
-      } catch (e) {
-        warnings.push(`Supporting doc could not be copied (please add manually): ${d.name} — ${(e as Error).message.slice(0, 80)}`);
-      }
-    }
-    if (supportingCopied > 0) {
-      console.log(`[submission ${caseId}] step 7: +${supportingCopied} supporting doc(s) copied (were uncategorized/'other' and would have been dropped)`);
+    const INTERNAL_RE = /intake answers|chat|conversation|^notes?\b|\.txt$|whatsapp/i;
+    const extras = categorized.filter((d) =>
+      d.driveFileId && !usedIds.has(d.driveFileId) &&
+      d.category === "other" &&
+      /\.(pdf|jpe?g|png|webp|heic)$/i.test(String(d.name || "")) &&
+      !INTERNAL_RE.test(String(d.name || ""))
+    );
+    if (extras.length > 0) {
+      warnings.push(`Not added to the package — review and add manually only if needed for submission: ${extras.map((d) => d.name).join(", ")}`);
     }
   } catch (e) {
-    warnings.push(`Supporting-documents step failed: ${(e as Error).message}`);
+    warnings.push(`Extra-documents check failed: ${(e as Error).message}`);
   }
 
   console.log(`[submission ${caseId}] ✅ DONE — ${filesAdded.length} files added, ${errors.length} errors, ${warnings.length} warnings`);
