@@ -10,13 +10,14 @@ type Assessment = {
   caseId: string; client: string; formType: string; assignedTo: string;
   stage: string; stageLabel: string; nextAction: string; autoDoable: boolean;
   autoActionKey?: string; priority: number; reasons: string[];
-  missingDocs: string[]; permitDaysLeft?: number;
+  missingDocs: string[]; permitDaysLeft?: number; inScope: boolean;
   formsRequired: string[]; formsPresent: string[]; formsMissing: string[];
 };
 type Summary = {
   total: number; byStage: Record<string, number>;
   readyToPrepare: number; awaitingDocs: number; needsOwner: number;
   changesNeeded: number; formsOutstanding: number;
+  inScope: number; outOfScope: number;
 };
 
 const STAGE_STYLE: Record<string, string> = {
@@ -36,6 +37,7 @@ export default function AgentDashboard() {
   const [running, setRunning] = useState(false);
   const [busyCase, setBusyCase] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  const [scopeOnly, setScopeOnly] = useState(true);
   const [msg, setMsg] = useState<string>("");
 
   const load = async () => {
@@ -75,7 +77,9 @@ export default function AgentDashboard() {
     } finally { setRunning(false); }
   };
 
-  const cases = (data?.cases || []).filter((c) => filter === "all" ? c.stage !== "submitted" : c.stage === filter);
+  const cases = (data?.cases || [])
+    .filter((c) => filter === "all" ? c.stage !== "submitted" : c.stage === filter)
+    .filter((c) => scopeOnly ? c.inScope : true);
   const sum = data?.summary;
 
   return (
@@ -106,11 +110,16 @@ export default function AgentDashboard() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
         <button onClick={runBatch} disabled={running}
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700 disabled:opacity-50">
           {running ? "Working…" : "⚡ Run agent on all ready files"}
         </button>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+          <input type="checkbox" checked={scopeOnly} onChange={(e) => setScopeOnly(e.target.checked)} />
+          Agent scope only (PGWP · Visitor Record · TRV)
+          {sum && !scopeOnly && <span className="text-slate-400">· {sum.outOfScope} other</span>}
+        </label>
         {msg && <span className="text-xs text-slate-600">{msg}</span>}
       </div>
 
@@ -127,6 +136,7 @@ export default function AgentDashboard() {
                     <span className="font-semibold text-slate-900 text-sm">{c.client || "—"}</span>
                     <span className="text-xs text-slate-400">{c.formType}</span>
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STAGE_STYLE[c.stage] || STAGE_STYLE.unknown}`}>{c.stageLabel || c.stage}</span>
+                    {!c.inScope && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500" title="Outside the agent's current scope — handle manually">manual</span>}
                     {typeof c.permitDaysLeft === "number" && c.permitDaysLeft <= 30 && (
                       <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">⏰ permit {c.permitDaysLeft}d</span>
                     )}

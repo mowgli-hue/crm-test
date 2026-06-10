@@ -13,6 +13,20 @@ import { getChecklistProgress } from "@/lib/application-checklists";
 import { formStatus } from "@/lib/application-forms";
 import { MAPPABLE_FORMS } from "@/lib/form-fill";
 
+// ── Agent scope ──────────────────────────────────────────────────────────
+// The agent only ACTS on the case types it's trained on. Everything else still
+// shows in the worklist (for visibility) but is marked manual — the agent won't
+// auto-assemble or auto-fill it. Start narrow (PGWP, Visitor Record, TRV) and
+// widen via AGENT_SCOPE_FORMTYPES (comma-separated substrings) as we validate
+// each type, without a code change.
+const AGENT_SCOPE_DEFAULT = ["pgwp", "post-graduation", "post graduation", "visitor record", "trv"];
+export function inAgentScope(formType: string): boolean {
+  const ft = String(formType || "").toLowerCase();
+  const env = String(process.env.AGENT_SCOPE_FORMTYPES || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const matchers = env.length ? env : AGENT_SCOPE_DEFAULT;
+  return matchers.some((m) => ft.includes(m));
+}
+
 export type CaseStage =
   | "submitted"          // already at IRCC — monitor only
   | "in_review"          // with RCIC for review
@@ -37,6 +51,7 @@ export type CaseAssessment = {
   reasons: string[];
   missingDocs: string[];
   permitDaysLeft?: number;
+  inScope: boolean;           // is this a type the agent is trained to act on?
   // IRCC form completion — the hook for the XFA form-filling capability.
   formsRequired: string[];    // e.g. ["IMM5710","IMM5476"]
   formsPresent: string[];     // forms already produced for this file
@@ -66,6 +81,7 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
     priority: 0,
     reasons: [],
     missingDocs: [],
+    inScope: inAgentScope(String((c as any).formType || "")),
     formsRequired: [],
     formsPresent: [],
     formsMissing: [],
@@ -163,6 +179,17 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
   if (Number.isFinite(permitDaysLeft) && permitDaysLeft >= 0 && permitDaysLeft <= 30) {
     a.reasons.push(`Permit expires in ${Math.ceil(permitDaysLeft)} day(s).`);
     a.priority += permitDaysLeft <= 14 ? 100 : 50;
+  }
+
+  // ── Scope gate ──
+  // The agent only auto-acts on the case types it's trained on. Out-of-scope
+  // files still show their stage (visibility) but the agent won't touch them —
+  // staff handle those manually until we widen the scope.
+  if (!a.inScope) {
+    a.autoDoable = false;
+    a.autoActionKey = undefined;
+    a.reasons.push("Outside the agent's current scope — handle manually.");
+    a.priority = Math.max(0, a.priority - 40); // de-prioritise vs in-scope work
   }
 
   return a;

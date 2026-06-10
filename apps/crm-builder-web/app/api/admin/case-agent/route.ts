@@ -47,6 +47,8 @@ function summarize(cases: CaseAssessment[]) {
     needsOwner: cases.filter((c) => c.stage === "needs_owner").length,
     changesNeeded: cases.filter((c) => c.stage === "changes_needed").length,
     formsOutstanding: cases.filter((c) => c.formsMissing.length > 0 && c.stage !== "submitted").length,
+    inScope: cases.filter((c) => c.inScope && c.stage !== "submitted").length,
+    outOfScope: cases.filter((c) => !c.inScope && c.stage !== "submitted").length,
   };
 }
 
