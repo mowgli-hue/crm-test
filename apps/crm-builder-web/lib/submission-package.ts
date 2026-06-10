@@ -591,11 +591,14 @@ const PROFILE_PGWP: FormProfile = {
     { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
     { sourceKey: "transcript",       template: "Transcript_<First>_<Last>" },
     { sourceKey: "completionLetter", template: "Completion_Letter_<First>_<Last>" },
+    { sourceKey: "languageTest",     template: "Language_Test_<First>_<Last>" },
     { sourceKey: "imm5710",          template: "IMM5710e_<First>_<Last>" },
     { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
   ],
+  // Language test now stands alone at top level (per Newton's PGWP layout), so
+  // it's no longer in the Client_Info bundle.
   bundleCategories: [
-    "studyPermits", "workPermits", "languageTests",
+    "studyPermits", "workPermits",
     "olderTranscripts", "loas", "medicals",
   ],
   recommended: [
