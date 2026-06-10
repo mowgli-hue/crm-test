@@ -9,6 +9,7 @@ import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
 import ReviewItemsPanel from "@/components/review-items-panel";
+import AgentDashboard from "@/components/agent-dashboard";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
 import PrConsultationsPage from "@/components/pr-consultations-page";
 import SubmissionLogPage from "@/components/submission-log";
@@ -391,6 +392,7 @@ type DiagnosticsReport = {
 const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={16} /> },
   { id: "admin-dashboard", label: "Admin Dashboard", icon: <span>🛡️</span> },
+  { id: "agent", label: "Case Agent", icon: <span>🤖</span> },
   { id: "cases", label: "Cases", icon: <ClipboardList size={16} /> },
   { id: "communications", label: "New Case", icon: <UserPlus size={16} /> },
   { id: "results", label: "Results", icon: <BarChart2 size={16} /> },
@@ -5149,7 +5151,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {(() => {
                 // Group definitions — each section + which tab IDs belong to it
                 const groups: { id: string; label: string; tabIds: string[] }[] = [
-                  { id: "_dashboard", label: "", tabIds: ["dashboard", "newton-ai"] },
+                  { id: "_dashboard", label: "", tabIds: ["dashboard", "agent", "newton-ai"] },
                   { id: "processing", label: "Processing Team", tabIds: ["cases", "tasks", "inbox", "web-forms"] },
                   { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
                   { id: "marketing", label: "Marketing Team", tabIds: ["communications", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "pr-consultations", "accounting"] },
@@ -5300,6 +5302,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               />
             ) : screen === "call-log" ? (
               <CallLog sessionUser={sessionUser} apiFetch={apiFetch} />
+            ) : screen === "agent" ? (
+              <AgentDashboard />
             ) : screen === "newton-ai" ? (
             <div className="flex-1 h-full overflow-hidden">
               <NewtonAgent sessionUser={sessionUser} />

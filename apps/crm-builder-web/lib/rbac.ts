@@ -20,12 +20,13 @@ export type AppScreen =
   | "marketing-leads"
   | "marketing-dashboard"
   | "call-log"
+  | "agent"
   | "newton-ai";
 
 // Each role only sees what they need
 const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Admin sees everything
-  Admin: ["dashboard", "admin-dashboard", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
+  Admin: ["dashboard", "admin-dashboard", "agent", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
 
   // Marketing creates cases, tracks leads, logs calls, sees accounting + PR consultations
   Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "pr-consultations", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "newton-ai"],
@@ -34,7 +35,7 @@ const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   Processing: ["dashboard", "cases", "submission", "tasks", "inbox", "web-forms", "team", "newton-ai"],
 
   // Processing Lead can also see results and reassign
-  ProcessingLead: ["dashboard", "cases", "results", "submission", "tasks", "inbox", "web-forms", "team", "settings", "newton-ai"],
+  ProcessingLead: ["dashboard", "agent", "cases", "results", "submission", "tasks", "inbox", "web-forms", "team", "settings", "newton-ai"],
 
   // Reviewer reviews cases — needs to see under-review cases, what's being submitted, and results
   Reviewer: ["dashboard", "cases", "submission", "results", "tasks", "inbox", "team", "newton-ai"],
