@@ -46,6 +46,7 @@ function summarize(cases: CaseAssessment[]) {
     awaitingDocs: cases.filter((c) => c.stage === "awaiting_docs").length,
     needsOwner: cases.filter((c) => c.stage === "needs_owner").length,
     changesNeeded: cases.filter((c) => c.stage === "changes_needed").length,
+    formsOutstanding: cases.filter((c) => c.formsMissing.length > 0 && c.stage !== "submitted").length,
   };
 }
 

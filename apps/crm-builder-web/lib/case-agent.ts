@@ -10,6 +10,7 @@
 
 import type { CaseItem, DocumentItem } from "@/lib/models";
 import { getChecklistProgress } from "@/lib/application-checklists";
+import { formStatus } from "@/lib/application-forms";
 
 export type CaseStage =
   | "submitted"          // already at IRCC — monitor only
@@ -30,11 +31,15 @@ export type CaseAssessment = {
   stageLabel: string;
   nextAction: string;
   autoDoable: boolean;        // can the agent safely do this with no human?
-  autoActionKey?: "auto_prepare" | "request_docs";
+  autoActionKey?: "auto_prepare" | "request_docs" | "fill_forms";
   priority: number;           // higher = more urgent
   reasons: string[];
   missingDocs: string[];
   permitDaysLeft?: number;
+  // IRCC form completion — the hook for the XFA form-filling capability.
+  formsRequired: string[];    // e.g. ["IMM5710","IMM5476"]
+  formsPresent: string[];     // forms already produced for this file
+  formsMissing: string[];     // forms still to fill (XFA, etc.)
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -60,7 +65,16 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
     priority: 0,
     reasons: [],
     missingDocs: [],
+    formsRequired: [],
+    formsPresent: [],
+    formsMissing: [],
   };
+
+  // IRCC form completion status (which forms produced vs. still to fill).
+  const fs = formStatus(a.formType, docs.map((d) => String((d as any).name || "")));
+  a.formsRequired = fs.required.map((f) => f.id);
+  a.formsPresent = fs.present;
+  a.formsMissing = fs.missing.map((f) => f.id);
 
   const ps = String((c as any).processingStatus || "docs_pending");
   const reviewStatus = String((c as any).reviewStatus || "");
@@ -109,13 +123,24 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
     a.nextAction = "All required documents are in — run auto-prepare to assemble the file (letter + package) and move it to review.";
     a.autoDoable = true; a.autoActionKey = "auto_prepare";
     a.reasons.push("All required docs received.");
+    if (a.formsMissing.length) a.reasons.push(`IRCC forms still to fill: ${a.formsMissing.join(", ")}.`);
     a.priority += 25;
   }
-  // ── Assembled, sitting before review/submit ──
+  // ── Assembled. If the IRCC forms still aren't filled, that's the next gap ──
+  else if (a.formsMissing.length > 0) {
+    a.stage = "prepared"; a.stageLabel = "Forms outstanding";
+    a.nextAction = `File is assembled, but the IRCC form(s) still need filling: ${a.formsMissing.join(", ")}.`;
+    // Form-fill action — wired now, executed once the XFA form-filler is live.
+    a.autoActionKey = "fill_forms";
+    a.autoDoable = false;
+    a.reasons.push(`Forms to fill: ${a.formsMissing.join(", ")}.`);
+    a.priority += 18;
+  }
+  // ── Assembled and forms done, sitting before review/submit ──
   else {
     a.stage = "prepared"; a.stageLabel = "Prepared — ready for review";
-    a.nextAction = "File is assembled. Move to RCIC review / submit when ready.";
-    a.reasons.push("Assembled and waiting.");
+    a.nextAction = "File is assembled and forms are in. Move to RCIC review / submit when ready.";
+    a.reasons.push("Assembled, forms done.");
     a.priority += 10;
   }
 
