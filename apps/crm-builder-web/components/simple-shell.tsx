@@ -11326,7 +11326,23 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             `${Math.floor(hoursAgo / (24 * 7))} weeks`;
                           return (
                             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
-                              ⚠️ <strong>Outside 24-hour window — message may not deliver.</strong> Last reply from {clientName.split(" ")[0]} was {display} ago. Meta silently drops free-form WhatsApp messages after 24h of silence. The client must message us first, or use a pre-approved template.
+                              ⚠️ <strong>Outside 24-hour window — message may not deliver.</strong> Last reply from {clientName.split(" ")[0]} was {display} ago. Meta silently drops free-form WhatsApp messages after 24h of silence. Send the approved “please reply” template to reopen the chat.
+                              <button
+                                onClick={async () => {
+                                  if (!confirm(`Send the approved re-engagement template to ${clientName}? It always delivers and asks them to reply, which reopens the chat so your normal messages go through.`)) return;
+                                  const res = await apiFetch("/inbox/new-chat", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ channel: "inbox", phone: phone.replace(/\D/g, ""), name: clientName || "there", service: matchedCase?.formType || "" }),
+                                  }).catch(() => null);
+                                  const j = res ? await res.json().catch(() => ({})) : {};
+                                  alert(res && res.ok && !(j as any)?.error
+                                    ? "✅ Re-engagement template sent — the chat will reopen once the client replies."
+                                    : `Could not send: ${(j as any)?.error || "unknown error"}. Check the processing template is approved in WhatsApp Manager.`);
+                                }}
+                                className="mt-2 block rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700">
+                                🔔 Ask client to reply
+                              </button>
                             </div>
                           );
                         }
