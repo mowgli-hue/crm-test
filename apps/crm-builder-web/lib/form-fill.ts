@@ -18,9 +18,10 @@ export function pdfServiceUrl(): string {
   return (process.env.PDF_SERVICE_URL || "https://crm-test-production-b755.up.railway.app").replace(/\/+$/, "");
 }
 
-// Forms this module can currently map from case data. Others fall back to a
-// blank/representative-only fill until their mapper is added.
-export const MAPPABLE_FORMS = new Set(["imm5710", "imm5476"]);
+// Forms this module can map from case data. The four temp-status forms share a
+// large "personal core" of identical field names, so they all map from one core
+// builder + small per-form additions. IMM5476 is applicant-only (rep hardcoded).
+export const MAPPABLE_FORMS = new Set(["imm5710", "imm5708", "imm5257", "imm5709", "imm5476"]);
 
 const s = (v: unknown): string => (v == null ? "" : String(v)).trim();
 const pick = (obj: Record<string, unknown>, ...keys: string[]): string => {
@@ -50,38 +51,39 @@ function splitPhone(v: string): { area: string; first3: string; last4: string; i
   return { area: ten.slice(0, 3), first3: ten.slice(3, 6), last4: ten.slice(6, 10), intl: "" };
 }
 
-// Map a case → IMM5710 data dict. Keys here MUST match fill_imm5710.py's
-// EMPTY_CLIENT (the form's real fields). We fill only confident facts.
-export function mapCaseToImm5710(caseItem: CaseItem): Record<string, string> {
+// The shared "personal core" — field names identical across IMM5710/5708/5709
+// and (bar the service field) IMM5257. Extra keys a given form doesn't read are
+// harmlessly ignored by the filler, so one core safely serves all four. We fill
+// only confident identity/contact facts; legal-choice radios and gated sections
+// (work/study/visit details) are left for staff to complete on the draft.
+function personalCore(caseItem: CaseItem): Record<string, string> {
   const intake = ((caseItem as any).pgwpIntake as Record<string, unknown>) || {};
-  const name = {
-    first: pick(intake, "firstName", "first_name", "givenName", "given_name") || splitName(s((caseItem as any).client)).first,
-    last: pick(intake, "lastName", "last_name", "familyName", "family_name") || splitName(s((caseItem as any).client)).last,
-  };
+  const first = pick(intake, "firstName", "first_name", "givenName", "given_name") || splitName(s((caseItem as any).client)).first;
+  const last = pick(intake, "lastName", "last_name", "familyName", "family_name") || splitName(s((caseItem as any).client)).last;
   const dob = splitDob(pick(intake, "dateOfBirth", "dob", "date_of_birth"));
   const phone = splitPhone(pick(intake, "phone", "phoneNumber", "q7") || s((caseItem as any).leadPhone));
   const citizenship = pick(intake, "citizenship", "nationality", "countryOfCitizenship", "country_of_citizenship");
-  const passportExpiry = splitDob(pick(intake, "passportExpiry", "passport_expiry", "passportExpiryDate"));
-  const passportIssue = splitDob(pick(intake, "passportIssue", "passport_issue", "passportIssueDate"));
+  const pExp = splitDob(pick(intake, "passportExpiry", "passport_expiry", "passportExpiryDate"));
+  const pIss = splitDob(pick(intake, "passportIssue", "passport_issue", "passportIssueDate"));
+  const spouse = splitName(pick(intake, "spouseName", "spouse_name"));
 
   return {
     uci_client_id: pick(intake, "uci", "UCI", "clientId", "uci_client_id"),
-    service_in_language: "01", // English
-    family_name: name.last,
-    given_name: name.first,
+    family_name: last,
+    given_name: first,
     sex: pick(intake, "sex", "gender"),
     dob_year: dob.y, dob_month: dob.m, dob_day: dob.d,
     place_birth_city: pick(intake, "placeOfBirthCity", "birthCity", "place_birth_city"),
     place_birth_country: pick(intake, "placeOfBirthCountry", "birthCountry", "countryOfBirth", "place_birth_country"),
     citizenship_country: citizenship,
     marital_status: pick(intake, "maritalStatus", "marital_status"),
-    spouse_family_name: splitName(pick(intake, "spouseName", "spouse_name")).last,
-    spouse_given_name: splitName(pick(intake, "spouseName", "spouse_name")).first,
+    spouse_family_name: spouse.last,
+    spouse_given_name: spouse.first,
     native_language: pick(intake, "nativeLanguage", "motherTongue", "native_language"),
     passport_number: pick(intake, "passportNumber", "passport", "passport_number"),
     passport_country: citizenship,
-    passport_issue_year: passportIssue.y, passport_issue_month: passportIssue.m, passport_issue_day: passportIssue.d,
-    passport_expiry_year: passportExpiry.y, passport_expiry_month: passportExpiry.m, passport_expiry_day: passportExpiry.d,
+    passport_issue_year: pIss.y, passport_issue_month: pIss.m, passport_issue_day: pIss.d,
+    passport_expiry_year: pExp.y, passport_expiry_month: pExp.m, passport_expiry_day: pExp.d,
     mailing_street_num: pick(intake, "streetNumber", "street_num", "mailing_street_num"),
     mailing_street_name: pick(intake, "streetName", "street_name", "mailing_street_name", "address"),
     mailing_city: pick(intake, "city", "mailing_city"),
@@ -92,9 +94,29 @@ export function mapCaseToImm5710(caseItem: CaseItem): Record<string, string> {
     phone_area_code: phone.area, phone_first_three: phone.first3, phone_last_five: phone.last4,
     phone_intl_number: phone.intl,
     email: pick(intake, "email") || s((caseItem as any).leadEmail),
-    employer_name: pick(intake, "employerName", "employer", "employer_name"),
-    job_title: pick(intake, "jobTitle", "occupation", "job_title"),
   };
+}
+
+// PGWP / worker — IMM5710. service field is `service_in_language`.
+export function mapCaseToImm5710(caseItem: CaseItem): Record<string, string> {
+  return { ...personalCore(caseItem), service_in_language: "01" }; // English; work-details section left for staff
+}
+// Visitor Record — IMM5708. Personal core; extend/visit choices left for staff.
+export function mapCaseToImm5708(caseItem: CaseItem): Record<string, string> {
+  return { ...personalCore(caseItem) };
+}
+// TRV / Visitor Visa — IMM5257. Uses `service_in` (not service_in_language).
+export function mapCaseToImm5257(caseItem: CaseItem): Record<string, string> {
+  const intake = ((caseItem as any).pgwpIntake as Record<string, unknown>) || {};
+  return {
+    ...personalCore(caseItem),
+    service_in: "01",
+    residential_postal_code: pick(intake, "postalCode", "postal_code"),
+  };
+}
+// Study Permit Extension — IMM5709. Personal core; study-details section gated/left for staff.
+export function mapCaseToImm5709(caseItem: CaseItem): Record<string, string> {
+  return { ...personalCore(caseItem) };
 }
 
 // Map a case → IMM5476 (Use of Representative). Rep details are hardcoded inside
@@ -117,6 +139,9 @@ export function mapCaseToImm5476(caseItem: CaseItem): Record<string, string> {
 export function buildFormData(formId: string, caseItem: CaseItem): Record<string, string> | null {
   switch (formId) {
     case "imm5710": return mapCaseToImm5710(caseItem);
+    case "imm5708": return mapCaseToImm5708(caseItem);
+    case "imm5257": return mapCaseToImm5257(caseItem);
+    case "imm5709": return mapCaseToImm5709(caseItem);
     case "imm5476": return mapCaseToImm5476(caseItem);
     default: return null; // no mapper yet — caller skips / flags for manual
   }
