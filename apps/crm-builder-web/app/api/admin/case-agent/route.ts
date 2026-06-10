@@ -80,28 +80,43 @@ export async function POST(request: NextRequest) {
 
   const [cases, docsByCase] = await Promise.all([listAllCases(), listAllDocumentsByCase()]);
   const assessed = assessAll(cases as any, docsByCase as any);
-  const ready = assessed.filter((c) => c.autoActionKey === "auto_prepare").slice(0, max);
+
+  // The agent's two safe auto-actions: assemble ready files, and fill the IRCC
+  // form DRAFTS for files whose forms are still outstanding. Neither messages a
+  // client or submits to IRCC.
+  const toAssemble = assessed.filter((c) => c.autoActionKey === "auto_prepare").slice(0, max);
+  const toFill = assessed.filter((c) => c.autoActionKey === "fill_forms" && c.autoDoable).slice(0, max);
 
   const token = getAuthRecoveryToken();
-  const done: Array<{ caseId: string; client: string; ok: boolean; result?: string; error?: string }> = [];
-  for (const c of ready) {
+  const call = async (path: string) => {
+    const res = await fetch(`${baseUrl()}${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systemToken: token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok && data?.ok !== false && !data?.error, data };
+  };
+
+  const assembled: Array<{ caseId: string; client: string; ok: boolean; result?: string; error?: string }> = [];
+  for (const c of toAssemble) {
     try {
-      const res = await fetch(`${baseUrl()}/api/cases/${c.caseId}/auto-prepare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ systemToken: token }),
-      });
-      const data = await res.json().catch(() => ({}));
-      done.push({
-        caseId: c.caseId, client: c.client,
-        ok: res.ok && data?.ok !== false && !data?.error,
-        result: data?.message || (data?.prepared ? "prepared" : data?.reason),
-        error: data?.error,
-      });
-    } catch (e) {
-      done.push({ caseId: c.caseId, client: c.client, ok: false, error: (e as Error).message });
-    }
+      const r = await call(`/api/cases/${c.caseId}/auto-prepare`);
+      assembled.push({ caseId: c.caseId, client: c.client, ok: r.ok, result: r.data?.message || (r.data?.prepared ? "prepared" : r.data?.reason), error: r.data?.error });
+    } catch (e) { assembled.push({ caseId: c.caseId, client: c.client, ok: false, error: (e as Error).message }); }
   }
-  console.log(`[case-agent] assembled ${done.filter((d) => d.ok).length}/${ready.length} ready files`);
-  return NextResponse.json({ ok: true, attempted: ready.length, assembled: done.filter((d) => d.ok).length, results: done });
+
+  const formsFilled: Array<{ caseId: string; client: string; ok: boolean; forms?: string[]; error?: string }> = [];
+  for (const c of toFill) {
+    try {
+      const r = await call(`/api/cases/${c.caseId}/fill-forms`);
+      formsFilled.push({ caseId: c.caseId, client: c.client, ok: r.ok, forms: (r.data?.filled || []).map((f: any) => f.form), error: r.data?.error });
+    } catch (e) { formsFilled.push({ caseId: c.caseId, client: c.client, ok: false, error: (e as Error).message }); }
+  }
+
+  console.log(`[case-agent] assembled ${assembled.filter((d) => d.ok).length}/${toAssemble.length}, filled forms on ${formsFilled.filter((d) => d.ok).length}/${toFill.length}`);
+  return NextResponse.json({
+    ok: true,
+    assembled: { attempted: toAssemble.length, succeeded: assembled.filter((d) => d.ok).length, results: assembled },
+    formsFilled: { attempted: toFill.length, succeeded: formsFilled.filter((d) => d.ok).length, results: formsFilled },
+  });
 }

@@ -11,6 +11,7 @@
 import type { CaseItem, DocumentItem } from "@/lib/models";
 import { getChecklistProgress } from "@/lib/application-checklists";
 import { formStatus } from "@/lib/application-forms";
+import { MAPPABLE_FORMS } from "@/lib/form-fill";
 
 export type CaseStage =
   | "submitted"          // already at IRCC — monitor only
@@ -129,10 +130,15 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
   // ── Assembled. If the IRCC forms still aren't filled, that's the next gap ──
   else if (a.formsMissing.length > 0) {
     a.stage = "prepared"; a.stageLabel = "Forms outstanding";
-    a.nextAction = `File is assembled, but the IRCC form(s) still need filling: ${a.formsMissing.join(", ")}.`;
-    // Form-fill action — wired now, executed once the XFA form-filler is live.
+    const mappable = a.formsMissing.filter((id) => MAPPABLE_FORMS.has(id.toLowerCase()));
     a.autoActionKey = "fill_forms";
-    a.autoDoable = false;
+    // Auto-doable when at least one missing form has a built mapper — the agent
+    // produces a DRAFT (no submission) for staff to verify. Forms without a
+    // mapper yet are flagged for manual completion.
+    a.autoDoable = mappable.length > 0;
+    a.nextAction = mappable.length
+      ? `Auto-fill the IRCC form draft(s): ${mappable.join(", ")} — then staff verify & sign.${a.formsMissing.length > mappable.length ? ` (Fill manually: ${a.formsMissing.filter((id) => !MAPPABLE_FORMS.has(id.toLowerCase())).join(", ")}.)` : ""}`
+      : `File assembled — fill the IRCC form(s) manually: ${a.formsMissing.join(", ")}.`;
     a.reasons.push(`Forms to fill: ${a.formsMissing.join(", ")}.`);
     a.priority += 18;
   }
