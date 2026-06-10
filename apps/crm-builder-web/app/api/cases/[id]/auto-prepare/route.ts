@@ -28,6 +28,7 @@ import { canStaffAccessCase } from "@/lib/rbac";
 import { getCase, listDocuments, updateCaseProcessing } from "@/lib/store";
 import { getChecklistProgress } from "@/lib/application-checklists";
 import { getReviewChecklist } from "@/lib/pre-submission-review";
+import { inAgentScope } from "@/lib/case-agent";
 import { getAuthRecoveryToken, isValidSystemToken } from "@/lib/auth-recovery-token";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
@@ -176,22 +177,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   );
   results.repLetter = { ok: letter.ok, error: letter.error, personalized: Boolean(clientStory) };
 
-  // ── STEP 2.5: TRV — auto-build the "Client Information" package ──
-  // For inside-Canada TRV / visitor cases, preparing the application means
-  // assembling the single Client Information PDF (passport + digital photo +
-  // current permit + IMM5476). Now that required docs are confirmed complete
-  // (Step 1), build it automatically so staff open the case to a ready package.
-  // Best-effort and non-blocking — a failure is reported in the note, never an
-  // error to the caller. (Only TRV-like types: other profiles still build their
-  // package on the manual submission-package action to avoid Drive churn.)
+  // ── STEP 2.5: Fill the IRCC forms, THEN assemble the full submission package ──
+  // For the agent's in-scope types (PGWP, Visitor Record, TRV), "preparing the
+  // application" means producing the whole ordered package, not just the letter.
+  // Order matters: fill the forms FIRST so the freshly-filled IMM5710/5257/5708
+  // is registered as a document, THEN assemble the package so it lands in the
+  // ordered Drive folder alongside passport/photo/transcript/completion/test +
+  // the rep letter (or, for TRV, the merged Client Information PDF). Best-effort
+  // and non-blocking — failures are noted, never thrown.
   const ftLower = formType.toLowerCase();
-  const isTrvLike =
-    ftLower.includes("trv") || ftLower.includes("visitor visa") ||
-    ftLower.includes("visitor record") || ftLower.includes("super visa") ||
-    ftLower.includes("supervisa");
-  if (isTrvLike) {
+  const isAgentScoped = inAgentScope(formType);
+  if (isAgentScoped) {
+    // 1) Fill the IRCC forms from intake (full AI-parsed data).
+    const forms = await callStep(`/api/cases/${params.id}/fill-forms`, systemToken);
+    results.forms = { ok: forms.ok, error: forms.error };
+    // 2) Assemble the complete ordered submission package into Drive.
     const pkg = await callStep(`/api/cases/${params.id}/submission-package`, systemToken);
-    results.clientInfoPackage = { ok: pkg.ok, error: pkg.error };
+    results.package = { ok: pkg.ok, error: pkg.error };
   }
 
   // ── STEP 3: Pre-submission review checklist ──
@@ -225,8 +227,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   lines.push(`🤖 Auto-prepare ${readyForReview ? "completed" : "ran (held — not yet ready)"} (triggered by ${actorName}) — ${new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver" })}`);
   lines.push("");
   lines.push(`• Rep letter: ${results.repLetter.ok ? `drafted ✓${clientStory ? " (personalised from intake)" : " (generic template — no intake detail)"}` : `not done — ${results.repLetter.error}`}`);
-  if (results.clientInfoPackage) {
-    lines.push(`• Client Information package (TRV): ${results.clientInfoPackage.ok ? "built ✓ (passport + photo + current permit + IMM5476)" : `not built — ${results.clientInfoPackage.error}`}`);
+  if (results.forms) {
+    lines.push(`• IRCC forms (filled from intake): ${results.forms.ok ? "done ✓ — verify & sign the drafts" : `not done — ${results.forms.error}`}`);
+  }
+  if (results.package) {
+    lines.push(`• Submission package assembled in Drive: ${results.package.ok ? "done ✓ (forms + supporting docs, ordered)" : `not built — ${results.package.error}`}`);
   }
   lines.push(`• Required documents: all received ✓ (${progress.receivedRequired.length})`);
   if (systemVerifiedItems.length > 0) {
