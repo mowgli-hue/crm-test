@@ -7028,11 +7028,32 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   if (!cleanAppNum) {
                                     if (!confirm("No application number entered. Mark Submitted without one? You can add it later in the Submission tab.")) return;
                                   }
+                                  const nowIso = new Date().toISOString();
                                   await updateCaseProcessing(selectedCase.id, {
                                     processingStatus: "submitted",
                                     applicationNumber: cleanAppNum || undefined,
-                                    submittedAt: new Date().toISOString(),
+                                    submittedAt: nowIso,
                                   });
+                                  // Actually record the submission from the CRM — create the
+                                  // Submission Log row (idempotent) so the case is truly
+                                  // "submitted", not just flagged. Submitted cases already drop
+                                  // out of the Active Cases count (visibleCases excludes them).
+                                  try {
+                                    await apiFetch("/submissions", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        caseId: selectedCase.id,
+                                        clientName: selectedCase.client || "",
+                                        clientPhone: selectedCase.leadPhone || "",
+                                        appType: selectedCase.formType || "",
+                                        submittedDate: nowIso.slice(0, 10),
+                                        irccReference: cleanAppNum || "",
+                                        status: "submitted",
+                                        submittedBy: sessionUser?.name || selectedCase.assignedTo || "",
+                                      }),
+                                    });
+                                  } catch { /* non-blocking — status + app number already saved */ }
                                   // Pre-fill the Submission tab and jump straight to it.
                                   setSubmissionCaseId(selectedCase.id);
                                   setSubmissionApplicationNumber(cleanAppNum);
