@@ -102,7 +102,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const formId = f.id.toLowerCase(); // "IMM5710" → "imm5710"
     if (f.online) { skipped.push({ form: f.id, reason: "online portal — no PDF to fill" }); continue; }
     if (want && !want.has(formId)) continue;
-    if (!MAPPABLE_FORMS.has(formId)) { skipped.push({ form: f.id, reason: "mapper not built yet — fill manually" }); continue; }
+    if (!MAPPABLE_FORMS.has(formId)) {
+      // IMM5710 is intentionally manual: it's an IRCC-certified form, so a
+      // server-side XFA fill breaks the certification and the barcode never
+      // generates. It's filled through Acrobat via cowork (Validate → barcode).
+      const reason = formId === "imm5710"
+        ? "certified form — fill manually through Acrobat (cowork), not server-side"
+        : "mapper not built yet — fill manually";
+      skipped.push({ form: f.id, reason });
+      continue;
+    }
 
     try {
       // IMM5476 = rep form (applicant-only). Everything else = the main app form,

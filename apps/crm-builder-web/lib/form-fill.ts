@@ -18,10 +18,18 @@ export function pdfServiceUrl(): string {
   return (process.env.PDF_SERVICE_URL || "https://crm-test-production-b755.up.railway.app").replace(/\/+$/, "");
 }
 
-// Forms this module can map from case data. The four temp-status forms share a
+// Forms this module can map from case data. The temp-status forms share a
 // large "personal core" of identical field names, so they all map from one core
 // builder + small per-form additions. IMM5476 is applicant-only (rep hardcoded).
-export const MAPPABLE_FORMS = new Set(["imm5710", "imm5708", "imm5257", "imm5709", "imm5476"]);
+//
+// NOTE: IMM5710 is deliberately EXCLUDED. IRCC certifies its IMM forms; filling
+// the 5710 server-side (XFA rewrite) breaks the certification → Acrobat disables
+// the form JS → Validate can't run → no 2D barcode → IRCC rejects it. The 5710 is
+// now filled MANUALLY through Adobe Acrobat via cowork (type/import → Validate →
+// barcode), per AGENT_FORM_FILLING_MEMORY.md. So the agent must NOT auto-produce a
+// 5710 draft — it's flagged for manual completion instead. (mapCaseToImm5710 is
+// kept below for any future import-data/XFDF path, just not auto-run.)
+export const MAPPABLE_FORMS = new Set(["imm5708", "imm5257", "imm5709", "imm5476"]);
 
 const s = (v: unknown): string => (v == null ? "" : String(v)).trim();
 const pick = (obj: Record<string, unknown>, ...keys: string[]): string => {

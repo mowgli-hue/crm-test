@@ -728,6 +728,55 @@ async function generateLetterBodyWithAI(p: AIBodyParams): Promise<AIBodyResult> 
 
   const applicationRules = getApplicationRules(p.formType);
 
+  // PGWP letters are won on STUDY-based eligibility. Newton's standing policy is
+  // to keep them simple: no refusal history, no employment history — and to call
+  // out academic continuity (same DLI since arrival) when the facts support it.
+  const ftLower = p.formType.toLowerCase();
+  const isPGWP = ftLower.includes("pgwp") || ftLower.includes("post-graduation") || ftLower.includes("post graduation");
+  const pgwpGuardrails = isPGWP ? `
+═══════════════════════════════════════════════════════════════
+🛑 PGWP LETTER — HARD RULES (firm policy — ALWAYS ON, NOT overridable)
+═══════════════════════════════════════════════════════════════
+A PGWP submission is won on STUDY-based eligibility, NOTHING ELSE. These rules are
+ABSOLUTE for a PGWP letter — follow them even if the consultant's notes, the intake,
+or an attached document contains the information. Including this material is a
+DEFECT, not a nicety:
+
+1. 🚫 NEVER mention any visa/permit REFUSAL, denial of entry, removal, or prior
+   immigration trouble — anywhere, in any section, in any wording. Do NOT add a
+   "No Disqualifying Factors" bullet or any sentence that raises then waves away a
+   refusal. Refusals are disclosed on the IMM form; arguing them here only plants
+   doubt. FORBIDDEN example (do NOT write anything like this):
+   "While they experienced a study permit refusal prior to their initial entry to
+   Canada, they were subsequently approved…"  → OMIT entirely.
+
+2. 🚫 NEVER include EMPLOYMENT / work history — no jobs, employers, job titles, or
+   work-experience sentences, NOT even framed as "gaining Canadian work experience."
+   PGWP eligibility is based on COMPLETED STUDIES, not work. FORBIDDEN example:
+   "…while also gaining valuable Canadian work experience as a Front Desk Clerk at
+   King George Motel Ltd. … under their study permit work authorization."  → DELETE.
+
+3. The "Background and Status History" heading, IF used, must be a SHORT ACADEMIC
+   journey ONLY: arrival to study, the program + DLI, full-time enrolment,
+   completion, same-DLI continuity, and current valid status. No employment, no
+   refusals, no travel-history filler. If there is nothing clean to say, SKIP the
+   heading entirely and go straight to the Eligibility bullets.
+
+4. Keep the letter focused on: program completion, full-time status, valid status,
+   language proficiency, DLI eligibility, 180-day window, one-time eligibility, and
+   academic continuity. That is the whole letter.
+
+ACADEMIC CONTINUITY ("same college"): From the known facts, consultant notes, and
+any attached evidence, work out whether the applicant studied at the SAME
+institution continuously since first arriving in Canada (i.e. no college transfer).
+• If YES (one DLI throughout) — add ONE clean bullet, e.g.
+  "BULLET:Academic Continuity:|My client has studied continuously at ${p.institution || "[institution]"} since arriving in Canada, maintaining full-time enrolment at a single Designated Learning Institution without transfer, which demonstrates genuine and consistent student intent."
+• If the applicant CHANGED colleges, do NOT claim continuity and do NOT dwell on
+  the change — simply confirm completion at the final DLI.
+• If continuity cannot be determined from the inputs, OMIT the continuity bullet
+  rather than guessing.
+` : "";
+
   const systemPrompt = `You are a Regulated Canadian Immigration Consultant (RCIC) drafting a formal Representative Submission Letter to IRCC (Immigration, Refugees and Citizenship Canada) for a ${p.formTypeFull} application.
 
 You will receive:
@@ -746,7 +795,7 @@ Your job: produce a polished, persuasive, professionally-structured letter body 
 APPLICATION-SPECIFIC RULES TO WEAVE IN:
 ═══════════════════════════════════════════════════════════════
 ${applicationRules}
-
+${pgwpGuardrails}
 ═══════════════════════════════════════════════════════════════
 LISTEN TO THE CONSULTANT
 ═══════════════════════════════════════════════════════════════
@@ -885,7 +934,7 @@ to match the rule set for the specific application.
 STRUCTURE GUIDELINES (BODY)
 ═══════════════════════════════════════════════════════════════
 1. Open with 1-2 introductory paragraphs naming the client + application type, weaving in their specific situation from the consultant's notes.
-2. Add a HEADING called "Background and ${p.formTypeFull.includes("Permit") || p.formTypeFull.includes("Visa") ? "Status History" : "Application Context"}" with 1-2 paragraphs of context (academic journey for study/PGWP, employment history for work, relationship timeline for sponsorship, etc.).
+2. Add a HEADING called "Background and ${p.formTypeFull.includes("Permit") || p.formTypeFull.includes("Visa") ? "Status History" : "Application Context"}" with 1-2 paragraphs of context (academic journey for study/PGWP, employment history for work, relationship timeline for sponsorship, etc.). EXCEPTION — for a PGWP letter: make this a brief ACADEMIC journey only (arrival, program, completion, same-DLI continuity). Do NOT put any refusal/immigration history or employment history here — follow the "PGWP LETTER — KEEP IT SIMPLE" rules above. If there is nothing clean to say, skip this heading entirely.
 3. Add a HEADING called "Eligibility for ${p.formTypeFull}" — under it, ENUMERATE EVERY APPLICABLE RULE AS ITS OWN BULLET (see above — this is the heart of the letter).
 4. Add a HEADING called "Compliance with IRCC Requirements" — cite the specific IMM forms enclosed and the relevant IRPR/IRPA sections.
 5. Add a HEADING called "Request for Consideration" — close with a polite request for favourable consideration and a thank-you paragraph.
@@ -1527,11 +1576,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     let driveLink = "";
     try {
       const { uploadFileToDriveFolder, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
-      let folderId = extractDriveFolderId(caseItem.docsUploadLink || "");
-      if (!folderId) {
-        const structure = await createCaseDriveStructure({ clientName, caseId: params.id, companyId });
-        folderId = structure.mainFolderId;
+      let folderId: string | null = extractDriveFolderId(caseItem.docsUploadLink || "");
+      if (!folderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
+        const structure = await createCaseDriveStructure(
+          process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+          `${safeName} (${params.id})`
+        );
+        folderId = structure.subfolders.clientDocuments.id;
       }
+      if (!folderId) throw new Error("No Drive folder available for the representative letter.");
       const driveRes = await uploadFileToDriveFolder({ folderId, fileName, mimeType: "application/pdf", fileBuffer: Buffer.from(pdfBytes) });
       driveLink = driveRes.webViewLink || "";
       console.log(`✅ Rep letter uploaded to Drive: ${fileName}`);
