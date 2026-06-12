@@ -86,8 +86,12 @@ export function resolveApplicationChecklistKey(formType: string):
     ft.includes("restore")
   )
     return "work_permit";
-  if (ft.includes("study permit")) return "study_permit";
+  // Specific extension / college-change cases MUST be checked before the generic
+  // "study permit" branch. Otherwise "Study Permit Extension (Inside Canada)"
+  // matches .includes("study permit") first and is routed to the shorter
+  // study_permit flow instead of the correct study_permit_extension flow.
   if (ft.includes("study permit extension") || ft.includes("college change") || ft.includes("spe")) return "study_permit_extension";
+  if (ft.includes("study permit")) return "study_permit";
   if (ft.includes("super visa") || ft.includes("supervisa")) return "super_visa";
   if (ft.includes("express entry") && (ft.includes("pr application") || ft.includes("after ita"))) return "express_entry_pr";
   if (ft.includes("express entry") || ft.includes("pnp")) return "express_entry";

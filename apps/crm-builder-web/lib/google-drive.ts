@@ -240,19 +240,96 @@ async function createCaseDriveStructureInner(
   };
 }
 
+// Look up an existing (non-folder, non-trashed) file by exact name within a
+// folder. Used to dedupe uploads so a resent document overwrites its previous
+// copy instead of piling up as "name (1).pdf", "name (2).pdf", …
+async function findDriveFileByName(parentFolderId: string, fileName: string): Promise<{ id: string; webViewLink?: string } | null> {
+  const accessToken = await getDriveAccessToken();
+  const safeName = String(fileName || "").replace(/'/g, "\\'");
+  const q = [
+    "mimeType!='application/vnd.google-apps.folder'",
+    "trashed=false",
+    `'${parentFolderId}' in parents`,
+    `name='${safeName}'`
+  ].join(" and ");
+  const url =
+    "https://www.googleapis.com/drive/v3/files?" +
+    new URLSearchParams({
+      q,
+      fields: "files(id,name,webViewLink,modifiedTime)",
+      pageSize: "1",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+      orderBy: "modifiedTime desc"
+    }).toString();
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store"
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { files?: Array<{ id: string; webViewLink?: string }> };
+  const match = data.files?.[0];
+  if (!match?.id) return null;
+  return { id: match.id, webViewLink: match.webViewLink };
+}
+
 export async function uploadFileToDriveFolder(input: {
   folderId: string;
   fileName: string;
   fileBuffer: Buffer;
   mimeType?: string;
+  /**
+   * When true (default), if a file with the same name already exists in the
+   * folder its contents are UPDATED in place instead of creating a duplicate.
+   * Different documents have different names (client + doc type + expiry), so
+   * this only collapses true resends of the same logical document. Pass false
+   * to force a brand-new file.
+   */
+  dedupe?: boolean;
 }): Promise<DriveFileResult> {
   const accessToken = await getDriveAccessToken();
+  const safeName = sanitizeFolderName(input.fileName);
+  const mimeType = input.mimeType || "application/octet-stream";
+
+  // ── DEDUPE: overwrite an existing same-named file instead of duplicating ──
+  // Google Drive allows many files with identical names in one folder, which is
+  // how the "(1) (2) (3)" pile-up happens when a client resends a document.
+  // Best-effort: never block or fail the upload on the dedupe path.
+  if (input.dedupe !== false) {
+    try {
+      const existing = await findDriveFileByName(input.folderId, safeName);
+      if (existing?.id) {
+        const upRes = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media&supportsAllDrives=true&fields=id,webViewLink`,
+          {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": mimeType },
+            body: input.fileBuffer,
+            cache: "no-store"
+          }
+        );
+        if (upRes.ok) {
+          const upData = (await upRes.json()) as { id?: string; webViewLink?: string };
+          if (upData.id) {
+            return {
+              id: upData.id,
+              webViewLink: upData.webViewLink || `https://drive.google.com/file/d/${upData.id}/view`
+            };
+          }
+        }
+        // Update failed — fall through to a normal create so the file is never lost.
+      }
+    } catch {
+      // ignore — dedupe is best-effort
+    }
+  }
+
   const boundary = `flowdesk_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const metadata = {
-    name: sanitizeFolderName(input.fileName),
+    name: safeName,
     parents: [input.folderId]
   };
-  const mimeType = input.mimeType || "application/octet-stream";
 
   const preamble =
     `--${boundary}\r\n` +

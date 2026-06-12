@@ -69,6 +69,29 @@ export interface ExtractedFields {
  * @param clientName  Used to give Claude context about whose document this is
  * @returns Extracted fields (any field not found will be empty/undefined)
  */
+/**
+ * Dynamic XFA forms (IRCC fillable PDFs like IMM5476 / IMM5710) store their
+ * content in an embedded XML packet rather than standard PDF page streams.
+ * Claude's PDF reader cannot render them, so the Anthropic API rejects the
+ * request with HTTP 400 "The PDF specified was not valid."
+ *
+ * The most reliable signal is the catalog flag `/NeedsRendering true`, which is
+ * set on exactly these dynamic forms and tells viewers "an XFA renderer is
+ * required." It stays in the raw bytes even when the `/XFA` entry itself is
+ * tucked inside a compressed object stream (PDF 1.5+), where a plain `/XFA`
+ * search would miss it. We also match a few XFA/LiveCycle signatures as
+ * backup. Normal scanned PDFs and ordinary AcroForm PDFs carry none of these.
+ */
+function isXfaPdf(buffer: Buffer): boolean {
+  return (
+    buffer.includes(Buffer.from("NeedsRendering")) ||
+    buffer.includes(Buffer.from("/XFA")) ||
+    buffer.includes(Buffer.from("application/x-xfa")) ||
+    buffer.includes(Buffer.from("LiveCycle")) ||
+    buffer.includes(Buffer.from("<xdp:xdp"))
+  );
+}
+
 export async function extractDocumentFields(
   buffer: Buffer,
   mimeType: string,
@@ -104,6 +127,20 @@ export async function extractDocumentFields(
     console.warn(
       `doc-ocr: skipping scan for ${clientName} — file is ${(buffer.length / 1e6).toFixed(1)}MB ` +
       `(limit ${(MAX_OCR_BYTES / 1e6).toFixed(1)}MB). Saved without auto-extraction.`
+    );
+    return null;
+  }
+
+  // ── DYNAMIC XFA FORM GUARD ──
+  // IRCC fillable forms (IMM5476, IMM5710, …) are dynamic XFA PDFs: their data
+  // lives in an embedded XML packet, not in renderable page streams. Claude's
+  // PDF reader can't open them and the Anthropic API returns 400
+  // "The PDF specified was not valid." There's also nothing useful to OCR —
+  // these are forms the system fills (or blank IRCC templates), and we already
+  // hold that data structured. Skip cleanly instead of failing the request.
+  if (isPdf && isXfaPdf(buffer)) {
+    console.warn(
+      `doc-ocr: skipping scan for ${clientName} — dynamic XFA form (IRCC fillable PDF), cannot OCR.`
     );
     return null;
   }
