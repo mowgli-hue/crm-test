@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase, listDocuments } from "@/lib/store";
 import {
@@ -21,17 +22,37 @@ import {
 } from "@/lib/google-drive";
 import { getCaseReadiness } from "@/lib/case-readiness";
 
+// The processing agent has no user session, so it authenticates with a shared
+// service token (header `x-agent-token` === AGENT_SERVICE_TOKEN). Readiness only
+// returns missing-item labels (not document contents), so this is low-risk.
+// Constant-time compare to avoid leaking the token via timing.
+function serviceTokenValid(request: NextRequest): boolean {
+  const expected = process.env.AGENT_SERVICE_TOKEN || "";
+  const provided = request.headers.get("x-agent-token") || "";
+  if (!expected || !provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const user = await getCurrentUserFromRequest(request);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Logged-in staff → their company. Trusted agent (valid service token) →
+  // the default company, same as the rest of the app.
+  const companyId = user
+    ? user.companyId
+    : serviceTokenValid(request)
+      ? (process.env.DEFAULT_COMPANY_ID || "newton")
+      : null;
+  if (!companyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const caseItem = await getCase(user.companyId, params.id);
+  const caseItem = await getCase(companyId, params.id);
   if (!caseItem) return NextResponse.json({ error: "Case not found" }, { status: 404 });
 
   // Start from the documents table, then fold in any Drive files that aren't
   // tracked yet (office scans / manual drops) so readiness reflects the real
   // folder — the same reconciliation the submission package performs.
-  let docs: Array<Record<string, unknown>> = await listDocuments(user.companyId, params.id);
+  let docs: Array<Record<string, unknown>> = await listDocuments(companyId, params.id);
   try {
     const folderId = extractDriveFolderId(caseItem.docsUploadLink || "");
     if (folderId) {
