@@ -155,6 +155,7 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       { title: "🏠 Address & Contact", questions: [4, 5, 6] },
       { title: "🎓 Study Details", questions: [7, 8, 9, 10] },
       { title: "💰 Funding & Sponsor", questions: [11, 12, 13] },
+      { title: "💼 Employment", questions: [18] },
       { title: "📋 Background", questions: [14, 15, 16, 17] },
     ],
     prompts: [
@@ -175,7 +176,8 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: country, year, reason)",
       "Do you have any medical history? (Yes/No — if Yes: provide details)",
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "What is your native language? Have you taken an English proficiency test? (Yes/No — if Yes: test name, score, date)"
+      "What is your native language? Have you taken an English proficiency test? (Yes/No — if Yes: test name, score, date)",
+      "Employment history (most recent first) — for each: From (YYYY-MM), To (YYYY-MM or present), Job Title, Employer, City, Country. Include foreign work. Reply NONE if none."
     ]
   },
 
@@ -283,6 +285,7 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       { title: "👤 Personal Info", questions: [0, 1, 2, 3, 4] },
       { title: "📋 Status & Application", questions: [5, 6, 7, 8] },
       { title: "💰 Funds & Contacts", questions: [9, 10, 11, 12] },
+      { title: "💼 Education & Employment", questions: [17, 18] },
       { title: "📋 Background", questions: [13, 14, 15, 16] },
     ],
     prompts: [
@@ -302,7 +305,9 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Have you ever been refused a visa or permit for Canada or any other country? (Yes/No — if Yes: country, year, reason)",
       "Do you have any medical history that may affect your stay? (Yes/No — if Yes: provide details)",
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
-      "What is your native language? Can you communicate in English or French? (Yes/No)"
+      "What is your native language? Can you communicate in English or French? (Yes/No)",
+      "Education history — for each: school name, country, field of study, from/to dates (YYYY-MM). Reply NONE if none.",
+      "Employment history (most recent first) — for each: From (YYYY-MM), To (YYYY-MM or present), Job Title, Employer, City, Country. Include foreign work. Reply NONE if none."
     ]
   },
 
@@ -313,6 +318,7 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       { title: "👤 Personal Info", questions: [1, 2, 3, 4, 5, 6] },
       { title: "📋 Status & Visit", questions: [7, 8, 9, 10, 11, 12] },
       { title: "💰 Funds & Entry", questions: [13, 14, 15] },
+      { title: "💼 Education & Employment", questions: [21, 22] },
       { title: "📋 Background", questions: [16, 17, 18, 19, 20] },
     ],
     prompts: [
@@ -338,7 +344,9 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       "Do you have any medical history? (Yes/No — if Yes: provide details)",
       "Do you have any criminal history? (Yes/No — if Yes: provide details)",
       "Background — please answer Yes/No for each: (a) Have you served in any military, militia, or armed group? (b) Have you held a government or political position? (c) Have you witnessed war crimes, genocide, or ill treatment? — if Yes to any: provide details",
-      "What is your native language? Can you communicate in English or French? (English / French / Both / Neither)"
+      "What is your native language? Can you communicate in English or French? (English / French / Both / Neither)",
+      "Education history — for each: school name, country, field of study, from/to dates (YYYY-MM). Reply NONE if none.",
+      "Employment history (most recent first) — for each: From (YYYY-MM), To (YYYY-MM or present), Job Title, Employer, City, Country. Include foreign work. Reply NONE if none."
     ]
   },
 

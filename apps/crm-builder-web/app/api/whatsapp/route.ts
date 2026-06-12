@@ -581,13 +581,14 @@ export async function POST(req: NextRequest) {
                   [orphanId, from, suggestedLabel, originalFilename, media.mimeType, s3Key, s3Link]
                 );
 
-                // Update the inbox message to show the doc is captured
-                try {
-                  await pool.query(
-                    `UPDATE whatsapp_inbox SET message = $1 WHERE phone = $2 AND message LIKE '%doc:%' ORDER BY created_at DESC LIMIT 1`,
-                    [`📎 ${suggestedLabel} (orphan — save contact name to file)`, from]
-                  );
-                } catch { /* non-fatal */ }
+                // NOTE: deliberately do NOT overwrite the inbox message here.
+                // The structured [doc:...|s3=...|mime=...] token set right after
+                // the S3 save (above) is what makes the image/PDF viewable in the
+                // inbox. Replacing it with a plain text label would strip the S3
+                // key and break viewability for docs from unknown numbers. The
+                // orphan_docs row already records the suggested label for filing.
+                // (Also: the old UPDATE used ORDER BY/LIMIT, invalid in Postgres,
+                // so it silently threw every time anyway.)
 
                 console.log(`📌 Orphan doc registered: ${suggestedLabel} from ${from}`);
               } catch (e) {
@@ -774,12 +775,27 @@ export async function POST(req: NextRequest) {
               // ── STEP 4: SAVE DOCUMENT RECORD IN CRM ─────────────────────
               const finalLink = driveLink || s3Link || "";
               
-              // Update inbox message with proper file name and drive link
+              // Update inbox message — KEEP it viewable. Rebuild the structured
+              // [doc:...] token (the format the inbox renders as an inline
+              // image/PDF preview + download button) so the media stays viewable
+              // even if the Drive save failed. Carry both the S3 key (primary —
+              // used for the inline preview) and the Drive link (secondary).
+              // Only fall back to plain text if we somehow have neither, so a
+              // client's photo/PDF is never left un-viewable.
               try {
-                const inboxMsg = driveLink 
-                  ? `📎 [${properFileName}](${driveLink})`
-                  : `📎 ${properFileName}`;
-                await pool.query(
+                const kind = msgType === "image" ? "image" : msgType === "audio" ? "audio" : "document";
+                const dispName = String(properFileName || `${matched.client || "doc"}`).replace(/\|/g, "");
+                const parts = [
+                  `doc:${msgId}`,
+                  `kind=${kind}`,
+                  `name=${encodeURIComponent(dispName)}`,
+                  `mime=${encodeURIComponent(media.mimeType || "application/octet-stream")}`,
+                ];
+                if (s3Link) parts.push(`s3=${encodeURIComponent(s3Key)}`);
+                if (driveLink) parts.push(`drive=${encodeURIComponent(driveLink)}`);
+                const inboxMsg = (s3Link || driveLink) ? `[${parts.join("|")}]` : `📎 ${dispName}`;
+                const inboxPool = getPool();
+                await inboxPool.query(
                   `UPDATE whatsapp_inbox SET message = $1 WHERE id = $2`,
                   [inboxMsg, msgId]
                 );
