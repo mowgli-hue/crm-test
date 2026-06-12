@@ -370,3 +370,53 @@ export function getChecklistProgress(
     optional: optional.map((i) => i.label),
   };
 }
+
+// ── Generated forms (system-produced, NOT client-provided) ──────────────────
+// The CHECKLISTS above describe what the *client* must send. These describe what
+// the *system* must generate before a case is submission-ready: the main IRCC
+// form for the stream + Use of Representative (IMM5476) + the rep submission
+// letter. They were previously implicit/scattered (e.g. submission-package's
+// REQUIRED_FOR_PGWP), which is why the agent's "complete" disagreed with the
+// submission package's. Matched against documents exactly like client docs.
+
+// Every represented application needs these two, regardless of stream.
+const REP_FORMS: ApplicationChecklistItem[] = [
+  { key: "imm5476", label: "IMM5476 Use of Representative", required: true, keywords: ["5476", "use of representative"] },
+  { key: "submission_letter", label: "Representative Submission Letter", required: true, keywords: ["submission letter", "representative letter", "rep letter"] },
+];
+
+// Main form + the rep forms. The main form is matched by its number in the
+// filename (e.g. "…IMM5710E…") or the "imm_form" OCR category.
+function immFormSet(formNum: string): ApplicationChecklistItem[] {
+  return [
+    { key: "imm_form", label: `IMM${formNum} (filled)`, required: true, keywords: [formNum], categories: ["imm_form"] },
+    ...REP_FORMS,
+  ];
+}
+
+const GENERATED_FORMS: Record<string, ApplicationChecklistItem[]> = {
+  pgwp: immFormSet("5710"),
+  work_permit: immFormSet("5710"),
+  sowp: immFormSet("5710"),
+  study_permit_extension: immFormSet("5709"),
+  visitor_record: immFormSet("5708"),
+  trv_inside: immFormSet("5708"),
+  visitor_visa: immFormSet("5257"),
+};
+
+// Streams without a known main form still need the rep forms.
+const DEFAULT_GENERATED_FORMS: ApplicationChecklistItem[] = REP_FORMS;
+
+export function getRequiredFormsForFormType(formType: string): ApplicationChecklistItem[] {
+  const key = resolveApplicationChecklistKey(formType);
+  return GENERATED_FORMS[key] || DEFAULT_GENERATED_FORMS;
+}
+
+export function getMissingFormDocs(formType: string, documents: DocumentItem[]): string[] {
+  const docNames = documents.map((d) => normalize(d.name));
+  const docCategories = documents.map((d) => normalizeCategory((d as { category?: unknown }).category));
+  return getRequiredFormsForFormType(formType)
+    .filter((i) => i.required)
+    .filter((item) => !itemIsSatisfied(item, docNames, docCategories))
+    .map((item) => item.label);
+}

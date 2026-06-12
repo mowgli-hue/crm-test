@@ -34,6 +34,7 @@
  */
 
 import { getCase, listDocuments } from "@/lib/store";
+import { getCaseReadiness, type CaseReadiness } from "@/lib/case-readiness";
 import { CaseItem, DocumentItem } from "@/lib/models";
 import {
   getOrCreateDriveSubfolder,
@@ -59,6 +60,7 @@ export type SubmissionPackageResult = {
   missingRequired?: string[];   // populated when ok=false
   errors?: string[];            // non-fatal errors during assembly
   warnings?: string[];          // e.g., optional docs not found
+  readiness?: CaseReadiness;    // shared staged readiness (same def the agent uses)
 };
 
 // Omit DocumentItem's own `category` (a narrow "general" | "result" union) before
@@ -70,15 +72,11 @@ type CategorizedDoc = Omit<DocumentItem, "category"> & {
   driveFileId: string | null;
 };
 
-// Required categories for a complete PGWP submission
-const REQUIRED_FOR_PGWP: DocCategory[] = [
-  "passport",
-  "photo",
-  "transcript",
-  "completion_letter",
-  "imm_form",        // IMM5710 must be already generated
-  "submission_letter",
-];
+// NOTE: the old hard-coded REQUIRED_FOR_PGWP list lived here but was dead code
+// (never referenced) AND it disagreed with the agent's notion of "complete."
+// The single source of truth is now getCaseReadiness() in lib/case-readiness.ts,
+// which both this package and the processing agent consult. Below we surface it
+// on the result so "assemble submission" reports the same readiness the agent sees.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -891,6 +889,20 @@ export async function assemblePgwpSubmissionPackage(
     // Drive scan failed — proceed with just the documents table.
     console.warn(`[submission ${caseId}] Drive scan failed (continuing with table only): ${(e as Error).message.slice(0, 100)}`);
   }
+
+  // Shared readiness — the SAME definition the processing agent consults (via
+  // the /readiness API), so "assemble submission" and the agent never disagree
+  // on what's complete. Computed against the reconciled doc list (table + Drive).
+  const readiness = getCaseReadiness(caseItem, docs as unknown as Parameters<typeof getCaseReadiness>[1]);
+  if (!readiness.submissionReady) {
+    console.warn(
+      `[submission ${caseId}] not submission-ready per shared check — ` +
+      `intake missing ${readiness.intake.missing.length}, ` +
+      `client docs missing ${readiness.clientDocs.missing.length}, ` +
+      `forms missing ${readiness.forms.missing.length}`,
+    );
+  }
+
   const categorized = await categorizeDocs(docs, ocr);
   // Augment categorized docs with Drive modifiedTime so primary-doc selection
   // can pick the most recently regenerated version when there are duplicates
@@ -1379,5 +1391,6 @@ export async function assemblePgwpSubmissionPackage(
     filesAdded,
     errors: errors.length > 0 ? errors : undefined,
     warnings: warnings.length > 0 ? warnings : undefined,
+    readiness,
   };
 }
