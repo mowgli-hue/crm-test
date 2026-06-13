@@ -80,5 +80,12 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     caseItem,
     docs as unknown as Parameters<typeof getCaseReadiness>[1],
   );
-  return NextResponse.json({ ok: true, caseId: params.id, readiness });
+  // Debug: the documents the check actually considered (table + reconciled
+  // Drive). Lets us see WHY a stage is/ isn't complete — e.g. whether a "forms
+  // complete" is satisfied by a real IMM5710 or just a data sheet.
+  const documentsConsidered = docs.map((d) => ({
+    name: String((d as { name?: unknown }).name || ""),
+    category: String((d as { category?: unknown }).category || ""),
+  }));
+  return NextResponse.json({ ok: true, caseId: params.id, readiness, documentsConsidered });
 }
