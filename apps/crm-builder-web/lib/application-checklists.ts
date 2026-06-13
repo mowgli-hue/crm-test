@@ -11,6 +11,11 @@ export type ApplicationChecklistItem = {
   // counts as received even if its filename keywords don't — and, crucially,
   // lets a "study permit" item NOT be falsely ticked by a work-permit upload.
   categories?: string[];
+  // Filename substrings that DISQUALIFY a document from satisfying this item,
+  // even if it would otherwise match by keyword/category. Used to stop a prep
+  // artefact from counting as the real deliverable — e.g. an
+  // "IMM5710-DataSheet-….md" must NOT satisfy the "IMM5710 (filled)" form.
+  excludeKeywords?: string[];
 };
 
 function normalize(text: string): string {
@@ -34,10 +39,21 @@ function itemIsSatisfied(
   docNames: string[],
   docCategories: string[],
 ): boolean {
-  if (item.categories && item.categories.some((c) => docCategories.includes(normalizeCategory(c)))) {
-    return true;
+  const cats = (item.categories || []).map(normalizeCategory);
+  const kws = item.keywords.map(normalize);
+  const excludes = (item.excludeKeywords || []).map(normalize);
+  // Per-document — docNames[i] and docCategories[i] belong to the SAME doc.
+  // A doc satisfies the item if its category or name matches, UNLESS the doc is
+  // excluded (e.g. a generated data sheet must not count as the filled form).
+  // For items with no excludeKeywords this is logically identical to the old
+  // "any category match OR any keyword match" check.
+  for (let i = 0; i < docNames.length; i++) {
+    const name = docNames[i];
+    if (excludes.length && excludes.some((x) => name.includes(x))) continue;
+    if (cats.length && cats.includes(docCategories[i])) return true;
+    if (kws.some((k) => name.includes(k))) return true;
   }
-  return item.keywords.some((k) => docNames.some((name) => name.includes(normalize(k))));
+  return false;
 }
 
 export function resolveApplicationChecklistKey(formType: string):
@@ -379,17 +395,23 @@ export function getChecklistProgress(
 // REQUIRED_FOR_PGWP), which is why the agent's "complete" disagreed with the
 // submission package's. Matched against documents exactly like client docs.
 
+// Things the agent generates as PREP — NOT the actual government form — that
+// must never be mistaken for the real deliverable (e.g.
+// "IMM5710-DataSheet-CASE-1632.md" or a "...summary.md").
+const FORM_PREP_EXCLUDE = ["datasheet", "data sheet", "data-sheet", "summary"];
+
 // Every represented application needs these two, regardless of stream.
 const REP_FORMS: ApplicationChecklistItem[] = [
-  { key: "imm5476", label: "IMM5476 Use of Representative", required: true, keywords: ["5476", "use of representative"] },
-  { key: "submission_letter", label: "Representative Submission Letter", required: true, keywords: ["submission letter", "representative letter", "rep letter"] },
+  { key: "imm5476", label: "IMM5476 Use of Representative", required: true, keywords: ["5476", "use of representative"], excludeKeywords: FORM_PREP_EXCLUDE },
+  { key: "submission_letter", label: "Representative Submission Letter", required: true, keywords: ["submission letter", "representative letter", "rep letter"], excludeKeywords: [...FORM_PREP_EXCLUDE, "cover letter"] },
 ];
 
 // Main form + the rep forms. The main form is matched by its number in the
-// filename (e.g. "…IMM5710E…") or the "imm_form" OCR category.
+// filename (e.g. "…IMM5710E…") or the "imm_form" OCR category — but NOT a
+// generated data sheet that merely contains the number.
 function immFormSet(formNum: string): ApplicationChecklistItem[] {
   return [
-    { key: "imm_form", label: `IMM${formNum} (filled)`, required: true, keywords: [formNum], categories: ["imm_form"] },
+    { key: "imm_form", label: `IMM${formNum} (filled)`, required: true, keywords: [formNum], categories: ["imm_form"], excludeKeywords: FORM_PREP_EXCLUDE },
     ...REP_FORMS,
   ];
 }
