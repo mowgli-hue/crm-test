@@ -395,10 +395,14 @@ export function getChecklistProgress(
 // REQUIRED_FOR_PGWP), which is why the agent's "complete" disagreed with the
 // submission package's. Matched against documents exactly like client docs.
 
-// Things the agent generates as PREP — NOT the actual government form — that
-// must never be mistaken for the real deliverable (e.g.
-// "IMM5710-DataSheet-CASE-1632.md" or a "...summary.md").
-const FORM_PREP_EXCLUDE = ["datasheet", "data sheet", "data-sheet", "summary"];
+// Artefacts that must NEVER count as the finished form:
+//  - prep the agent generates (data sheets / summaries), and
+//  - BLANK/unfilled templates (e.g. "imm5476e - form ready to fill.pdf"),
+// because a completed-forms signal should mean a real, filled deliverable.
+const FORM_PREP_EXCLUDE = [
+  "datasheet", "data sheet", "data-sheet", "summary",
+  "ready to fill", "form ready", "blank", "template", "fillable", "unfilled",
+];
 
 // Every represented application needs these two, regardless of stream.
 const REP_FORMS: ApplicationChecklistItem[] = [
