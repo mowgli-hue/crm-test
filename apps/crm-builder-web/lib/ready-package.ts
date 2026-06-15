@@ -77,6 +77,22 @@ export function buildReadyPackage(caseItem: CaseItem, documents: DocumentItem[])
   const aiDraft = generatePgwpDraft(caseItem, documents);
   const missingCoreQuestions = getMissingImm5710Questions(intake);
 
+  // Identity/passport fields that must be extracted from documents before the
+  // form can be filled. A case is NOT ready for review if any are still blank —
+  // otherwise it maps to blank required fields on the IMM5710.
+  const internalExtractionRequired = [
+    "passportNumber",
+    "passportIssueDate",
+    "passportExpiryDate",
+    "countryOfBirth",
+    "citizenship",
+    "studyPermitExpiryDate",
+    "currentCountryStatus",
+  ];
+  const missingExtractionFields = internalExtractionRequired.filter(
+    (k) => !String((intake as Record<string, unknown>)[k] ?? "").trim()
+  );
+
   const readyPackage = {
     generatedAt: new Date().toISOString(),
     caseId: caseItem.id,
@@ -98,20 +114,14 @@ export function buildReadyPackage(caseItem: CaseItem, documents: DocumentItem[])
       readyForHumanReview:
         aiDraft.missingDocuments.length === 0 &&
         missingCoreQuestions.length === 0 &&
+        missingExtractionFields.length === 0 &&
         Boolean(caseItem.retainerSigned) &&
         (caseItem.paymentStatus === "paid" || caseItem.paymentStatus === "not_required"),
       missingDocuments: aiDraft.missingDocuments,
       missingIntakeFields: missingCoreQuestions.map((q) => q.key),
       missingIntakeFieldLabels: missingCoreQuestions.map((q) => q.label),
-      internalExtractionRequired: [
-        "passportNumber",
-        "passportIssueDate",
-        "passportExpiryDate",
-        "countryOfBirth",
-        "citizenship",
-        "studyPermitExpiryDate",
-        "currentCountryStatus"
-      ]
+      internalExtractionRequired,
+      missingExtractionFields
     }
   };
 

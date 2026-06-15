@@ -828,6 +828,12 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   if (medicalRaw && !isYes(medicalRaw) && !isNo(medicalRaw)) {
     reviewFlags.push(`Q12 (medical condition) is ambiguous — form defaulted to "No": "${medicalRaw}". Verify before submitting.`);
   }
+  // The IMM5710 has 3 employment slots; a PGWP needs a gap-free 10-year history.
+  // If parsed entries exceed the slots, the extras are dropped — flag for a continuation sheet.
+  const EMPLOYMENT_SLOTS = 3;
+  if (employment.length > EMPLOYMENT_SLOTS) {
+    reviewFlags.push(`Employment history has ${employment.length} entries but the form has only ${EMPLOYMENT_SLOTS} slots — attach a continuation sheet for the overflow (last 10 years must have no gaps).`);
+  }
 
   return {
     ...buildIdentitySection(intake),
