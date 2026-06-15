@@ -524,7 +524,10 @@ export function mergeAIIntoFormData(
     setIfNotOverridingCode("native_language", ai.language.native, textToLanguageCode);
     setIf("communicate_language", ai.language.communicate);
     setIf("language_test_taken", ai.language.test_taken);
-    if (ai.language.native) merged.frequent_language = ai.language.native;
+    // NOTE: do NOT set frequent_language to the native language. The IRCC
+    // "language you are most at ease in" field only accepts English/French.
+    // Writing the native tongue (e.g. "Punjabi") produces an invalid LOV value.
+    // frequent_language is set to English/French by the mapper; leave it alone here.
   }
 
   // Entry to Canada

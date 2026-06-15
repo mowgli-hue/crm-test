@@ -814,6 +814,20 @@ function mapForPGWP(intake: Record<string, any>, formType: string): Record<strin
   if (planMedicalField) {
     reviewFlags.push(`Client plans to work in medical field — Immigration Medical Exam (IME) likely required before submission`);
   }
+  // Inadmissibility questions not asked in the PGWP intake are defaulted to "No".
+  // A wrong "No" here is a misrepresentation / refusal risk — staff must confirm.
+  reviewFlags.push(`Confirm background Qs not asked in intake (defaulted "No"): military service, government/public position, witnessing ill-treatment of persons.`);
+  // Ambiguous admissibility answers (neither a clean Yes nor No) silently default to
+  // "No" on the form — surface them so a real disclosure isn't dropped.
+  if (refusalRaw && !isYes(refusalRaw) && !isNo(refusalRaw)) {
+    reviewFlags.push(`Q11 (prior refusal/removal) is ambiguous — form defaulted to "No": "${refusalRaw}". Verify before submitting.`);
+  }
+  if (criminalRaw && !isYes(criminalRaw) && !isNo(criminalRaw)) {
+    reviewFlags.push(`Q13 (criminal history) is ambiguous — form defaulted to "No": "${criminalRaw}". Verify before submitting.`);
+  }
+  if (medicalRaw && !isYes(medicalRaw) && !isNo(medicalRaw)) {
+    reviewFlags.push(`Q12 (medical condition) is ambiguous — form defaulted to "No": "${medicalRaw}". Verify before submitting.`);
+  }
 
   return {
     ...buildIdentitySection(intake),

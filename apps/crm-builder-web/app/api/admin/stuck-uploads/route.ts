@@ -19,12 +19,21 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { getCurrentUserFromRequest } from "@/lib/auth";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 export async function GET(request: NextRequest) {
+  // Admin-only: this returns client PII (phones, names, case IDs) from the inbox.
+  const user = await getCurrentUserFromRequest(request);
+  if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (user.userType !== "staff" || user.role !== "Admin") {
+    return NextResponse.json({ ok: false, error: "Forbidden — Admin only" }, { status: 403 });
+  }
+
   const url = new URL(request.url);
-  const minAgeMinutes = parseInt(url.searchParams.get("minAge") || "5", 10);
+  let minAgeMinutes = parseInt(url.searchParams.get("minAge") || "5", 10);
+  if (!Number.isFinite(minAgeMinutes) || minAgeMinutes < 0) minAgeMinutes = 5;
 
   try {
     const result = await pool.query(
@@ -32,9 +41,10 @@ export async function GET(request: NextRequest) {
               EXTRACT(EPOCH FROM (NOW() - created_at)) / 60 as age_minutes
        FROM whatsapp_inbox
        WHERE message LIKE '%pending=1%'
-         AND created_at < NOW() - INTERVAL '${minAgeMinutes} minutes'
+         AND created_at < NOW() - (($1 || ' minutes')::interval)
        ORDER BY created_at DESC
-       LIMIT 50`
+       LIMIT 50`,
+      [String(minAgeMinutes)]
     );
 
     const rows = result.rows.map((r: any) => {
