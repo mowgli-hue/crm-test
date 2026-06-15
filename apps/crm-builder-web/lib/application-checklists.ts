@@ -426,7 +426,12 @@ const GENERATED_FORMS: Record<string, ApplicationChecklistItem[]> = {
   sowp: immFormSet("5710"),
   study_permit_extension: immFormSet("5709"),
   visitor_record: immFormSet("5708"),
-  trv_inside: immFormSet("5257"),
+  // TRV (inside Canada): IMM5257 + IMM5476 only — NO representative submission
+  // letter (per office: that's the whole form set for a TRV).
+  trv_inside: [
+    { key: "imm_form", label: "IMM5257 (filled)", required: true, keywords: ["5257"], categories: ["imm_form"], excludeKeywords: FORM_PREP_EXCLUDE },
+    { key: "imm5476", label: "IMM5476 Use of Representative", required: true, keywords: ["5476", "use of representative"], excludeKeywords: FORM_PREP_EXCLUDE },
+  ],
   visitor_visa: immFormSet("5257"),
 };
 
