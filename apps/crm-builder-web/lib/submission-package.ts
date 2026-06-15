@@ -590,12 +590,17 @@ type FormProfile = {
   recommended: string[];
   // Display name for logs
   name: string;
-  // When set, the WHOLE submission is a single merged "Client Information" PDF
-  // built from these parts IN THIS ORDER — nothing else is copied/bundled.
-  // Used by TRV (inside Canada): passport (with stamps) → digital photo →
-  // current permit → IMM5476. Tokens: "passport" | "photo" | "currentPermit"
-  // | "imm5257" | "imm5476" (imm5476 is generated inline; the rest are uploads).
-  clientInfoMerge?: Array<"passport" | "photo" | "currentPermit" | "imm5257" | "imm5476">;
+  // When set, the submission's supporting docs are a single merged "Client
+  // Information" PDF built from these parts IN THIS ORDER. Tokens:
+  // "passport" | "photo" | "currentPermit" | "proofOfFunds" | "imm5476"
+  // (imm5476 is generated inline; the rest are uploads).
+  // NOTE: the certified IMM5257 is NEVER merged here — merging flattens the PDF
+  // and destroys its XFA/barcode/certificate. It is copied separately, intact,
+  // via clientInfoSeparateForm.
+  clientInfoMerge?: Array<"passport" | "photo" | "currentPermit" | "proofOfFunds" | "imm5476">;
+  // A certified form (e.g. imm5257) copied alongside the Client Information PDF
+  // as its own untouched file, so it stays valid for the IRCC portal.
+  clientInfoSeparateForm?: "imm5257";
 };
 
 const PROFILE_PGWP: FormProfile = {
@@ -654,16 +659,20 @@ const PROFILE_STUDY_PERMIT_EXTENSION: FormProfile = {
 
 const PROFILE_TRV: FormProfile = {
   name: "TRV",
-  // The TRV (inside-Canada) submission is ONE "Client Information" PDF — see
-  // clientInfoMerge below. No separate top-level files, no Client_Info bundle.
+  // The TRV submission = a "Client Information" PDF (passport → current permit →
+  // proof of funds → digital photo → IMM5476) PLUS the certified IMM5257 copied
+  // separately so it stays valid. Per office spec.
   topLevel: [],
   bundleCategories: [],
-  clientInfoMerge: ["passport", "photo", "currentPermit", "imm5476"],
+  clientInfoMerge: ["passport", "currentPermit", "proofOfFunds", "photo", "imm5476"],
+  clientInfoSeparateForm: "imm5257",
   recommended: [
     "Passport (bio page + all stamped pages)",
-    "Digital photo",
     "Current permit (study/work)",
+    "Proof of funds (bank statement)",
+    "Digital photo",
     "IMM5476 (generated automatically)",
+    "IMM5257 (use 'Generate Forms' — kept as a separate file)",
   ],
 };
 
@@ -990,7 +999,7 @@ export async function assemblePgwpSubmissionPackage(
         let doc: CategorizedDoc | undefined;
         if (key === "passport") doc = primary.passport;
         else if (key === "photo") doc = primary.photo;
-        else if (key === "imm5257") doc = primary.imm5257;
+        else if (key === "proofOfFunds") doc = primary.proofOfFunds;
         else if (key === "currentPermit") doc = primary.studyPermits?.[0] || primary.workPermits?.[0];
         if (!doc?.driveFileId) { missing.push(key); continue; }
         const bytes = await downloadDriveFileBytes(doc.driveFileId);
@@ -1016,6 +1025,25 @@ export async function assemblePgwpSubmissionPackage(
       console.log(`[submission ${caseId}] TRV Client Information built from ${mergeFiles.length} part(s); missing: ${missing.join(",") || "none"}`);
     } catch (e) {
       return { ok: false, errors: [`Client Information merge failed: ${(e as Error).message}`], warnings };
+    }
+    // Copy the certified IMM5257 into the submission folder as its OWN intact
+    // file. It is byte-copied (download→upload), never merged, so its XFA /
+    // barcode / certificate stay valid for the IRCC portal.
+    if (profile.clientInfoSeparateForm === "imm5257") {
+      try {
+        if (primary.imm5257?.driveFileId) {
+          const formBytes = await downloadDriveFileBytes(primary.imm5257.driveFileId);
+          const formName = buildStandardName("IMM5257e_<First>_<Last>", first, last, "pdf");
+          const up = await uploadFileToDriveFolder({
+            folderId: submissionFolderId, fileName: formName, fileBuffer: formBytes, mimeType: "application/pdf",
+          });
+          filesAdded.push({ name: formName, link: up.webViewLink, source: "copied" });
+        } else {
+          warnings.push("IMM5257 not found — generate it via 'Generate Forms' and re-run; it must be in the submission as its own file.");
+        }
+      } catch (e) {
+        warnings.push(`Could not copy IMM5257 separately — ${(e as Error).message.slice(0, 80)}`);
+      }
     }
     return {
       ok: true,
