@@ -2168,29 +2168,17 @@ export function mapIntakeToForm(intake: Record<string, any>, formType: string): 
     return mapForStudyPermitExtension(intake, formType);
   }
 
-  // ── BUG FIX: TRV Inside Canada routing ──
-  // normalizeFormType() collapses both "TRV Inside" and "TRV Outside" to
-  // just "TRV", so we can't distinguish them from formType alone. Look at
-  // the intake itself: a TRV-Inside intake includes a question about
-  // "current immigration status in Canada" (their work/study permit
-  // expiry), which a TRV-Outside intake does not.
-  const isInsideCanada =
-    ft.includes("inside") ||
-    ft.includes("visitor record") ||
-    /current.+(?:immigration\s+)?status\s+in\s+canada/i.test(
-      String(intake.q6 || "") + " " + String(intake.q7 || "")
-    ) ||
-    /\b(work permit|study permit)\b.+expir/i.test(
-      String(intake.q6 || "") + " " + String(intake.q7 || "")
-    );
-
-  // Visitor Record (Inside Canada) — IMM5708E
-  if (ft.includes("visitor record") || (ft.includes("trv") && isInsideCanada)) {
+  // Visitor Record — IMM5708E. This is ONLY for an actual "Visitor Record"
+  // application (extending/changing visitor status inside Canada).
+  // A TRV is NOT a visitor record: a TRV is the travel-document application on
+  // IMM5257 whether it's filed from inside or outside Canada. So we route by the
+  // application type, not by where the client physically is.
+  if (ft.includes("visitor record")) {
     return mapForVisitorRecord(intake, formType);
   }
 
-  // Visitor Visa (Outside Canada) — IMM5257E
-  if (ft.includes("visitor visa") || (ft.includes("trv") && !isInsideCanada) || ft.includes("super visa")) {
+  // TRV / Visitor Visa / Super Visa — IMM5257E (inside or outside Canada).
+  if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa")) {
     return mapForVisitorVisa(intake, formType);
   }
 
