@@ -147,16 +147,16 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "language_test", label: "Language Test (IELTS/CELPIP/PTE)", required: false, keywords: ["ielts", "celpip", "pte", "language"], categories: ["language_test", "ielts"] },
     { key: "old_studies", label: "Old/Past College Documents (if transfer)", required: false, keywords: ["old college", "past stud", "previous college"] }
   ],
-  // Newton's inside-Canada TRV submission = passport (with stamps) + digital
-  // photo + current permit, plus the auto-generated IMM5476. That's the whole
-  // required set — proof of funds / ties are optional extras, NOT blockers, so
-  // intake/auto-prepare treats the case as ready once these three are in.
+  // Newton's inside-Canada TRV submission (per office spec):
+  //   passport (with stamps) + current permit + proof of funds + digital photo,
+  //   plus the auto-generated IMM5257 (TRV application) and IMM5476 (Use of Rep).
+  //   Any other supporting docs are optional extras, not blockers.
   trv_inside: [
     { key: "passport", label: "Passport (bio page + all stamped pages)", required: true, keywords: ["passport"], categories: ["passport"] },
     { key: "current_permit", label: "Current Permit / Status Document (study/work permit or TRV)", required: true, keywords: ["current permit", "permit", "status"], categories: ["study_permit", "work_permit", "visa"] },
+    { key: "funds", label: "Proof of Funds (bank statement)", required: true, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
     { key: "digital_photo", label: "Digital Photo (recent, white background)", required: true, keywords: ["digital photo", "photo"], categories: ["photo"] },
-    { key: "funds", label: "Proof of Funds (optional)", required: false, keywords: ["fund", "bank", "statement"], categories: ["bank_statement"] },
-    { key: "ties", label: "Proof of Ties to Home Country (optional)", required: false, keywords: ["ties", "property", "employment", "family"] }
+    { key: "ties", label: "Other Supporting Documents (ties, invitation, etc. — optional)", required: false, keywords: ["ties", "property", "employment", "family", "invitation", "support"] }
   ],
   visitor_visa: [
     { key: "passport", label: "Passport (all pages, valid min 6 months)", required: true, keywords: ["passport"] },
@@ -426,7 +426,7 @@ const GENERATED_FORMS: Record<string, ApplicationChecklistItem[]> = {
   sowp: immFormSet("5710"),
   study_permit_extension: immFormSet("5709"),
   visitor_record: immFormSet("5708"),
-  trv_inside: immFormSet("5708"),
+  trv_inside: immFormSet("5257"),
   visitor_visa: immFormSet("5257"),
 };
 

@@ -58,8 +58,11 @@ export function getRequiredForms(formType: string): IrccForm[] {
 
   // Visit / temporary
   if (ft.includes("visitor record")) return [F.IMM5708, rep];
-  if (ft.includes("trv inside") || (ft.includes("trv") && ft.includes("inside")) || ft.includes("restoration"))
-    return [F.IMM5708, rep];
+  // Restoration of visitor status uses the visitor-record form (IMM5708).
+  if (ft.includes("restoration")) return [F.IMM5708, rep];
+  // A TRV is the travel-document application on IMM5257 — even when filed from
+  // inside Canada — NOT the visitor-record form. So TRV (inside or outside)
+  // falls through to the IMM5257 branch below.
   if (ft.includes("trv") || ft.includes("visitor visa") || ft.includes("super visa") || ft.includes("supervisa"))
     return [F.IMM5257, rep];
 
