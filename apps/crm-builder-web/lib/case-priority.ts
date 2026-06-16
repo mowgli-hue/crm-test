@@ -167,7 +167,7 @@ function reviewDeadlineBoost(d: number | null): number {
 export function scoreReview(c: CaseItem | any): ScoredReview {
   const here = daysInSystem(c);
   const d = deadlineDays(c);
-  const amount = Number((c as any).amountPaid) || 0;
+  const amount = Math.max(0, Number((c as any).amountPaid) || 0);
 
   const score = 500 + reviewDeadlineBoost(d) + paymentBoost(amount) + Math.min(here * 5, 200);
 

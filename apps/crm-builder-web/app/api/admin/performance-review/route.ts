@@ -103,7 +103,9 @@ export async function GET(request: NextRequest) {
     );
     for (const row of r.rows as any[]) {
       const who = caseToAssignee.get(row.case_id);
-      if (who) correctionsByPerson.set(who, (correctionsByPerson.get(who) || 0) + 1);
+      // Skip blank/"Unassigned" so corrections aren't bucketed under a phantom
+      // person and silently dropped from real totals.
+      if (who && who !== "unassigned") correctionsByPerson.set(who, (correctionsByPerson.get(who) || 0) + 1);
     }
   } catch { /* table may not exist yet */ }
 
@@ -115,7 +117,9 @@ export async function GET(request: NextRequest) {
     .map((s: any) => {
       const key = norm(s.name);
       const assigned = cases.filter((c: any) => norm(c.assignedTo) === key && String(c.processingStatus).toLowerCase() !== "submitted").length;
-      const submitted = cases.filter((c: any) => norm(c.assignedTo) === key && String(c.processingStatus).toLowerCase() === "submitted" && inWindow((c as any).submittedAt || (c as any).updatedAt, start, end)).length;
+      // Count only by submittedAt (set on submit) — not updatedAt, which bumps on
+      // any edit and would re-count old cases into this month.
+      const submitted = cases.filter((c: any) => norm(c.assignedTo) === key && String(c.processingStatus).toLowerCase() === "submitted" && inWindow((c as any).submittedAt, start, end)).length;
       const corrections = correctionsByPerson.get(key) || 0;
       const hours = hoursByPerson.get(key) || 0;
       return {

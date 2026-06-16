@@ -97,20 +97,42 @@ export async function autoCloseStaleSessions(): Promise<number> {
   return res.rowCount || 0;
 }
 
-// Check a staff member into a case. Auto-closes any other open session first
-// (one-at-a-time rule). Returns the new active session.
+// Check a staff member into a case. Closes any other open session first
+// (one-at-a-time rule). The close+insert run inside a transaction guarded by a
+// per-staff advisory lock, so two rapid check-ins can't both leave an open
+// session (which would double-count hours).
 export async function checkIn(args: { companyId: string; caseId: string; staffName: string; note?: string }): Promise<TimeLogRow> {
   await ensureTable();
   await autoCloseStaleSessions();
-  await closeOpenSessionsForStaff(args.staffName, { reason: "switch" });
+  const staff = normName(args.staffName);
   const pool = getPool();
-  const id = newId();
-  await pool.query(
-    `INSERT INTO case_time_logs (id, case_id, company_id, staff_name, source) VALUES ($1,$2,$3,$4,'live')`,
-    [id, args.caseId, args.companyId, normName(args.staffName)]
-  );
-  const r = await pool.query(`SELECT * FROM case_time_logs WHERE id = $1`, [id]);
-  return mapRow(r.rows[0]);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Serialize check-ins for this staff member so the close+insert is atomic.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [staff]);
+    await client.query(
+      `UPDATE case_time_logs
+          SET ended_at = LEAST(NOW(), started_at + INTERVAL '${MAX_OPEN_HOURS} hours'),
+              duration_seconds = EXTRACT(EPOCH FROM (LEAST(NOW(), started_at + INTERVAL '${MAX_OPEN_HOURS} hours') - started_at))::int,
+              source = CASE WHEN NOW() > started_at + INTERVAL '${MAX_OPEN_HOURS} hours' THEN 'auto_closed' ELSE source END
+        WHERE staff_name = $1 AND ended_at IS NULL`,
+      [staff]
+    );
+    const id = newId();
+    await client.query(
+      `INSERT INTO case_time_logs (id, case_id, company_id, staff_name, source) VALUES ($1,$2,$3,$4,'live')`,
+      [id, args.caseId, args.companyId, staff]
+    );
+    await client.query("COMMIT");
+    const r = await client.query(`SELECT * FROM case_time_logs WHERE id = $1`, [id]);
+    return mapRow(r.rows[0]);
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // Check a staff member out of a case (closes their open session on it).

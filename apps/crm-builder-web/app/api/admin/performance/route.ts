@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listAllStaff, listAllCases } from "@/lib/store";
 import { getPool } from "@/lib/postgres-store";
+import { canSeeAllCases } from "@/lib/rbac";
 
 export const runtime = "nodejs";
 
@@ -53,8 +54,8 @@ const isExcluded = (name: string) => {
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // Visible to every staff member (not just managers).
-  if (user.userType !== "staff") {
+  // Managers only — this exposes every preparer's error counts + reviewer comments.
+  if (user.userType !== "staff" || !canSeeAllCases(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

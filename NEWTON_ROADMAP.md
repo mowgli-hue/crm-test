@@ -29,6 +29,26 @@ have My Day suggest an interleaved order so nobody grinds three LMIAs in a row.
 If a blocked reviewer (Serbleen/Parinita) is inactive, route their block to the
 lead so simple types never get orphaned.
 
+## Stable identity (name → user ID) — important
+Time logs, reviewer blocks, and performance stats are all keyed by **display name**
+(or first name). This is fragile: a rename splits a person's history, two people
+sharing a name merge, and first-name collisions mis-route the reviewer queue.
+Fix: key time logs, REVIEWER_BLOCKS, and performance aggregation on a stable
+`user_id`/email, not the display name. (Audit: H1/H4/M7.)
+
+## Correction attribution at write-time
+Corrections (review "changes needed") are counted against a case's *current*
+assignee. If a case is reassigned after the flag, the error moves to the new
+person. Fix: stamp the preparer's name/id into the note when the reviewer raises
+it, and attribute from that — not the live case. (Audit: H2.)
+
+## Unify the two performance boards
+The old `/admin/performance` (errors board) and the new `/admin/performance-review`
+disagree on who's a "preparer" and use a hardcoded `EXCLUDED_NAMES` first-name list
+that can hide real people (e.g. a new "Aman" or "Simran"). Fix: one shared
+preparer-eligibility helper + an `excludeFromPerformance` per-account flag keyed by
+id, not name. (Audit: H5/M7.)
+
 ## Re-submit-for-review action
 A clean "send back for review" for preparers after fixing changes, so the review
 status model isn't overloaded (changes_done currently does double duty).
