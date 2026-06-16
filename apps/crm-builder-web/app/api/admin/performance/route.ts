@@ -109,6 +109,35 @@ export async function GET(request: NextRequest) {
     console.error("[performance] case_notes CHANGES NEEDED read failed:", (e as Error).message);
   }
 
+  // ALSO count a REVIEWER's plain notes as errors — if a reviewer leaves any note
+  // on a case (not just the formal "Send Changes" flag), that's a correction too.
+  // Exclude the changes-needed flag (already counted), the preparer's "Changes
+  // done" reply, and the review_comments mirror (NOTE-rc-). author_role is blank
+  // so the reviewer check below (by canonical name/role) decides what counts.
+  try {
+    const res3 = await pool.query(
+      `SELECT case_id, created_at, added_by, text
+         FROM case_notes
+        WHERE created_at >= $1 AND created_at < $2
+          AND id NOT LIKE 'NOTE-rc-%'
+          AND text NOT LIKE '⚠️ CHANGES NEEDED%'
+          AND text NOT LIKE '✅ Changes done%'`,
+      [start, end]
+    );
+    for (const r of res3.rows as any[]) {
+      comments.push({
+        case_id: r.case_id,
+        created_at: r.created_at,
+        author_name: r.added_by || "",
+        author_role: "",
+        body: String(r.text || ""),
+        status: "open",
+      });
+    }
+  } catch (e) {
+    console.error("[performance] case_notes reviewer-notes read failed:", (e as Error).message);
+  }
+
   // Map case → assigned preparer (company-agnostic) + client name for display.
   const cases = await listAllCases();
   const caseToPreparer = new Map<string, string>();
@@ -171,7 +200,7 @@ export async function GET(request: NextRequest) {
     .map((s) => s.name);
   const isReviewerFlag = (cm: { author_role?: string; author_name?: string }) =>
     REVIEWER_ROLES.has(String(cm.author_role || "").toLowerCase()) ||
-    reviewerNames.has(String(cm.author_name || "").toLowerCase().trim());
+    reviewerNames.has(canonical(cm.author_name || "").toLowerCase().trim());
 
   // Role lookup by name so assignee-seeded rows still show a role label.
   const roleByName = new Map(staff.map((s) => [String(s.name || "").toLowerCase().trim(), s.role]));
