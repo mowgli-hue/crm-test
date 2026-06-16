@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listCases, listAllDocumentsByCase } from "@/lib/store";
-import { canStaffAccessCase } from "@/lib/rbac";
+import { isCaseAssignedToUser } from "@/lib/rbac";
 import { getActiveSession } from "@/lib/time-tracking";
 import { scoreCase, isClosed, ageDays } from "@/lib/case-priority";
 
@@ -60,9 +60,11 @@ export async function GET(request: NextRequest) {
     listCases(user.companyId || COMPANY_ID),
     listAllDocumentsByCase(),
   ]);
+  // My Day is PERSONAL: only cases assigned to me, for everyone (managers included).
+  // The whole-firm view lives in /api/admin/at-risk, not here.
   const mine = all
     .filter((c: any) => !isClosed(c))
-    .filter((c: any) => canStaffAccessCase(user.role, user.name, c.assignedTo));
+    .filter((c: any) => isCaseAssignedToUser(c.assignedTo, user.name));
 
   const ranked = mine
     .map((c: any) => {
