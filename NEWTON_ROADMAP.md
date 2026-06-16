@@ -49,6 +49,20 @@ that can hide real people (e.g. a new "Aman" or "Simran"). Fix: one shared
 preparer-eligibility helper + an `excludeFromPerformance` per-account flag keyed by
 id, not name. (Audit: H5/M7.)
 
+## Payments → accounting (auto)
+Today a client payment is stored on the case (`amountPaid` / `paymentStatus`) but
+does NOT flow into the Accounting module (which only has manual entries). Build:
+when a case payment is recorded/updated, create or sync a matching accounting
+entry (client, case, amount, date), so accounting reflects money received without
+manual re-entry. Surface received-by-month + outstanding.
+
+## Tasker call log — operational checklist (not a code bug)
+`/api/incoming-call` (the Tasker webhook) requires `TASKER_WEBHOOK_SECRET` and a
+matching `X-Webhook-Secret` header. If call logs stop, it's almost always: (a) the
+env var changed/missing in Railway, (b) the Tasker profile/app on the office phone
+stopped running, or (c) the webhook URL/secret in Tasker drifted. Add an admin
+"last call-log received at" indicator + a test-ping so this is diagnosable in-app.
+
 ## Re-submit-for-review action
 A clean "send back for review" for preparers after fixing changes, so the review
 status model isn't overloaded (changes_done currently does double duty).
