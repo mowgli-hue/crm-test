@@ -16,17 +16,24 @@ export default function PerformanceDashboard() {
   const [err, setErr] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const load = async (mk: string) => {
-    setLoading(true); setErr("");
+  const load = async (mk: string, silent = false) => {
+    if (!silent) setLoading(true);
+    setErr("");
     try {
       const res = await apiFetch(`/admin/performance?month=${encodeURIComponent(mk)}`);
       const d = await res.json().catch(() => ({}));
       if (res.ok) setData(d);
-      else setErr(d.error || "Could not load performance.");
-    } catch (e) { setErr(String(e)); }
-    setLoading(false);
+      else if (!silent) setErr(d.error || "Could not load performance.");
+    } catch (e) { if (!silent) setErr(String(e)); }
+    if (!silent) setLoading(false);
   };
-  useEffect(() => { load(month); }, [month]);
+  useEffect(() => {
+    load(month);
+    // Live updates — quietly re-pull every 30s so new review flags appear
+    // without anyone clicking refresh.
+    const id = setInterval(() => load(month, true), 30000);
+    return () => clearInterval(id);
+  }, [month]);
 
   const rows = data?.rows || [];
   // "Best" = a preparer who actually handled cases and has the fewest errors.
@@ -38,9 +45,14 @@ export default function PerformanceDashboard() {
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <div className="px-5 py-4 bg-slate-900 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-base font-bold text-white">🏆 Team performance — review quality</h2>
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            🏆 Team performance — review quality
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live
+            </span>
+          </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Fewer review changes flagged on a preparer's cases = cleaner work. {data ? `Showing ${data.month}.` : ""}
+            Fewer review changes flagged on a preparer's cases = cleaner work. Updates live as reviews are logged. {data ? `Showing ${data.month}.` : ""}
           </p>
         </div>
         <input
