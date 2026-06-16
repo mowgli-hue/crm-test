@@ -8,6 +8,7 @@ import SubmittedAppsImport from "@/components/submitted-apps-import";
 import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
+import TeamTimeOverview from "@/components/team-time-overview";
 import ReviewItemsPanel from "@/components/review-items-panel";
 import AgentDashboard from "@/components/agent-dashboard";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
@@ -11738,6 +11739,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
               {/* Monthly review-quality performance (visible to all team members) */}
               {(sessionUser?.userType === "staff") && <PerformanceDashboard />}
+
+              {/* Team application-time overview (check-in hours per person / application) */}
+              {(sessionUser?.userType === "staff") && <TeamTimeOverview apiFetch={apiFetch} />}
 
               {/* ── Workload Bar Chart ──
                   Quick visual of which team members are over/under-allocated.
