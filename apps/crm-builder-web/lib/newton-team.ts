@@ -21,7 +21,6 @@ const ROOT_DRIVE = "https://drive.google.com/drive/folders/1FAjuG-Uj4fhp9zWfVsiH
 
 const RAW_TEAM_MEMBERS: Omit<NewtonTeamMember, "workspaceDriveFolderId">[] = [
   { name: "Lavisha Dhingra",  email: "lavisha.newtonimmigration@gmail.com",      role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
-  { name: "Rapneet Kaur",     email: "rapneetkaur.newtonimmigration@gmail.com",  role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Rajwinder Kaur",   email: "rajwinder.newtonimmigration@gmail.com",    role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Avneet Kaur",      email: "avneet.newtonimmigration@gmail.com",       role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Ramandeep Kaur",   email: "ramandeep.newtonimmigration@gmail.com",    role: "ProcessingLead", workspaceDriveLink: ROOT_DRIVE },
