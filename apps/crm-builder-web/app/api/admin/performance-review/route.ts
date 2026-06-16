@@ -15,6 +15,7 @@ import { listAllStaff, listAllCases } from "@/lib/store";
 import { getPool } from "@/lib/postgres-store";
 import { canSeeAllCases } from "@/lib/rbac";
 import { teamTimeSummary } from "@/lib/time-tracking";
+import { buildCanonicalizer } from "@/lib/staff-names";
 
 export const runtime = "nodejs";
 
@@ -92,26 +93,11 @@ export async function GET(request: NextRequest) {
     teamTimeSummary({ companyId: user.companyId, startISO: start, endISO: end }),
   ]);
 
-  // Collapse assignee name variants onto the canonical staff name, so a case
-  // assigned to "Sukhman" still attributes to the "Sukhman Kaur" account.
-  const byFull = new Set<string>();
-  const byFirst = new Map<string, string[]>();
-  for (const s of staff) {
-    const n = norm(s.name);
-    if (!n) continue;
-    byFull.add(n);
-    const f = n.split(" ")[0];
-    const arr = byFirst.get(f) || [];
-    if (!arr.includes(n)) arr.push(n);
-    byFirst.set(f, arr);
-  }
-  const canonical = (raw: string): string => {
-    const n = norm(raw);
-    if (!n || n === "unassigned") return "";
-    if (byFull.has(n)) return n;
-    const arr = byFirst.get(n.split(" ")[0]);
-    return arr && arr.length === 1 ? arr[0] : n;
-  };
+  // Collapse assignee name variants onto the canonical staff name (shared helper
+  // with conservative fuzzy), normalized for keying — so "Sukhman" and a
+  // misspelled "sarbleen" still attribute to the right account.
+  const canon = buildCanonicalizer(staff.map((s) => String(s.name || "")));
+  const canonical = (raw: string): string => norm(canon(raw));
 
   // corrections (changes-needed notes) this month, mapped case -> canonical assignee
   const caseToAssignee = new Map<string, string>();

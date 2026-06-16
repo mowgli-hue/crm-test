@@ -16,6 +16,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listAllStaff, listAllCases } from "@/lib/store";
 import { getPool } from "@/lib/postgres-store";
 import { canSeeAllCases } from "@/lib/rbac";
+import { buildCanonicalizer } from "@/lib/staff-names";
 
 export const runtime = "nodejs";
 
@@ -153,29 +154,10 @@ export async function GET(request: NextRequest) {
   };
   const isHidden = (name: string) => isExcluded(name) || isInactive(name);
 
-  // Canonicalize an assignee name onto the real staff account so name variants
-  // (full name vs lowercase first name) collapse to ONE row instead of dupes
-  // like "Sukhman Kaur" AND "sukhman".
-  const staffNormToName = new Map<string, string>();
-  const staffFirstToNames = new Map<string, string[]>();
-  for (const s of staff) {
-    const disp = String(s.name || "").trim();
-    if (!disp) continue;
-    const n = disp.toLowerCase().replace(/\s+/g, " ").trim();
-    staffNormToName.set(n, disp);
-    const first = n.split(" ")[0];
-    const arr = staffFirstToNames.get(first) || [];
-    if (!arr.includes(disp)) arr.push(disp);
-    staffFirstToNames.set(first, arr);
-  }
-  const canonical = (raw: string): string => {
-    const n = String(raw || "").toLowerCase().replace(/\s+/g, " ").trim();
-    if (!n) return String(raw || "").trim();
-    if (staffNormToName.has(n)) return staffNormToName.get(n)!;
-    const byFirst = staffFirstToNames.get(n.split(" ")[0]);
-    if (byFirst && byFirst.length === 1) return byFirst[0];
-    return String(raw || "").trim();
-  };
+  // Canonicalize assignee names onto the real staff account (shared helper with
+  // conservative fuzzy matching) so variants like "sarbleen"/"Serbleen Kaur" and
+  // "Sukhman"/"Sukhman Kaur" collapse to ONE row instead of fragmenting stats.
+  const canonical = buildCanonicalizer(staff.map((s) => String(s.name || "")));
   // Collapse every case's assignee onto its canonical staff name.
   for (const [cid, who] of Array.from(caseToPreparer.entries())) {
     caseToPreparer.set(cid, canonical(who));
