@@ -24,6 +24,7 @@ function fmt(totalSeconds: number): string {
 
 export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
   const [range, setRange] = useState<"day" | "week">("day");
+  const [scope, setScope] = useState<"team" | "self">("team");
   const [label, setLabel] = useState("");
   const [perStaff, setPerStaff] = useState<PerStaff[]>([]);
   const [perCase, setPerCase] = useState<PerCase[]>([]);
@@ -36,6 +37,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
       const res = await apiFetch(`/admin/time-summary?range=${range === "week" ? "week" : "day"}`);
       if (res.ok) {
         const d = await res.json();
+        setScope(d.scope === "self" ? "self" : "team");
         setLabel(d.label || "");
         setPerStaff(d.perStaff || []);
         setPerCase(d.perCase || []);
@@ -55,7 +57,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-bold text-slate-800">Team time</h2>
+          <h2 className="text-lg font-bold text-slate-800">{scope === "self" ? "My time" : "Team time"}</h2>
           <p className="text-xs text-slate-500">{label} · {fmt(teamTotal)} total · {perCase.length} applications · {perClient.length} clients</p>
         </div>
         <div className="flex rounded-lg border border-slate-200 overflow-hidden">
@@ -72,7 +74,8 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
         <p className="text-sm text-slate-400">No check-ins logged yet for this period.</p>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Per person */}
+          {/* Per person — only meaningful in team scope (self scope = just you) */}
+          {scope === "team" && (
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <p className="text-sm font-bold text-slate-700 mb-2">By person</p>
             <div className="space-y-2">
@@ -89,6 +92,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
               ))}
             </div>
           </div>
+          )}
 
           {/* Per client — how many applications each client has + time */}
           <div className="rounded-xl border border-slate-200 bg-white p-3">

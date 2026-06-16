@@ -171,23 +171,28 @@ export async function caseTimeSummary(caseId: string): Promise<{ totalSeconds: n
 }
 
 // Team summary for a date window [startISO, endISO): per-staff and per-case.
-export async function teamTimeSummary(args: { companyId?: string; startISO: string; endISO: string }): Promise<{
+// Pass `staffName` to scope to one person (their own time / applications) — used
+// for RBAC: Processing staff only see their own, managers see the whole team.
+export async function teamTimeSummary(args: { companyId?: string; startISO: string; endISO: string; staffName?: string }): Promise<{
   perStaff: Array<{ staffName: string; seconds: number; sessions: number }>;
   perCase: Array<{ caseId: string; seconds: number; staff: string[] }>;
 }> {
   await ensureTable();
   await autoCloseStaleSessions();
   const pool = getPool();
-  const companyFilter = args.companyId ? `AND company_id = $3` : "";
   const params: unknown[] = [args.startISO, args.endISO];
-  if (args.companyId) params.push(args.companyId);
+  let companyFilter = "";
+  if (args.companyId) { params.push(args.companyId); companyFilter = `AND company_id = $${params.length}`; }
+  let staffFilter = "";
+  if (args.staffName) { params.push(normName(args.staffName)); staffFilter = `AND staff_name = $${params.length}`; }
+  const scopeFilter = `${companyFilter} ${staffFilter}`;
 
   const staffRes = await pool.query(
     `SELECT staff_name,
             COALESCE(SUM(duration_seconds), 0)::int AS seconds,
             COUNT(*)::int AS sessions
        FROM case_time_logs
-      WHERE ended_at IS NOT NULL AND started_at >= $1 AND started_at < $2 ${companyFilter}
+      WHERE ended_at IS NOT NULL AND started_at >= $1 AND started_at < $2 ${scopeFilter}
    GROUP BY staff_name
    ORDER BY seconds DESC`,
     params
@@ -197,7 +202,7 @@ export async function teamTimeSummary(args: { companyId?: string; startISO: stri
             COALESCE(SUM(duration_seconds), 0)::int AS seconds,
             ARRAY_AGG(DISTINCT staff_name) AS staff
        FROM case_time_logs
-      WHERE ended_at IS NOT NULL AND started_at >= $1 AND started_at < $2 ${companyFilter}
+      WHERE ended_at IS NOT NULL AND started_at >= $1 AND started_at < $2 ${scopeFilter}
    GROUP BY case_id
    ORDER BY seconds DESC`,
     params

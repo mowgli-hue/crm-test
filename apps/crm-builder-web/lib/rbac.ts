@@ -106,6 +106,14 @@ export function isCaseAssignedToUser(assignedTo: string | undefined, userName: s
   return user.includes(assigned) || assigned.includes(user);
 }
 
+// True for roles that see the whole book (Admin/Marketing/ProcessingLead/Reviewer).
+// Processing staff are scoped to their own assigned cases. Mirrors the access
+// branch in canStaffAccessCase — use this for team-wide vs own-only views.
+export function canSeeAllCases(role: Role): boolean {
+  const r = normalizeRole(role);
+  return r === "Admin" || r === "Marketing" || r === "ProcessingLead" || r === "Reviewer";
+}
+
 // Processing staff only see their own assigned cases
 // Admin/Marketing/Reviewer see all
 export function canStaffAccessCase(role: Role, userName: string, caseAssignedTo?: string): boolean {

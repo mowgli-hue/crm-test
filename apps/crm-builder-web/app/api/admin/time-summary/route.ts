@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { teamTimeSummary } from "@/lib/time-tracking";
 import { listAllCases } from "@/lib/store";
+import { canSeeAllCases, canStaffAccessCase } from "@/lib/rbac";
 
 export const runtime = "nodejs";
 
@@ -45,14 +46,27 @@ export async function GET(request: NextRequest) {
   const { start, end, label } = windowFor(url.searchParams.get("date") || "", url.searchParams.get("range") || "");
 
   try {
-    const summary = await teamTimeSummary({ companyId: user.companyId, startISO: start, endISO: end });
+    // RBAC: managers (Admin / Marketing / ProcessingLead / Reviewer) see the whole
+    // team; Processing staff see only their own time and applications.
+    const seeAll = canSeeAllCases(user.role);
+    const scope: "team" | "self" = seeAll ? "team" : "self";
+
+    const summary = await teamTimeSummary({
+      companyId: user.companyId,
+      startISO: start,
+      endISO: end,
+      staffName: seeAll ? undefined : user.name,
+    });
 
     // Resolve each case to its client + form type so the UI can show WHICH
     // client (not just a case number), and roll up applications per client.
+    // For non-managers, also drop any case they can't access (belt-and-braces).
     const cases = await listAllCases();
-    const byId = new Map(cases.map((c) => [c.id, { client: String((c as any).client || ""), formType: String((c as any).formType || "") }]));
+    const byId = new Map(cases.map((c) => [c.id, { client: String((c as any).client || ""), formType: String((c as any).formType || ""), assignedTo: String((c as any).assignedTo || "") }]));
 
-    const perCase = summary.perCase.map((pc) => ({
+    const perCase = summary.perCase
+      .filter((pc) => seeAll || canStaffAccessCase(user.role, user.name, byId.get(pc.caseId)?.assignedTo))
+      .map((pc) => ({
       ...pc,
       client: byId.get(pc.caseId)?.client || "",
       formType: byId.get(pc.caseId)?.formType || "",
@@ -71,7 +85,8 @@ export async function GET(request: NextRequest) {
       .map((r) => ({ client: r.client, applications: r.caseIds.size, seconds: r.seconds }))
       .sort((a, b) => b.applications - a.applications || b.seconds - a.seconds);
 
-    return NextResponse.json({ ok: true, label, start, end, perStaff: summary.perStaff, perCase, perClient });
+    // In self scope, perStaff is naturally just the one person.
+    return NextResponse.json({ ok: true, scope, label, start, end, perStaff: summary.perStaff, perCase, perClient });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
