@@ -11412,11 +11412,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                           e.target.value = "";
                         }} />
                       </label>
-                      <input value={inboxReply[phone]||""} onChange={e=>setInboxReply(prev=>({...prev,[phone]:e.target.value}))}
-                        placeholder={inboxAttachment[phone] ? `Add a caption (optional)...` : `Message ${clientName}...`}
-                        className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none focus:bg-white"
+                      <textarea value={inboxReply[phone]||""} rows={1}
+                        onChange={e=>{setInboxReply(prev=>({...prev,[phone]:e.target.value})); const t=e.currentTarget; t.style.height="auto"; t.style.height=Math.min(t.scrollHeight,128)+"px";}}
+                        placeholder={inboxAttachment[phone] ? `Add a caption (optional)...` : `Message ${clientName}... (Enter = new line, ⌘/Ctrl+Enter to send)`}
+                        className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none focus:bg-white resize-none overflow-y-auto max-h-32"
                         onKeyDown={async e => {
-                          if (e.key!=="Enter") return;
+                          if (!((e.metaKey||e.ctrlKey) && e.key==="Enter")) return;
+                          e.preventDefault();
                           const text=(inboxReply[phone]||"").trim();
                           const att = inboxAttachment[phone];
                           // Allow sending file alone (no text required) — only block if BOTH are empty
