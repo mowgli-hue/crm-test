@@ -10,9 +10,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { listCases } from "@/lib/store";
+import { listCases, listAllDocumentsByCase } from "@/lib/store";
 import { canStaffAccessCase } from "@/lib/rbac";
 import { getActiveSession } from "@/lib/time-tracking";
+import { getCaseReadiness } from "@/lib/case-readiness";
+import type { DocumentItem } from "@/lib/models";
 
 export const runtime = "nodejs";
 
@@ -31,16 +33,72 @@ function ageDays(c: any): number {
   return Math.max(0, (Date.now() - t) / DAY);
 }
 
-// Deterministic priority: rework first, then review, then aging doc-chases.
-function scoreCase(c: any): { score: number; reason: string } {
+// Days until a date (negative = already passed). null if unknown.
+function daysUntil(dateStr?: string): number | null {
+  if (!dateStr) return null;
+  const t = Date.parse(dateStr);
+  if (!Number.isFinite(t)) return null;
+  return Math.round((t - Date.now()) / DAY);
+}
+
+// The most urgent real deadline we know about: an explicit dueInDays, or the
+// client's current-status/permit expiry (from the case or intake).
+function deadlineDays(c: any): number | null {
+  const intake = c.pgwpIntake || {};
+  const candidates: Array<number | null> = [
+    Number.isFinite(Number(c.dueInDays)) ? Number(c.dueInDays) : null,
+    daysUntil(c.permitExpiryDate),
+    daysUntil(intake.studyPermitExpiryDate),
+    daysUntil(intake.workPermitExpiryDate),
+  ];
+  const known = candidates.filter((x): x is number => x !== null);
+  return known.length ? Math.min(...known) : null;
+}
+
+function deadlineBoost(d: number | null): number {
+  if (d === null) return 0;
+  if (d < 0) return 460;     // expired — restoration / overdue, most urgent
+  if (d <= 3) return 400;
+  if (d <= 7) return 300;
+  if (d <= 14) return 180;
+  if (d <= 30) return 90;
+  return 0;
+}
+
+type Scored = { score: number; reason: string; ready: "submit" | "assemble" | "docs" | "review" | "progress"; deadlineDays: number | null };
+
+// Priority from real signals: rework/review, document-readiness, and deadlines.
+function scoreCase(c: any, docs: DocumentItem[]): Scored {
   const st = String(c.processingStatus || "").toLowerCase();
   const review = String(c.reviewStatus || "").toLowerCase();
   const age = ageDays(c);
-  if (review === "changes_needed") return { score: 1000 - age, reason: "Reviewer sent changes back — fix and resubmit" };
-  if (st === "under_review") return { score: 800 - age, reason: "In review — keep it moving" };
-  if (st === "ready" || st === "ready_to_submit") return { score: 700 - age, reason: "Ready — review and submit" };
-  if (st === "docs_pending" || st === "" ) return { score: 400 + age, reason: `Waiting on documents — ${Math.round(age)}d old, chase the client` };
-  return { score: 300 + age, reason: `In progress — ${Math.round(age)}d since last update` };
+  const d = deadlineDays(c);
+  const dBoost = deadlineBoost(d);
+  const r = getCaseReadiness(c, docs);
+
+  // Deadline phrase appended to whatever the main driver is.
+  const dueNote =
+    d === null ? "" :
+    d < 0 ? ` · status expired ${Math.abs(d)}d ago — restoration window` :
+    d <= 30 ? ` · due in ${d}d` : "";
+
+  let base: number, reason: string, ready: Scored["ready"];
+  if (review === "changes_needed") {
+    base = 1000; ready = "review"; reason = "Reviewer sent changes back — fix and resubmit";
+  } else if (st === "under_review") {
+    base = 820; ready = "review"; reason = "In review";
+  } else if (r.submissionReady || st === "ready" || st === "ready_to_submit") {
+    base = 760; ready = "submit"; reason = "Ready to submit";
+  } else if (r.intake.complete && r.clientDocs.complete && !r.forms.complete) {
+    base = 640; ready = "assemble"; reason = "Docs complete — assemble forms";
+  } else if (!r.clientDocs.complete || !r.intake.complete) {
+    const miss = [...r.clientDocs.missing, ...r.intake.missing].slice(0, 3).join(", ");
+    base = 380 + age; ready = "docs"; reason = miss ? `Waiting on: ${miss}` : `Waiting on documents — ${Math.round(age)}d old`;
+  } else {
+    base = 300 + age; ready = "progress"; reason = `In progress — ${Math.round(age)}d since last update`;
+  }
+
+  return { score: base + dBoost + age * 0.1, reason: reason + dueNote, ready, deadlineDays: d };
 }
 
 async function aiFocus(items: Array<{ caseId: string; client: string; type: string; reason: string }>): Promise<{ focus: string; topPickIds: string[] } | null> {
@@ -79,14 +137,17 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (user.userType !== "staff") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const all = await listCases(user.companyId || COMPANY_ID);
+  const [all, docsByCase] = await Promise.all([
+    listCases(user.companyId || COMPANY_ID),
+    listAllDocumentsByCase(),
+  ]);
   const mine = all
     .filter((c: any) => !isClosed(c))
     .filter((c: any) => canStaffAccessCase(user.role, user.name, c.assignedTo));
 
   const ranked = mine
     .map((c: any) => {
-      const { score, reason } = scoreCase(c);
+      const s = scoreCase(c, docsByCase.get(c.id) || []);
       return {
         caseId: c.id,
         client: String(c.client || ""),
@@ -94,8 +155,10 @@ export async function GET(request: NextRequest) {
         status: String(c.processingStatus || "docs_pending"),
         reviewStatus: String(c.reviewStatus || ""),
         ageDays: Math.round(ageDays(c)),
-        score,
-        reason,
+        ready: s.ready,
+        deadlineDays: s.deadlineDays,
+        score: s.score,
+        reason: s.reason,
       };
     })
     .sort((a, b) => b.score - a.score);
