@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { teamTimeSummary } from "@/lib/time-tracking";
+import { listAllCases } from "@/lib/store";
 
 export const runtime = "nodejs";
 
@@ -45,7 +46,32 @@ export async function GET(request: NextRequest) {
 
   try {
     const summary = await teamTimeSummary({ companyId: user.companyId, startISO: start, endISO: end });
-    return NextResponse.json({ ok: true, label, start, end, ...summary });
+
+    // Resolve each case to its client + form type so the UI can show WHICH
+    // client (not just a case number), and roll up applications per client.
+    const cases = await listAllCases();
+    const byId = new Map(cases.map((c) => [c.id, { client: String((c as any).client || ""), formType: String((c as any).formType || "") }]));
+
+    const perCase = summary.perCase.map((pc) => ({
+      ...pc,
+      client: byId.get(pc.caseId)?.client || "",
+      formType: byId.get(pc.caseId)?.formType || "",
+    }));
+
+    // Per client: how many applications (distinct cases) and total time.
+    const clientAgg = new Map<string, { client: string; caseIds: Set<string>; seconds: number }>();
+    for (const pc of perCase) {
+      const key = (pc.client || "(unknown)").toLowerCase();
+      const row = clientAgg.get(key) || { client: pc.client || "(unknown)", caseIds: new Set<string>(), seconds: 0 };
+      row.caseIds.add(pc.caseId);
+      row.seconds += pc.seconds;
+      clientAgg.set(key, row);
+    }
+    const perClient = Array.from(clientAgg.values())
+      .map((r) => ({ client: r.client, applications: r.caseIds.size, seconds: r.seconds }))
+      .sort((a, b) => b.applications - a.applications || b.seconds - a.seconds);
+
+    return NextResponse.json({ ok: true, label, start, end, perStaff: summary.perStaff, perCase, perClient });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

@@ -11,7 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 
 type ApiFetch = (path: string, init?: RequestInit) => Promise<Response>;
 type PerStaff = { staffName: string; seconds: number; sessions: number };
-type PerCase = { caseId: string; seconds: number; staff: string[] };
+type PerCase = { caseId: string; seconds: number; staff: string[]; client?: string; formType?: string };
+type PerClient = { client: string; applications: number; seconds: number };
 
 function fmt(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -26,6 +27,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
   const [label, setLabel] = useState("");
   const [perStaff, setPerStaff] = useState<PerStaff[]>([]);
   const [perCase, setPerCase] = useState<PerCase[]>([]);
+  const [perClient, setPerClient] = useState<PerClient[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -37,6 +39,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
         setLabel(d.label || "");
         setPerStaff(d.perStaff || []);
         setPerCase(d.perCase || []);
+        setPerClient(d.perClient || []);
       }
     } catch { /* ignore transient */ } finally {
       setLoading(false);
@@ -53,7 +56,7 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Team time</h2>
-          <p className="text-xs text-slate-500">{label} · {fmt(teamTotal)} total · {perCase.length} applications</p>
+          <p className="text-xs text-slate-500">{label} · {fmt(teamTotal)} total · {perCase.length} applications · {perClient.length} clients</p>
         </div>
         <div className="flex rounded-lg border border-slate-200 overflow-hidden">
           <button onClick={() => setRange("day")}
@@ -87,18 +90,38 @@ export default function TeamTimeOverview({ apiFetch }: { apiFetch: ApiFetch }) {
             </div>
           </div>
 
-          {/* Per application */}
+          {/* Per client — how many applications each client has + time */}
           <div className="rounded-xl border border-slate-200 bg-white p-3">
-            <p className="text-sm font-bold text-slate-700 mb-2">By application</p>
+            <p className="text-sm font-bold text-slate-700 mb-2">By client</p>
             <div className="space-y-1.5">
-              {perCase.slice(0, 12).map((c) => (
-                <div key={c.caseId} className="flex items-center justify-between text-xs">
-                  <span className="min-w-0 truncate text-slate-700">{c.caseId} <span className="text-slate-400">· {c.staff.join(", ")}</span></span>
+              {perClient.slice(0, 12).map((c) => (
+                <div key={c.client} className="flex items-center justify-between text-xs">
+                  <span className="min-w-0 truncate text-slate-700">
+                    {c.client}
+                    <span className="text-slate-400"> · {c.applications} application{c.applications === 1 ? "" : "s"}</span>
+                  </span>
                   <span className="tabular-nums font-semibold text-slate-700 shrink-0 ml-2">{fmt(c.seconds)}</span>
                 </div>
               ))}
-              {perCase.length > 12 && <p className="text-[11px] text-slate-400">+ {perCase.length - 12} more</p>}
+              {perClient.length > 12 && <p className="text-[11px] text-slate-400">+ {perClient.length - 12} more</p>}
             </div>
+          </div>
+
+          {/* Per application — which client each case belongs to */}
+          <div className="rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+            <p className="text-sm font-bold text-slate-700 mb-2">By application</p>
+            <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {perCase.slice(0, 20).map((c) => (
+                <div key={c.caseId} className="flex items-center justify-between text-xs">
+                  <span className="min-w-0 truncate text-slate-700">
+                    {c.caseId}{c.client ? " · " + c.client : ""}
+                    <span className="text-slate-400">{c.formType ? " · " + c.formType : ""}</span>
+                  </span>
+                  <span className="tabular-nums font-semibold text-slate-700 shrink-0 ml-2">{fmt(c.seconds)}</span>
+                </div>
+              ))}
+            </div>
+            {perCase.length > 20 && <p className="text-[11px] text-slate-400 mt-1">+ {perCase.length - 20} more</p>}
           </div>
         </div>
       )}
