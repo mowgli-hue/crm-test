@@ -848,8 +848,8 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
               </button>
               <textarea ref={textRef} value={reply}
                 onChange={e=>{setReply(e.target.value); const t=e.currentTarget; t.style.height="auto"; t.style.height=Math.min(t.scrollHeight,128)+"px";}}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendReply();}}}
-                placeholder={attachment ? "Add a caption (optional)..." : `Reply to ${threadName(thread)}... (Shift+Enter for new line)`}
+                onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){e.preventDefault();sendReply();}}}
+                placeholder={attachment ? "Add a caption (optional)..." : `Reply to ${threadName(thread)}... (Enter = new line, ⌘/Ctrl+Enter to send)`}
                 rows={1} style={{resize:"none"}}
                 className="flex-1 bg-transparent text-sm outline-none text-slate-900 placeholder-slate-400 max-h-32 overflow-y-auto" />
               <button onClick={() => sendReply()} disabled={(!reply.trim() && !attachment) || sending}
