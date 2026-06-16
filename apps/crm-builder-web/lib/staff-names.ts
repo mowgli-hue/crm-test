@@ -56,9 +56,10 @@ export function buildCanonicalizer(staffNames: string[]): Canonicalizer {
   }
   const firstNames = Array.from(firstToDisp.keys());
 
+  const PLACEHOLDER = new Set(["unassigned", "n/a", "na", "n.a.", "none", "tbd", "test", "—", "-"]);
   return (raw: string): string => {
     const n = normName(raw);
-    if (!n || n === "unassigned") return "";
+    if (!n || PLACEHOLDER.has(n)) return "";
     if (normToDisp.has(n)) return normToDisp.get(n)!;
     const f = n.split(" ")[0];
 

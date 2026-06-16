@@ -9252,11 +9252,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* Input */}
               <div className="mt-3 flex-shrink-0">
                 <div className="flex gap-2 items-end">
-                  <textarea value={chatText} onChange={(e) => setChatText(e.target.value)}
+                  <textarea value={chatText}
+                    onChange={(e) => { setChatText(e.target.value); const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage("human"); }}}
                     placeholder="Type a message… Enter to send, Shift+Enter for new line"
-                    rows={2}
-                    className="flex-1 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-300 focus:border-emerald-400 focus:outline-none resize-none"
+                    rows={1}
+                    className="flex-1 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-300 focus:border-emerald-400 focus:outline-none resize-none overflow-y-auto"
                   />
                   <div className="flex flex-col gap-1.5">
                     <button onClick={() => void sendMessage("human")}

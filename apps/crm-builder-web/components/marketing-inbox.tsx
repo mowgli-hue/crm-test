@@ -846,11 +846,12 @@ export function MarketingInbox({ sessionUser, apiFetch, onNewChat }: { sessionUs
                 className="text-slate-500 hover:text-purple-600 disabled:opacity-40 shrink-0">
                 📎
               </button>
-              <textarea ref={textRef} value={reply} onChange={e=>setReply(e.target.value)}
+              <textarea ref={textRef} value={reply}
+                onChange={e=>{setReply(e.target.value); const t=e.currentTarget; t.style.height="auto"; t.style.height=Math.min(t.scrollHeight,128)+"px";}}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendReply();}}}
-                placeholder={attachment ? "Add a caption (optional)..." : `Reply to ${threadName(thread)}...`}
+                placeholder={attachment ? "Add a caption (optional)..." : `Reply to ${threadName(thread)}... (Shift+Enter for new line)`}
                 rows={1} style={{resize:"none"}}
-                className="flex-1 bg-transparent text-sm outline-none text-slate-900 placeholder-slate-400 max-h-32" />
+                className="flex-1 bg-transparent text-sm outline-none text-slate-900 placeholder-slate-400 max-h-32 overflow-y-auto" />
               <button onClick={() => sendReply()} disabled={(!reply.trim() && !attachment) || sending}
                 className="bg-purple-600 text-white rounded-xl p-2 hover:bg-purple-700 disabled:opacity-40 shrink-0">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
