@@ -92,9 +92,30 @@ export async function GET(request: NextRequest) {
     teamTimeSummary({ companyId: user.companyId, startISO: start, endISO: end }),
   ]);
 
-  // corrections (changes-needed notes) this month, mapped case -> assignee
+  // Collapse assignee name variants onto the canonical staff name, so a case
+  // assigned to "Sukhman" still attributes to the "Sukhman Kaur" account.
+  const byFull = new Set<string>();
+  const byFirst = new Map<string, string[]>();
+  for (const s of staff) {
+    const n = norm(s.name);
+    if (!n) continue;
+    byFull.add(n);
+    const f = n.split(" ")[0];
+    const arr = byFirst.get(f) || [];
+    if (!arr.includes(n)) arr.push(n);
+    byFirst.set(f, arr);
+  }
+  const canonical = (raw: string): string => {
+    const n = norm(raw);
+    if (!n || n === "unassigned") return "";
+    if (byFull.has(n)) return n;
+    const arr = byFirst.get(n.split(" ")[0]);
+    return arr && arr.length === 1 ? arr[0] : n;
+  };
+
+  // corrections (changes-needed notes) this month, mapped case -> canonical assignee
   const caseToAssignee = new Map<string, string>();
-  for (const c of cases) caseToAssignee.set(c.id, norm(String((c as any).assignedTo || "")));
+  for (const c of cases) caseToAssignee.set(c.id, canonical(String((c as any).assignedTo || "")));
   const correctionsByPerson = new Map<string, number>();
   try {
     const r = await getPool().query(
@@ -116,10 +137,10 @@ export async function GET(request: NextRequest) {
     .filter((s: any) => s.active !== false && ["Processing", "ProcessingLead", "Reviewer"].includes(s.role))
     .map((s: any) => {
       const key = norm(s.name);
-      const assigned = cases.filter((c: any) => norm(c.assignedTo) === key && String(c.processingStatus).toLowerCase() !== "submitted").length;
+      const assigned = cases.filter((c: any) => canonical(c.assignedTo) === key && String(c.processingStatus).toLowerCase() !== "submitted").length;
       // Count only by submittedAt (set on submit) — not updatedAt, which bumps on
       // any edit and would re-count old cases into this month.
-      const submitted = cases.filter((c: any) => norm(c.assignedTo) === key && String(c.processingStatus).toLowerCase() === "submitted" && inWindow((c as any).submittedAt, start, end)).length;
+      const submitted = cases.filter((c: any) => canonical(c.assignedTo) === key && String(c.processingStatus).toLowerCase() === "submitted" && inWindow((c as any).submittedAt, start, end)).length;
       const corrections = correctionsByPerson.get(key) || 0;
       const hours = hoursByPerson.get(key) || 0;
       return {

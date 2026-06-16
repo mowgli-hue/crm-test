@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
       companyId: user.companyId,
       startISO: start,
       endISO: end,
-      staffName: seeAll ? undefined : user.name,
+      staffId: seeAll ? undefined : user.id,
     });
 
     // Resolve each case to its client + form type so the UI can show WHICH

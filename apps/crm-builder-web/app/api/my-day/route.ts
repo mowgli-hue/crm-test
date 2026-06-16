@@ -97,7 +97,7 @@ export async function GET(request: NextRequest) {
 
   const ai = await aiFocus(ranked.map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, reason: r.reason })));
   const topPickIds = ai?.topPickIds?.length ? ai.topPickIds : ranked.slice(0, 1).map((r) => r.caseId);
-  const active = await getActiveSession(user.name);
+  const active = await getActiveSession(user.id);
 
   return NextResponse.json({
     ok: true,

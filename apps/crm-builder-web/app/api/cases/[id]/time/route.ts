@@ -31,7 +31,7 @@ async function guard(request: NextRequest, caseId: string) {
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const g = await guard(request, params.id);
   if (g.error) return g.error;
-  const active = await getActiveSession(g.user!.name);
+  const active = await getActiveSession(g.user!.id);
   const summary = await caseTimeSummary(params.id);
   return NextResponse.json({
     ok: true,
@@ -46,16 +46,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const g = await guard(request, params.id);
   if (g.error) return g.error;
   const body = (await request.json().catch(() => ({}))) as { action?: string; minutes?: number; note?: string };
+  const staffId = g.user!.id;
   const staffName = g.user!.name;
   const companyId = g.user!.companyId;
 
   try {
     if (body.action === "in") {
-      const session = await checkIn({ companyId, caseId: params.id, staffName, note: body.note });
+      const session = await checkIn({ companyId, caseId: params.id, staffId, staffName, note: body.note });
       return NextResponse.json({ ok: true, active: session });
     }
     if (body.action === "out") {
-      const res = await checkOut({ caseId: params.id, staffName });
+      const res = await checkOut({ caseId: params.id, staffId });
       const summary = await caseTimeSummary(params.id);
       return NextResponse.json({ ok: true, closed: res.closed, summary });
     }
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 12 * 60) {
         return NextResponse.json({ error: "minutes must be 1–720" }, { status: 400 });
       }
-      const entry = await addManualEntry({ companyId, caseId: params.id, staffName, minutes, note: body.note });
+      const entry = await addManualEntry({ companyId, caseId: params.id, staffId, staffName, minutes, note: body.note });
       const summary = await caseTimeSummary(params.id);
       return NextResponse.json({ ok: true, entry, summary });
     }
