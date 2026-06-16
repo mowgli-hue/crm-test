@@ -24,6 +24,7 @@ import { AiAssistantPanel } from "@/components/ai-assistant-panel";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import UnderReviewPanel from "@/components/under-review-panel";
+import CaseTimeCheckin from "@/components/case-time-checkin";
 import {
   Bell,
   CheckSquare,
@@ -7709,6 +7710,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                     {caseDetailTab === "overview" ? (
                       <div className="mt-3 space-y-4">
+
+                        {/* ── Application check-in (time tracking) ── */}
+                        <CaseTimeCheckin caseId={selectedCase.id} apiFetch={apiFetch} />
 
                         {/* ── Changes Needed Banner ── */}
                         {selectedCase.processingStatus === "under_review" && (selectedCase as any).reviewStatus === "changes_needed" && (
