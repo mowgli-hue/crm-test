@@ -95,6 +95,24 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         </div>
       )}
 
+      {/* End-of-day wrap-up (from ~5pm) — review your work before logging off */}
+      {!loading && new Date().getHours() >= 17 && cases.length > 0 && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-amber-600">Wrap-up time</p>
+          <p className="text-sm text-amber-900 mt-0.5">
+            {cases.length} application{cases.length === 1 ? "" : "s"} still open. Give each a quick check, finish what you can,
+            and leave a note on anything you're handing over before you log off.
+          </p>
+        </div>
+      )}
+
+      {/* Appreciation — cleared the list */}
+      {!loading && cases.length === 0 && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+          <p className="text-sm text-emerald-900">All clear — lovely work today. Nothing left on your plate. 🎉</p>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-slate-400">Loading…</p>
       ) : cases.length === 0 ? (
