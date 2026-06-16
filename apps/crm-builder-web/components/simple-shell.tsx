@@ -10,6 +10,7 @@ import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
 import TeamTimeOverview from "@/components/team-time-overview";
 import MyDay from "@/components/my-day";
+import TeamAtRisk from "@/components/team-at-risk";
 import ReviewItemsPanel from "@/components/review-items-panel";
 import AgentDashboard from "@/components/agent-dashboard";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
@@ -11746,6 +11747,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
               {/* Team application-time overview (check-in hours per person / application) */}
               {(sessionUser?.userType === "staff") && <TeamTimeOverview apiFetch={apiFetch} />}
+
+              {/* Firm-wide at-risk cases (managers only; self-hides otherwise) */}
+              {(sessionUser?.userType === "staff") && <TeamAtRisk apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />}
 
               {/* ── Workload Bar Chart ──
                   Quick visual of which team members are over/under-allocated.
