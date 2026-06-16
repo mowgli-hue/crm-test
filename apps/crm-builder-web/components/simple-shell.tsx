@@ -9,6 +9,7 @@ import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
 import TeamTimeOverview from "@/components/team-time-overview";
+import MyDay from "@/components/my-day";
 import ReviewItemsPanel from "@/components/review-items-panel";
 import AgentDashboard from "@/components/agent-dashboard";
 import { NEWTON_TEAM_MEMBERS } from "@/lib/newton-team";
@@ -5450,6 +5451,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                         </div>
                       </div>
                     </section>
+
+                    {/* My Day — your applications, prioritized, with check-in (all staff, RBAC-scoped) */}
+                    <MyDay apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />
 
                     {/* ── PROCESSING STAFF workspace ── */}
                     {isProcessing && (
