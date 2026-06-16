@@ -27,11 +27,14 @@ export async function GET(request: NextRequest) {
 
   const queue = all
     .filter((c: any) => !isClosed(c))
-    // Awaiting a reviewer: under review, and not already sent back to the preparer.
+    // Awaiting a reviewer: under review, NOT sent back to the preparer
+    // (changes_needed = with preparer) and NOT already cleared by the reviewer
+    // (changes_done = approved / waiting to submit). Only genuinely-unactioned
+    // cases show, so approved ones don't nag the reviewer forever.
     .filter((c: any) => {
       const st = String(c.processingStatus || "").toLowerCase();
       const rev = String(c.reviewStatus || "").toLowerCase();
-      return st === "under_review" && rev !== "changes_needed";
+      return st === "under_review" && rev !== "changes_needed" && rev !== "changes_done";
     })
     // Only the cases in this reviewer's block.
     .filter((c: any) => reviewerHandles(user.name, user.role, String(c.formType || "")))

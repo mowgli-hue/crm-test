@@ -149,12 +149,27 @@ function paymentBoost(amount: number): number {
   return 0;
 }
 
+// Reviewer priority weights EXPIRY first (per office). This deadline weighting is
+// deliberately stronger than payment (max 200) + age (max 200) so a soon-expiring
+// permit always outranks a high-payer. Among expired (restoration) cases, the more
+// overdue ranks higher (closer to the 90-day restoration deadline).
+function reviewDeadlineBoost(d: number | null): number {
+  if (d === null) return 0;
+  if (d < 0) return 1000 + Math.min(Math.abs(d), 60); // expired: graduated
+  if (d <= 3) return 800;
+  if (d <= 7) return 600;
+  if (d <= 14) return 400;
+  if (d <= 30) return 250;
+  if (d <= 60) return 120;
+  return 0;
+}
+
 export function scoreReview(c: CaseItem | any): ScoredReview {
   const here = daysInSystem(c);
   const d = deadlineDays(c);
   const amount = Number((c as any).amountPaid) || 0;
 
-  const score = 500 + deadlineBoost(d) + paymentBoost(amount) + Math.min(here * 5, 200);
+  const score = 500 + reviewDeadlineBoost(d) + paymentBoost(amount) + Math.min(here * 5, 200);
 
   const parts: string[] = [];
   if (d !== null) parts.push(d < 0 ? `status expired ${Math.abs(d)}d ago` : `permit/due in ${d}d`);
