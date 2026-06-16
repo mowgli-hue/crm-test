@@ -19,21 +19,23 @@ function extractDriveFolderId(link: string): string | undefined {
 
 const ROOT_DRIVE = "https://drive.google.com/drive/folders/1FAjuG-Uj4fhp9zWfVsiHoX8WbVPT_r7j?usp=drive_link";
 
-export const NEWTON_TEAM_MEMBERS: NewtonTeamMember[] = [
+const RAW_TEAM_MEMBERS: Omit<NewtonTeamMember, "workspaceDriveFolderId">[] = [
   { name: "Lavisha Dhingra",  email: "lavisha.newtonimmigration@gmail.com",      role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
-  { name: "Rapneet Kaur",     email: "rapneetkaur.newtonimmigration@gmail.com",  role: "Admin",     workspaceDriveLink: ROOT_DRIVE },
+  { name: "Rapneet Kaur",     email: "rapneetkaur.newtonimmigration@gmail.com",  role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Rajwinder Kaur",   email: "rajwinder.newtonimmigration@gmail.com",    role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Avneet Kaur",      email: "avneet.newtonimmigration@gmail.com",       role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Ramandeep Kaur",   email: "ramandeep.newtonimmigration@gmail.com",    role: "ProcessingLead", workspaceDriveLink: ROOT_DRIVE },
   { name: "Simi Das",         email: "simi.newtonimmigration@gmail.com",         role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
   { name: "Manisha",          email: "manisha.newtonimmigration@gmail.com",      role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
-  { name: "Sukhman Kaur",     email: "sukhman.newtonimmigration@gmail.com",      role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
-  { name: "Serbleen Kaur",    email: "serbleen.newtonimmigration@gmail.com",     role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
+  { name: "Sukhman Kaur",     email: "sukhman.newtonimmigration@gmail.com",      role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
+  { name: "Serbleen Kaur",    email: "serbleen.newtonimmigration@gmail.com",     role: "Reviewer",       workspaceDriveLink: ROOT_DRIVE },
   { name: "Neha Brar",        email: "neha.newtonimmigration@gmail.com",         role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
-  { name: "Manpreet Kaur",    email: "manpreetnewtonimmigration8@gmail.com",     role: "Marketing",      workspaceDriveLink: ROOT_DRIVE },
+  { name: "Manpreet Kaur",    email: "manpreetnewtonimmigration8@gmail.com",     role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
   { name: "Akanksha",         email: "akanksha.newtonimmigration@gmail.com",     role: "Admin",          workspaceDriveLink: ROOT_DRIVE },
   { name: "Team",             email: "team.newtonimmigration@gmail.com",         role: "Processing",     workspaceDriveLink: ROOT_DRIVE },
-].map((item) => ({
+];
+
+export const NEWTON_TEAM_MEMBERS: NewtonTeamMember[] = RAW_TEAM_MEMBERS.map((item) => ({
   ...item,
-  workspaceDriveFolderId: extractDriveFolderId(item.workspaceDriveLink)
+  workspaceDriveFolderId: extractDriveFolderId(item.workspaceDriveLink),
 }));
