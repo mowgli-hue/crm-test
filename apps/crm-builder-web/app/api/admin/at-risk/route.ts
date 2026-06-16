@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listCases, listAllDocumentsByCase } from "@/lib/store";
 import { canSeeAllCases } from "@/lib/rbac";
-import { scoreCase, isClosed, ageDays, riskBucket, type RiskBucket } from "@/lib/case-priority";
+import { scoreCase, isClosed, riskBucket, type RiskBucket } from "@/lib/case-priority";
 
 export const runtime = "nodejs";
 
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   for (const c of all as any[]) {
     if (isClosed(c)) continue;
     const s = scoreCase(c, docsByCase.get(c.id) || []);
-    const bucket = riskBucket(s, ageDays(c));
+    const bucket = riskBucket(s);
     const assignedTo = String(c.assignedTo || "Unassigned");
     const row: Row = {
       caseId: c.id,

@@ -13,6 +13,7 @@ type ApiFetch = (path: string, init?: RequestInit) => Promise<Response>;
 type DayCase = {
   caseId: string; client: string; type: string; status: string;
   reviewStatus: string; ageDays: number; reason: string;
+  completionPct?: number; daysInSystem?: number;
 };
 
 function fmtDuration(totalSeconds: number): string {
@@ -117,6 +118,14 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
                       <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLE[c.reviewStatus === "changes_needed" ? "changes_needed" : c.status] || "bg-slate-100 text-slate-600"}`}>
                         {c.reviewStatus === "changes_needed" ? "changes needed" : c.status.replace(/_/g, " ")}
                       </span>
+                      {typeof c.completionPct === "number" && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                          <span className="inline-block h-1 w-10 rounded-full bg-slate-100 overflow-hidden align-middle">
+                            <span className="block h-full rounded-full bg-emerald-500" style={{ width: `${c.completionPct}%` }} />
+                          </span>
+                          {c.completionPct}%
+                        </span>
+                      )}
                     </div>
                     <p className="mt-1 text-xs text-slate-500">{c.reason}</p>
                   </button>

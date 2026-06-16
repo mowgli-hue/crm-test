@@ -78,6 +78,8 @@ export async function GET(request: NextRequest) {
         ageDays: Math.round(ageDays(c)),
         ready: s.ready,
         deadlineDays: s.deadlineDays,
+        completionPct: s.completionPct,
+        daysInSystem: s.daysInSystem,
         score: s.score,
         reason: s.reason,
       };

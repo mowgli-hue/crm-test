@@ -16,6 +16,8 @@ export type Scored = {
   reason: string;
   ready: ReadyKind;
   deadlineDays: number | null;
+  completionPct: number;   // 0-100, how far along the application is
+  daysInSystem: number;    // how long since the case came in
 };
 
 // Cases that are finished / not part of the working pipeline.
@@ -28,6 +30,20 @@ export function isClosed(c: any): boolean {
 export function ageDays(c: any): number {
   const t = Date.parse(c.updatedAt || c.createdAt || "") || Date.now();
   return Math.max(0, (Date.now() - t) / DAY);
+}
+
+// How long the case has been in the system (since it came in). This is the
+// "how long it's been sitting here" signal — older = more important.
+export function daysInSystem(c: any): number {
+  const t = Date.parse(c.createdAt || c.updatedAt || "") || Date.now();
+  return Math.max(0, (Date.now() - t) / DAY);
+}
+
+// How complete the application is, 0-100, from the three readiness stages.
+function completionFromReadiness(r: { intake: { complete: boolean }; clientDocs: { complete: boolean }; forms: { complete: boolean }; submissionReady: boolean }): number {
+  if (r.submissionReady) return 100;
+  // intake 30% · client docs 45% · forms 25% (docs are the bulk of the work)
+  return Math.round((r.intake.complete ? 30 : 0) + (r.clientDocs.complete ? 45 : 0) + (r.forms.complete ? 25 : 0));
 }
 
 // Days until a date (negative = already passed). null if unknown.
@@ -62,14 +78,16 @@ function deadlineBoost(d: number | null): number {
   return 0;
 }
 
-// Priority from real signals: rework/review, document-readiness, and deadlines.
+// Priority from real signals: status, deadlines, how long it's been in the
+// system, and how complete the application is.
 export function scoreCase(c: CaseItem | any, docs: DocumentItem[]): Scored {
   const st = String((c as any).processingStatus || "").toLowerCase();
   const review = String((c as any).reviewStatus || "").toLowerCase();
-  const age = ageDays(c);
+  const here = daysInSystem(c);
   const d = deadlineDays(c);
   const dBoost = deadlineBoost(d);
   const r = getCaseReadiness(c, docs);
+  const completionPct = completionFromReadiness(r);
 
   const dueNote =
     d === null ? "" :
@@ -87,21 +105,37 @@ export function scoreCase(c: CaseItem | any, docs: DocumentItem[]): Scored {
     base = 640; ready = "assemble"; reason = "Docs complete — assemble forms";
   } else if (!r.clientDocs.complete || !r.intake.complete) {
     const miss = [...r.clientDocs.missing, ...r.intake.missing].slice(0, 3).join(", ");
-    base = 380 + age; ready = "docs"; reason = miss ? `Waiting on: ${miss}` : `Waiting on documents — ${Math.round(age)}d old`;
+    base = 380; ready = "docs"; reason = miss ? `Waiting on: ${miss}` : "Waiting on documents";
   } else {
-    base = 300 + age; ready = "progress"; reason = `In progress — ${Math.round(age)}d since last update`;
+    base = 300; ready = "progress"; reason = "In progress";
   }
 
-  return { score: base + dBoost + age * 0.1, reason: reason + dueNote, ready, deadlineDays: d };
+  // Importance modifiers (within the status band):
+  //  - the longer it's been sitting here, the more it matters (cap so it can't
+  //    overtake a higher band)
+  //  - the more complete it is, the closer to the finish line — nudge it up so
+  //    near-done files get pushed over
+  const ageBoost = Math.min(here * 6, 200);
+  const completionBoost = completionPct * 1.2;
+  const hereNote = here >= 3 ? ` · ${Math.round(here)}d in queue` : "";
+
+  return {
+    score: base + dBoost + ageBoost + completionBoost,
+    reason: reason + dueNote + (ready === "docs" || ready === "progress" ? hereNote : ""),
+    ready,
+    deadlineDays: d,
+    completionPct,
+    daysInSystem: Math.round(here),
+  };
 }
 
 // Which risk bucket a scored case falls into, for grouped manager views.
 export type RiskBucket = "overdue" | "due_soon" | "ready" | "assemble" | "stalled" | "in_progress";
-export function riskBucket(s: Scored, ageDaysVal: number): RiskBucket {
+export function riskBucket(s: Scored): RiskBucket {
   if (s.deadlineDays !== null && s.deadlineDays < 0) return "overdue";
   if (s.deadlineDays !== null && s.deadlineDays <= 7) return "due_soon";
   if (s.ready === "submit" || s.ready === "review") return "ready";
   if (s.ready === "assemble") return "assemble";
-  if (s.ready === "docs" && ageDaysVal >= 5) return "stalled";
+  if (s.ready === "docs" && s.daysInSystem >= 5) return "stalled";
   return "in_progress";
 }
