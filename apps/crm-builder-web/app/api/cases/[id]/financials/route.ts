@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canStaffAccessCase, canUseAccounting } from "@/lib/rbac";
 import { addCaseMilestone, addInvoice, getCase, recordCasePayment, toggleMilestone, updateCaseFinancials } from "@/lib/store";
+import { getPool } from "@/lib/postgres-store";
 
 export async function PATCH(
   request: NextRequest,
@@ -81,6 +82,37 @@ export async function POST(
     }
     const updated = await recordCasePayment(user.companyId, params.id, amount);
     if (!updated) return NextResponse.json({ error: "Case not found" }, { status: 404 });
+
+    // Auto-sync into Accounting so money received shows up without manual
+    // re-entry. Marked source='case' (vs manual). Non-fatal if it fails.
+    try {
+      const pool = getPool();
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS manual_payments (
+          id TEXT PRIMARY KEY, company_id TEXT NOT NULL, payment_date DATE NOT NULL,
+          amount NUMERIC(10,2) NOT NULL, client_name TEXT NOT NULL DEFAULT '',
+          description TEXT NOT NULL DEFAULT '', method TEXT NOT NULL DEFAULT '',
+          added_by TEXT NOT NULL DEFAULT '', case_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      await pool.query(`ALTER TABLE manual_payments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'`);
+      await pool.query(
+        `INSERT INTO manual_payments (id, company_id, payment_date, amount, client_name, description, method, added_by, case_id, source)
+         VALUES ($1,$2,CURRENT_DATE,$3,$4,$5,$6,$7,$8,'case')`,
+        [
+          `MP-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          user.companyId, amount,
+          String((updated as any).client || ""),
+          `Case payment — ${params.id}`,
+          String(body.method || ""),
+          user.name || "",
+          params.id,
+        ]
+      );
+    } catch (e) {
+      console.error("[financials] accounting sync failed:", (e as Error).message);
+    }
+
     return NextResponse.json({ case: updated });
   }
 
