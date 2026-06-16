@@ -129,6 +129,41 @@ export function scoreCase(c: CaseItem | any, docs: DocumentItem[]): Scored {
   };
 }
 
+// ── Reviewer priority ──────────────────────────────────────────────────
+// For the review queue, a case is already prepped and waiting for a reviewer.
+// Newton's reviewer factors: (1) whose permit is expiring soonest, (2) which
+// client paid the most, (3) which has been waiting longest to be submitted.
+export type ScoredReview = {
+  score: number;
+  reason: string;
+  deadlineDays: number | null;
+  amountPaid: number;
+  daysInSystem: number;
+};
+
+function paymentBoost(amount: number): number {
+  if (amount >= 1000) return 200;
+  if (amount >= 500) return 120;
+  if (amount >= 200) return 60;
+  if (amount > 0) return 25;
+  return 0;
+}
+
+export function scoreReview(c: CaseItem | any): ScoredReview {
+  const here = daysInSystem(c);
+  const d = deadlineDays(c);
+  const amount = Number((c as any).amountPaid) || 0;
+
+  const score = 500 + deadlineBoost(d) + paymentBoost(amount) + Math.min(here * 5, 200);
+
+  const parts: string[] = [];
+  if (d !== null) parts.push(d < 0 ? `status expired ${Math.abs(d)}d ago` : `permit/due in ${d}d`);
+  if (amount > 0) parts.push(`$${amount.toLocaleString()} paid`);
+  parts.push(`${Math.round(here)}d waiting`);
+
+  return { score, reason: parts.join(" · "), deadlineDays: d, amountPaid: amount, daysInSystem: Math.round(here) };
+}
+
 // Which risk bucket a scored case falls into, for grouped manager views.
 export type RiskBucket = "overdue" | "due_soon" | "ready" | "assemble" | "stalled" | "in_progress";
 export function riskBucket(s: Scored): RiskBucket {
