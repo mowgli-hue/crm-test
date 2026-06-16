@@ -6478,6 +6478,32 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     {teamStatus ? <p className="mt-2 text-sm text-slate-600">{teamStatus}</p> : null}
                   </div>
 
+                  {/* ── Roles at a glance ── */}
+                  <div className="rounded-xl border border-slate-200 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-900 mb-1">Roles at a glance</p>
+                    <p className="text-xs text-slate-500 mb-3">What each role does and how their dashboard behaves. Set anyone&apos;s role in the list below.</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {[
+                        { role: "Admin", cls: "bg-purple-50 text-purple-700 border-purple-200", desc: "Full access — manage the team & roles, accounting, and every case." },
+                        { role: "ProcessingLead", cls: "bg-indigo-50 text-indigo-700 border-indigo-200", desc: "Divides & oversees work; sees all cases + the firm at-risk view; can reassign." },
+                        { role: "Processing", cls: "bg-blue-50 text-blue-700 border-blue-200", desc: "Preps applications assigned to them; their dashboard shows only their own cases." },
+                        { role: "Reviewer", cls: "bg-amber-50 text-amber-700 border-amber-200", desc: "Reviews finished applications before submission; works the review queue." },
+                        { role: "Marketing", cls: "bg-pink-50 text-pink-700 border-pink-200", desc: "Intake & leads — creates cases, logs calls, tracks consultations." },
+                      ].map((r) => {
+                        const n = teamUsers.filter((u) => u.id && u.active !== false && u.role === r.role).length;
+                        return (
+                          <div key={r.role} className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold shrink-0 ${r.cls}`}>{r.role}</span>
+                            <div className="min-w-0">
+                              <p className="text-xs text-slate-600">{r.desc}</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">{n} {n === 1 ? "person" : "people"}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* ── Staff profiles ── */}
                   {teamUsers.filter((u) => u.id).length > 0 && (
                     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
