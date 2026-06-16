@@ -64,7 +64,16 @@ export async function GET(request: NextRequest) {
   // The whole-firm view lives in /api/admin/at-risk, not here.
   const mine = all
     .filter((c: any) => !isClosed(c))
-    .filter((c: any) => isCaseAssignedToUser(c.assignedTo, user.name));
+    .filter((c: any) => isCaseAssignedToUser(c.assignedTo, user.name))
+    // A case that's under review is with the REVIEWER, not the processing member —
+    // so it doesn't belong in their priorities. The exception: the reviewer sent
+    // it back (changes_needed), which is the processing member's to fix.
+    // (The reviewer's own review queue is a separate view, built later.)
+    .filter((c: any) => {
+      const st = String(c.processingStatus || "").toLowerCase();
+      const rev = String(c.reviewStatus || "").toLowerCase();
+      return !(st === "under_review" && rev !== "changes_needed");
+    });
 
   const ranked = mine
     .map((c: any) => {
