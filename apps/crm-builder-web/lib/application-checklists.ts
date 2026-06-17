@@ -63,6 +63,7 @@ export function resolveApplicationChecklistKey(formType: string):
   | "visitor_record"
   | "work_permit"
   | "sowp"
+  | "vowp"
   | "study_permit"
   | "study_permit_extension"
   | "super_visa"
@@ -90,6 +91,11 @@ export function resolveApplicationChecklistKey(formType: string):
     ft.includes("spousal work permit") ||
     (ft.includes("open work permit") && (ft.includes("spous") || ft.includes("partner")))
   ) return "sowp";
+  // VOWP — Vulnerable Worker OWP. MUST come before the generic work_permit
+  // branch (which would demand a job offer — wrong, the worker is fleeing an
+  // abusive employer). Minimal set: passport, photo, current permit, proof of
+  // abuse/risk, plus any client-info / supporting docs.
+  if (ft.includes("vowp") || ft.includes("vulnerable")) return "vowp";
   if (
     ft.includes("work permit") ||
     ft.includes("lmia") ||
@@ -191,12 +197,28 @@ const CHECKLISTS: Record<string, ApplicationChecklistItem[]> = {
     { key: "applicant_photo", label: "Applicant's digital photo (IRCC specs)", required: true, keywords: ["photo"], categories: ["photo"] },
     { key: "marriage_cert", label: "Marriage certificate (or 12-month cohabitation evidence)", required: true, keywords: ["marriage", "cohabitation", "common law"] },
     { key: "principal_status", label: "Principal partner's permit (work/study/PGWP)", required: true, keywords: ["work permit", "study permit", "pgwp", "permit"], categories: ["work_permit", "study_permit"] },
-    { key: "principal_employment_letter", label: "Principal's employment letter (NOC, duties, salary, hours)", required: false, keywords: ["employment letter", "job letter", "noc"] },
-    { key: "principal_pay_stubs", label: "Principal's pay stubs (last 3 months)", required: false, keywords: ["pay stub", "payslip"] },
-    { key: "principal_school_doc", label: "Principal's enrollment letter (if student spouse)", required: false, keywords: ["enrollment", "loa", "school"] },
+    // The principal's qualifying-status proof is the post-Jan-2025 eligibility
+    // gate, so it's REQUIRED. Satisfied by EITHER a worker/PGWP employment letter
+    // showing an eligible NOC (TEER 0/1 or select 2/3) OR — if the principal is a
+    // student — their enrollment letter / LOA for a qualifying program. Without
+    // this the case literally can't be shown to be eligible, so it must not read
+    // as "complete".
+    { key: "principal_employment_letter", label: "Principal's qualifying-status proof — employment letter w/ NOC (worker/PGWP) OR enrollment letter (student)", required: true, keywords: ["employment letter", "job letter", "noc", "enrollment", "loa", "letter of acceptance"] },
+    { key: "principal_pay_stubs", label: "Principal's pay stubs (last 3 months)", required: false, keywords: ["pay stub", "payslip", "paystub"] },
     { key: "relationship_evidence", label: "Relationship evidence (photos, joint accounts, lease)", required: true, keywords: ["photos", "joint", "lease", "utilities"] },
     { key: "rep_letter", label: "Use of Representative form (IMM 5476)", required: true, keywords: ["5476", "representative"] },
     { key: "submission_letter", label: "Representative Submission Letter", required: false, keywords: ["submission letter"] }
+  ],
+  // VOWP — Vulnerable Worker Open Work Permit. IMM5710 inside Canada, fee-exempt.
+  // Minimal, abuse-sensitive scope: passport, photo, current permit, proof of
+  // abuse/risk (the eligibility basis), and any client-info / supporting docs.
+  // NO job offer (the applicant is leaving an abusive employer).
+  vowp: [
+    { key: "applicant_passport", label: "Passport (bio + all stamped pages)", required: true, keywords: ["passport"], categories: ["passport"] },
+    { key: "applicant_photo", label: "Digital photo (IRCC specs)", required: true, keywords: ["photo", "digital photo"], categories: ["photo"] },
+    { key: "current_permit", label: "Current / most recent work permit", required: true, keywords: ["work permit", "permit"], categories: ["work_permit", "study_permit"] },
+    { key: "abuse_evidence", label: "Proof of abuse or risk of abuse (core VOWP eligibility evidence)", required: true, keywords: ["abuse", "evidence", "report", "statement", "letter", "affidavit"] },
+    { key: "supporting", label: "Client info / other supporting documents", required: false, keywords: ["client info", "support", "supporting"] }
   ],
   study_permit: [
     { key: "passport", label: "Passport", required: true, keywords: ["passport"], categories: ["passport"] },
@@ -424,6 +446,7 @@ const GENERATED_FORMS: Record<string, ApplicationChecklistItem[]> = {
   pgwp: immFormSet("5710"),
   work_permit: immFormSet("5710"),
   sowp: immFormSet("5710"),
+  vowp: immFormSet("5710"),
   study_permit_extension: immFormSet("5709"),
   visitor_record: immFormSet("5708"),
   // TRV (inside Canada): IMM5257 + IMM5476 only — NO representative submission

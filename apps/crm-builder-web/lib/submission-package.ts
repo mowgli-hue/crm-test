@@ -594,6 +594,13 @@ type FormProfile = {
   // the forms (5476 / 5257) are handled separately and the automation only
   // arranges the supporting documents.
   skipRepForm?: boolean;
+  // When true, any uploaded doc the categorizer marked "other" (and that isn't
+  // an internal/system file) is also pulled into the Client_Info bundle — so
+  // form-specific supporting docs that have no dedicated category still land in
+  // the submission folder instead of only being flagged. Used by SOWP, whose
+  // core evidence (marriage certificate, proof of relation, principal's
+  // employment letter + pay stubs, the client-info file) is all "other".
+  bundleOthers?: boolean;
   // When set, the WHOLE submission is a single merged "Client Information" PDF
   // built from these parts IN THIS ORDER — nothing else is copied/bundled.
   // Used by TRV (inside Canada): passport (with stamps) → digital photo →
@@ -776,6 +783,12 @@ const PROFILE_SOWP: FormProfile = {
     // Spouse's existing permits + supporting docs go in the bundle
     "studyPermits", "workPermits", "languageTests",
   ],
+  // SOWP's core evidence — marriage certificate, proof of relation, the
+  // principal's employment letter + pay stubs, relationship photos, and the
+  // client-info file — all categorize as "other". Pull them into the Client_Info
+  // bundle so the assembled folder actually contains them instead of an
+  // almost-empty package + a "review these manually" warning.
+  bundleOthers: true,
   recommended: [
     "Applicant's passport (bio + stamped pages)",
     "Applicant's digital photo",
@@ -784,6 +797,37 @@ const PROFILE_SOWP: FormProfile = {
     "Principal partner's employment letter (NOC, duties, salary, hours)",
     "Principal partner's recent pay stubs",
     "Relationship evidence (photos, joint accounts, lease)",
+    "IMM5710 (in Canada) — use 'Generate Forms'",
+    "IMM5476 — Use of Representative",
+    "Representative Submission Letter",
+  ],
+};
+
+// VOWP — Vulnerable Worker Open Work Permit (IMM5710 inside Canada, fee-exempt,
+// online only). For workers experiencing or at risk of abuse from their employer.
+// Deliberately a MINIMAL set: passport, digital photo, and a Client Information
+// bundle (current permit + proof of abuse/risk + the client-info file + any other
+// supporting docs). It must NOT inherit the PGWP profile, which would wrongly
+// demand transcripts + a completion letter a vulnerable worker doesn't have.
+const PROFILE_VOWP: FormProfile = {
+  name: "VOWP",
+  topLevel: [
+    { sourceKey: "passport",         template: "Passport_<First>_<Last>" },
+    { sourceKey: "photo",            template: "Photo_<First>_<Last>" },
+    // Forms (generated/filled elsewhere) — copied if already in the case folder.
+    { sourceKey: "imm5710",          template: "IMM5710e_<First>_<Last>" },
+    { sourceKey: "submissionLetter", template: "Representative_Submission_Letter_<First>_<Last>" },
+  ],
+  // Current/most-recent permit goes into Client Information; everything else
+  // VOWP-specific (proof of abuse, employer docs, client-info file) is "other"
+  // and is pulled in via bundleOthers below.
+  bundleCategories: ["workPermits", "studyPermits"],
+  bundleOthers: true,
+  recommended: [
+    "Applicant's passport (bio + stamped pages)",
+    "Digital photo",
+    "Proof of abuse or risk of abuse (core VOWP evidence) — goes into Client Information",
+    "Current / most recent work permit — goes into Client Information",
     "IMM5710 (in Canada) — use 'Generate Forms'",
     "IMM5476 — Use of Representative",
     "Representative Submission Letter",
@@ -823,6 +867,11 @@ function pickProfile(formType: string): FormProfile {
     (ft.includes("open work permit") && (ft.includes("spous") || ft.includes("partner")))
   ) {
     return PROFILE_SOWP;
+  }
+  // VOWP — Vulnerable Worker OWP. Must come BEFORE the default PGWP catch-all,
+  // otherwise it inherits the PGWP scope (transcripts + completion letter).
+  if (ft.includes("vowp") || ft.includes("vulnerable")) {
+    return PROFILE_VOWP;
   }
   // Study permit extension OR new study permit (inside Canada uses 5709)
   if (ft.includes("study permit") || ft.includes("study permit extension") || ft.includes("study extension")) {
@@ -1257,6 +1306,35 @@ export async function assemblePgwpSubmissionPackage(
     const docs = (primary as any)[cat] as CategorizedDoc[] | undefined;
     if (Array.isArray(docs) && docs.length > 0) {
       bundleSources.push(...docs);
+    }
+  }
+
+  // bundleOthers (SOWP): also pull in any "other"-category uploads that have no
+  // dedicated slot — marriage certificate, proof of relation, principal's
+  // employment letter + pay stubs, relationship photos, the client-info file —
+  // so they actually land in the folder. We skip anything already placed at top
+  // level, internal/system files, and non-document files. The per-file
+  // wrong-client filter below still runs on these, same as any other bundle doc.
+  if (profile.bundleOthers) {
+    const INTERNAL_BUNDLE_RE = /intake answers|chat|conversation|^notes?\b|\.txt$|whatsapp/i;
+    const alreadyTopLevel = new Set(
+      copyJobs.map((j) => j.doc.driveFileId).filter((id): id is string => !!id),
+    );
+    const alreadyInBundle = new Set(
+      bundleSources.map((d) => d.driveFileId).filter((id): id is string => !!id),
+    );
+    for (const d of categorized) {
+      if (
+        d.category === "other" &&
+        d.driveFileId &&
+        !alreadyTopLevel.has(d.driveFileId) &&
+        !alreadyInBundle.has(d.driveFileId) &&
+        /\.(pdf|jpe?g|png|webp|heic)$/i.test(String(d.name || "")) &&
+        !INTERNAL_BUNDLE_RE.test(String(d.name || ""))
+      ) {
+        bundleSources.push(d);
+        alreadyInBundle.add(d.driveFileId);
+      }
     }
   }
 

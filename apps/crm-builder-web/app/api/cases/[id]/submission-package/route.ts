@@ -57,6 +57,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     formType.includes("bowp") ||
     formType.includes("sowp") ||
     formType.includes("vowp") ||
+    formType.includes("vulnerable") ||
     formType.includes("lmia") ||
     formType.includes("work permit") ||
     formType.includes("open work permit") ||

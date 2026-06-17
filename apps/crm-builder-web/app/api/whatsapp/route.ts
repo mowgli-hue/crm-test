@@ -279,7 +279,27 @@ export async function POST(req: NextRequest) {
             [metaMsgId]
           ).catch(() => {});
         }
-      } catch { /* non-fatal */ }
+        console.log(`📥 Inbox saved: phone=${normalizedFrom} | dir=inbound | id=${msgId} | case=${matched?.client || "—"}`);
+      } catch (e) {
+        // PREVIOUSLY SILENT — a failed inbound INSERT here was the most likely
+        // cause of "client replied but it never showed up". The dedup claim was
+        // already taken (and not yet marked done), so Meta's retries were skipped
+        // as "already processed" for 3 min — and Meta usually stops retrying
+        // before then. Net effect: the reply is lost with zero trace.
+        //
+        // Fix: (1) LOG it so it's visible, and (2) RELEASE the not-done claim so
+        // the very next webhook retry reprocesses and saves the message instead
+        // of dropping it.
+        console.error(`❌ Inbox save FAILED for ${from} (reply may be lost): ${(e as Error).message}`);
+        if (metaMsgId) {
+          try {
+            await getPool().query(
+              `DELETE FROM whatsapp_processed_msgs WHERE meta_msg_id = $1 AND done = FALSE`,
+              [metaMsgId]
+            );
+          } catch { /* best effort */ }
+        }
+      }
 
       // ── Greeting short-circuit ──
       //
