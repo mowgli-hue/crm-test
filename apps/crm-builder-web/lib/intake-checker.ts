@@ -98,6 +98,34 @@ export function runIntakeCheck(caseItem: CaseItem, documents: DocumentItem[]): I
   const intake = toIntakeRecord(caseItem.pgwpIntake);
   const flow = getQuestionFlowForFormType(caseItem.formType || "generic");
 
+  // Required documents — always checked, regardless of how intake was collected.
+  const checklistAll = getChecklistForFormType(caseItem.formType || "generic");
+  const missingDocs = getMissingChecklistDocs(caseItem.formType || "generic", documents);
+
+  // ── WhatsApp AI intake completion shortcut ──
+  // The WhatsApp AI intake saves each answer under q1..qN and full-question-text
+  // keys — NOT the named fields (fullName/phone/address/…) or the
+  // applicationSpecificAnswers JSON this checker reads. So a FULLY-COMPLETED
+  // WhatsApp intake was being reported as dozens of answers "missing", which kept
+  // the case from EVER showing ready-to-prepare even though every answer is on
+  // file. If the WhatsApp intake finished, the questionnaire is captured — trust
+  // its completion marker. (Non-WhatsApp / partial intakes still fall through to
+  // the detailed field-by-field check below.)
+  const whatsappDone =
+    asText(intake.whatsappIntakeCompletedAt).length > 0 ||
+    asText(intake.whatsappIntakePhase).toLowerCase() === "complete";
+  if (whatsappDone) {
+    return {
+      questionnaireComplete: true,
+      missingIntakeItems: [],
+      missingRequiredDocs: missingDocs,
+      riskFlags: buildRiskFlags(caseItem, intake, missingDocs),
+      recommendedTaskTitles: checklistAll
+        .filter((item) => item.required && missingDocs.includes(item.label))
+        .map((item) => `Collect required document: ${item.label}`),
+    };
+  }
+
   const missingIntakeItems: MissingIntakeItem[] = [];
   flow.requiredFields.forEach((field) => {
     if (!hasValue(intake, field)) {
