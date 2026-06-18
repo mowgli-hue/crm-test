@@ -15,6 +15,8 @@ import { listCases, listAllDocumentsByCase } from "@/lib/store";
 import { isCaseAssignedToUser } from "@/lib/rbac";
 import { getActiveSession } from "@/lib/time-tracking";
 import { scoreCase, isClosed, ageDays } from "@/lib/case-priority";
+import { computeSla } from "@/lib/case-sla";
+import { nextActionFor } from "@/lib/next-action";
 
 export const runtime = "nodejs";
 
@@ -78,6 +80,8 @@ export async function GET(request: NextRequest) {
   const ranked = mine
     .map((c: any) => {
       const s = scoreCase(c, docsByCase.get(c.id) || []);
+      const sla = computeSla(c.formType, c.createdAt, s.ready, c.processingStatus);
+      const nextAction = nextActionFor(s.ready, c.reviewStatus);
       return {
         caseId: c.id,
         client: String(c.client || ""),
@@ -91,19 +95,49 @@ export async function GET(request: NextRequest) {
         daysInSystem: s.daysInSystem,
         score: s.score,
         reason: s.reason,
+        // Phase 1 — strict ops layer:
+        sla,            // hours-to-submit clock (status: on_track | due_soon | breached | done)
+        nextAction,     // the single next step + owner + how
       };
     })
-    .sort((a, b) => b.score - a.score);
+    // Order by SLA urgency first (breached, then least time left), then by the
+    // existing priority score. A case about to blow its hours-deadline jumps the
+    // queue over a higher-scored one that still has runway.
+    .sort((a, b) => {
+      const rank = (x: any) => (x.sla.status === "breached" ? 0 : x.sla.status === "due_soon" ? 1 : 2);
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      if (ra < 2 && a.sla.remainingMs !== b.sla.remainingMs) return a.sla.remainingMs - b.sla.remainingMs;
+      return b.score - a.score;
+    });
 
   const ai = await aiFocus(ranked.map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, reason: r.reason })));
   const topPickIds = ai?.topPickIds?.length ? ai.topPickIds : ranked.slice(0, 1).map((r) => r.caseId);
   const active = await getActiveSession(user.id);
+
+  // Work Now — the single directive: the top of the (SLA-first) queue. This is
+  // what the strict punch-in card points at when the person opens the CRM. If
+  // they're already punched into a case, the UI keeps showing that one as active.
+  const top = ranked[0] || null;
+  const workNow = top
+    ? {
+        caseId: top.caseId,
+        client: top.client,
+        type: top.type,
+        step: top.nextAction.step,
+        owner: top.nextAction.owner,
+        how: top.nextAction.how,
+        sla: top.sla,
+        reason: top.reason,
+      }
+    : null;
 
   return NextResponse.json({
     ok: true,
     count: ranked.length,
     focus: ai?.focus || (ranked[0] ? `Start with ${ranked[0].caseId} (${ranked[0].client}) — ${ranked[0].reason.toLowerCase()}.` : "No open applications assigned to you. Nice and clear."),
     topPickIds,
+    workNow,
     activeCaseId: active?.caseId || null,
     activeStartedAt: active?.startedAt || null,
     cases: ranked,
