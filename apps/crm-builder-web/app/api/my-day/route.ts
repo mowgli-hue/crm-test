@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listCases, listAllDocumentsByCase } from "@/lib/store";
 import { isCaseAssignedToUser } from "@/lib/rbac";
-import { getActiveSession } from "@/lib/time-tracking";
+import { getActiveSession, myDayLog } from "@/lib/time-tracking";
 import { scoreCase, isClosed, ageDays } from "@/lib/case-priority";
 import { computeSla } from "@/lib/case-sla";
 import { nextActionFor } from "@/lib/next-action";
@@ -114,6 +114,10 @@ export async function GET(request: NextRequest) {
   const ai = await aiFocus(ranked.map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, reason: r.reason })));
   const topPickIds = ai?.topPickIds?.length ? ai.topPickIds : ranked.slice(0, 1).map((r) => r.caseId);
   const active = await getActiveSession(user.id);
+  // The person's own completed sessions today — their auto-built "what I did
+  // today" report (works for processing, reviewer, lead — everyone checks in).
+  const todayLog = await myDayLog(user.id);
+  const todaySeconds = todayLog.reduce((a, e) => a + (e.durationSeconds || 0), 0);
 
   // Work Now — the single directive: the top of the (SLA-first) queue. This is
   // what the strict punch-in card points at when the person opens the CRM. If
@@ -141,5 +145,9 @@ export async function GET(request: NextRequest) {
     activeCaseId: active?.caseId || null,
     activeStartedAt: active?.startedAt || null,
     cases: ranked,
+    todaySeconds,
+    todayLog: todayLog.map((e) => ({
+      caseId: e.caseId, durationSeconds: e.durationSeconds, outcome: e.outcome, note: e.note, endedAt: e.endedAt,
+    })),
   });
 }

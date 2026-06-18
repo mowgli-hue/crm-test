@@ -213,6 +213,34 @@ export async function caseTimeSummary(caseId: string): Promise<{ totalSeconds: n
   return { totalSeconds, perStaff };
 }
 
+// Every completed work session on a case, newest first — the per-application
+// work log (who worked it, for how long, what status they left it in, and their
+// note). This is what a manager (or anyone on the case) reads to see what was
+// done on this application.
+export async function caseTimeEntries(caseId: string, limit = 50): Promise<TimeLogRow[]> {
+  await ensureTable();
+  const pool = getPool();
+  const r = await pool.query(
+    `SELECT * FROM case_time_logs WHERE case_id = $1 AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT $2`,
+    [caseId, Math.min(Math.max(1, limit), 200)]
+  );
+  return r.rows.map(mapRow);
+}
+
+// One person's completed sessions today — their auto-built "what I did today"
+// report. Works for any role (processing, reviewer, lead) since everyone checks in.
+export async function myDayLog(staffId: string): Promise<TimeLogRow[]> {
+  await ensureTable();
+  const pool = getPool();
+  const r = await pool.query(
+    `SELECT * FROM case_time_logs
+      WHERE staff_id = $1 AND ended_at IS NOT NULL AND started_at >= date_trunc('day', NOW())
+   ORDER BY started_at DESC`,
+    [clean(staffId)]
+  );
+  return r.rows.map(mapRow);
+}
+
 // Team summary for a date window. Pass `staffId` to scope to one person (RBAC).
 export async function teamTimeSummary(args: { companyId?: string; startISO: string; endISO: string; staffId?: string }): Promise<{
   perStaff: Array<{ staffId: string; staffName: string; seconds: number; sessions: number }>;

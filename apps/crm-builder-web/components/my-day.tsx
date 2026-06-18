@@ -27,6 +27,7 @@ type WorkNow = {
   caseId: string; client: string; type: string;
   step: string; owner: string; how: string; sla: Sla; reason: string;
 };
+type TodayEntry = { caseId: string; durationSeconds: number | null; outcome: string; note: string; endedAt: string | null };
 
 function fmtDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -68,6 +69,7 @@ const OUTCOMES: Array<{ key: string; label: string; tone: string }> = [
   { key: "submitted", label: "📤 Submitted to IRCC", tone: "border-indigo-300 bg-indigo-50 text-indigo-800" },
   { key: "handed_off", label: "🔁 Handed off", tone: "border-slate-300 bg-slate-50 text-slate-700" },
 ];
+const OUTCOME_LABEL: Record<string, string> = Object.fromEntries(OUTCOMES.map((o) => [o.key, o.label]));
 
 const STATUS_STYLE: Record<string, string> = {
   changes_needed: "bg-red-100 text-red-700",
@@ -84,6 +86,8 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [workNow, setWorkNow] = useState<WorkNow | null>(null);
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [activeStartedAt, setActiveStartedAt] = useState<string | null>(null);
+  const [todayLog, setTodayLog] = useState<TodayEntry[]>([]);
+  const [todaySeconds, setTodaySeconds] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -103,6 +107,8 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         setWorkNow(d.workNow || null);
         setActiveCaseId(d.activeCaseId || null);
         setActiveStartedAt(d.activeStartedAt || null);
+        setTodayLog(d.todayLog || []);
+        setTodaySeconds(d.todaySeconds || 0);
       }
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [apiFetch]);
@@ -297,6 +303,29 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Today — what you did (auto report from your check-ins) ── */}
+      {!loading && todayLog.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Today — what you did</p>
+            <span className="text-xs font-semibold text-slate-600">{fmtDuration(todaySeconds)} total</span>
+          </div>
+          <div className="mt-1.5 space-y-1.5">
+            {todayLog.map((e, i) => (
+              <div key={i} className="flex items-start justify-between gap-2 text-xs">
+                <div className="min-w-0">
+                  <span className="font-semibold text-slate-700">{e.caseId}</span>
+                  {e.outcome && <span className="ml-1.5 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{OUTCOME_LABEL[e.outcome] || e.outcome}</span>}
+                  {e.note && <p className="truncate text-[11px] italic text-slate-500">“{e.note}”</p>}
+                </div>
+                <span className="shrink-0 tabular-nums text-slate-400">{fmtDuration(e.durationSeconds || 0)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10px] text-slate-400">Your auto-built day report — from your check-ins. Nothing extra to fill in.</p>
         </div>
       )}
 

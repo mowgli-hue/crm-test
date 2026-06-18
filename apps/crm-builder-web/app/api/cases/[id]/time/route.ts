@@ -11,7 +11,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { getCase } from "@/lib/store";
 import { canStaffAccessCase } from "@/lib/rbac";
 import {
-  checkIn, checkOut, addManualEntry, getActiveSession, caseTimeSummary,
+  checkIn, checkOut, addManualEntry, getActiveSession, caseTimeSummary, caseTimeEntries,
 } from "@/lib/time-tracking";
 
 export const runtime = "nodejs";
@@ -33,12 +33,14 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   if (g.error) return g.error;
   const active = await getActiveSession(g.user!.id);
   const summary = await caseTimeSummary(params.id);
+  const entries = await caseTimeEntries(params.id);
   return NextResponse.json({
     ok: true,
     // active is only "for this case" from the UI's point of view if it points here
     active: active && active.caseId === params.id ? active : null,
     activeElsewhere: active && active.caseId !== params.id ? { caseId: active.caseId, startedAt: active.startedAt } : null,
     summary,
+    entries, // per-session work log (staff, duration, outcome, note, time)
   });
 }
 
