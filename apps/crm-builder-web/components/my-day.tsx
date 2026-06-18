@@ -59,6 +59,16 @@ const WORKNOW_FRAME: Record<string, string> = {
   done: "border-slate-200 bg-slate-50",
 };
 
+// What the member reports when they STOP a timer (mandatory).
+const OUTCOMES: Array<{ key: string; label: string; tone: string }> = [
+  { key: "ready_for_review", label: "✅ Ready for review", tone: "border-emerald-300 bg-emerald-50 text-emerald-800" },
+  { key: "in_progress", label: "⏳ Still in progress", tone: "border-slate-300 bg-slate-50 text-slate-700" },
+  { key: "waiting_client", label: "📩 Waiting on client", tone: "border-amber-300 bg-amber-50 text-amber-800" },
+  { key: "blocked", label: "⛔ Blocked — need help", tone: "border-red-300 bg-red-50 text-red-700" },
+  { key: "submitted", label: "📤 Submitted to IRCC", tone: "border-indigo-300 bg-indigo-50 text-indigo-800" },
+  { key: "handed_off", label: "🔁 Handed off", tone: "border-slate-300 bg-slate-50 text-slate-700" },
+];
+
 const STATUS_STYLE: Record<string, string> = {
   changes_needed: "bg-red-100 text-red-700",
   under_review: "bg-amber-100 text-amber-700",
@@ -77,6 +87,10 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  // Mandatory check-out: stopping a timer opens this modal to capture status.
+  const [stopFor, setStopFor] = useState<string | null>(null);
+  const [stopOutcome, setStopOutcome] = useState<string>("");
+  const [stopNote, setStopNote] = useState<string>("");
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +123,25 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
+      await load();
+    } finally { setBusyId(null); }
+  };
+
+  // Stopping a timer is a mandatory check-out: open the status modal.
+  const requestStop = (caseId: string) => {
+    setStopFor(caseId);
+    setStopOutcome("");
+    setStopNote("");
+  };
+  const confirmStop = async () => {
+    if (!stopFor || !stopOutcome || !stopNote.trim()) return; // status AND note required
+    setBusyId(stopFor);
+    try {
+      await apiFetch(`/cases/${stopFor}/time`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "out", outcome: stopOutcome, note: stopNote.trim() }),
+      });
+      setStopFor(null); setStopOutcome(""); setStopNote("");
       await load();
     } finally { setBusyId(null); }
   };
@@ -161,7 +194,7 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
                   <span className="text-sm font-bold tabular-nums text-blue-700">{fmtDuration(liveSeconds)}</span>
                   <button disabled={busyId === workNow.caseId} onClick={() => onOpenCase?.(workNow.caseId)}
                     className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">Open case</button>
-                  <button disabled={busyId === workNow.caseId} onClick={() => toggleTimer(workNow.caseId, "out")}
+                  <button disabled={busyId === workNow.caseId} onClick={() => requestStop(workNow.caseId)}
                     className="text-[11px] font-semibold text-slate-500 hover:text-slate-700">Stop timer</button>
                 </div>
               ) : (
@@ -253,7 +286,7 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
                   {active ? (
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums text-blue-700">{fmtDuration(liveSeconds)}</span>
-                      <button disabled={busyId === c.caseId} onClick={() => toggleTimer(c.caseId, "out")}
+                      <button disabled={busyId === c.caseId} onClick={() => requestStop(c.caseId)}
                         className="rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">Stop</button>
                     </div>
                   ) : (
@@ -264,6 +297,33 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Mandatory check-out status modal ── */}
+      {stopFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setStopFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-bold text-slate-900">Before you stop — where does {stopFor} stand?</p>
+            <p className="mt-0.5 text-xs text-slate-500">Pick a status <span className="font-semibold">and</span> write a note. Both required.</p>
+            <div className="mt-3 grid grid-cols-1 gap-1.5">
+              {OUTCOMES.map((o) => (
+                <button key={o.key} type="button" onClick={() => setStopOutcome(o.key)}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm font-semibold ${stopOutcome === o.key ? o.tone + " ring-2 ring-offset-1 ring-slate-400" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <textarea value={stopNote} onChange={(e) => setStopNote(e.target.value)} autoFocus rows={2}
+              placeholder="Required note — what you did and what's left…"
+              className={`mt-3 w-full rounded-lg border px-3 py-2 text-sm ${stopNote.trim() ? "border-slate-200" : "border-red-300 bg-red-50/40"}`} />
+            {!stopNote.trim() && <p className="mt-1 text-[11px] font-semibold text-red-500">A note is required to stop the timer.</p>}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setStopFor(null)} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 hover:text-slate-700">Cancel</button>
+              <button type="button" disabled={!stopOutcome || !stopNote.trim() || busyId === stopFor} onClick={confirmStop}
+                className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-40">Save &amp; stop</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -74,6 +74,14 @@ function budgetFor(formType: string): { key: string; budget: StageBudget } {
   return { key, budget: BUDGET_BY_KEY[key] || DEFAULT_BUDGET };
 }
 
+// Total creation→submission budget (hours) for a checklist family key. Used by
+// the SLA-calibration report to compare the configured target against measured
+// times.
+export function totalBudgetForKey(key: string): number {
+  const b = BUDGET_BY_KEY[key] || DEFAULT_BUDGET;
+  return b.docs + b.assemble + b.review + b.submit;
+}
+
 // scoreCase.ready → the SLA stage. "docs"/"progress" are still the collection
 // stage; "review" covers both in-review and changes-needed.
 function stageFromReady(ready: ReadyKind): SlaStage {

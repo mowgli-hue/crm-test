@@ -45,7 +45,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const g = await guard(request, params.id);
   if (g.error) return g.error;
-  const body = (await request.json().catch(() => ({}))) as { action?: string; minutes?: number; note?: string };
+  const body = (await request.json().catch(() => ({}))) as { action?: string; minutes?: number; note?: string; outcome?: string };
   const staffId = g.user!.id;
   const staffName = g.user!.name;
   const companyId = g.user!.companyId;
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json({ ok: true, active: session });
     }
     if (body.action === "out") {
-      const res = await checkOut({ caseId: params.id, staffId });
+      const res = await checkOut({ caseId: params.id, staffId, note: body.note, outcome: body.outcome });
       const summary = await caseTimeSummary(params.id);
       return NextResponse.json({ ok: true, closed: res.closed, summary });
     }

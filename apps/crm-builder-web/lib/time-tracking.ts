@@ -30,7 +30,19 @@ export interface TimeLogRow {
   durationSeconds: number | null;
   source: TimeSource;
   note: string;
+  outcome: string;
 }
+
+// The status a member must report when they stop a timer.
+export const CHECKOUT_OUTCOMES = [
+  "in_progress",
+  "ready_for_review",
+  "blocked",
+  "waiting_client",
+  "submitted",
+  "handed_off",
+] as const;
+export type CheckoutOutcome = (typeof CHECKOUT_OUTCOMES)[number];
 
 let tableReady = false;
 async function ensureTable(): Promise<void> {
@@ -52,6 +64,9 @@ async function ensureTable(): Promise<void> {
   `);
   // staff_id was added after first release — backfill for older deployments.
   await pool.query(`ALTER TABLE case_time_logs ADD COLUMN IF NOT EXISTS staff_id TEXT NOT NULL DEFAULT ''`);
+  // outcome = the status the member reports when they STOP a timer
+  // (in_progress / ready_for_review / blocked / waiting_client / submitted / handed_off).
+  await pool.query(`ALTER TABLE case_time_logs ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT ''`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_time_logs_staffid_open ON case_time_logs (staff_id) WHERE ended_at IS NULL`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_time_logs_case ON case_time_logs (case_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_time_logs_started ON case_time_logs (started_at)`);
@@ -129,10 +144,23 @@ export async function checkIn(args: { companyId: string; caseId: string; staffId
   }
 }
 
-export async function checkOut(args: { caseId: string; staffId: string }): Promise<{ closed: number }> {
+// Close the staff member's open session ON THIS CASE and record what they did:
+// the reported `outcome` (status) and an optional `note`. Capping at
+// MAX_OPEN_HOURS still applies for a forgotten-open session.
+export async function checkOut(args: { caseId: string; staffId: string; note?: string; outcome?: string }): Promise<{ closed: number }> {
   await ensureTable();
-  const closed = await closeOpenForStaff(clean(args.staffId), args.caseId);
-  return { closed };
+  const pool = getPool();
+  const res = await pool.query(
+    `UPDATE case_time_logs
+        SET ended_at = ${CAP},
+            duration_seconds = EXTRACT(EPOCH FROM (${CAP} - started_at))::int,
+            source = CASE WHEN NOW() > started_at + INTERVAL '${MAX_OPEN_HOURS} hours' THEN 'auto_closed' ELSE source END,
+            note = COALESCE(NULLIF($3, ''), note),
+            outcome = COALESCE(NULLIF($4, ''), outcome)
+      WHERE staff_id = $1 AND case_id = $2 AND ended_at IS NULL`,
+    [clean(args.staffId), args.caseId, clean(args.note || ""), clean(args.outcome || "")]
+  );
+  return { closed: res.rowCount || 0 };
 }
 
 export async function addManualEntry(args: {
@@ -236,5 +264,91 @@ function mapRow(row: any): TimeLogRow {
     durationSeconds: row.duration_seconds,
     source: row.source,
     note: row.note || "",
+    outcome: row.outcome || "",
   };
+}
+
+// ── Live team activity (manager floor view) ──────────────────────────────
+// For each roster member: are they punched into a case right now, how long;
+// if not, since when have they been idle; total time today; and the last
+// status they reported. Members with no logs show as "offline".
+export interface TeamActivityRow {
+  staffId: string;
+  staffName: string;
+  role: string;
+  status: "active" | "idle" | "offline";
+  activeCaseId: string | null;
+  activeStartedAt: string | null;
+  activeMinutes: number;       // minutes on the current open session
+  idleMinutes: number;         // minutes since last activity (when not active)
+  lastActivityAt: string | null;
+  todaySeconds: number;        // total logged today
+  lastCaseId: string | null;   // case of their last reported status
+  lastOutcome: string;         // their last reported status
+}
+
+export async function teamActivity(
+  staff: Array<{ id: string; name: string; role?: string }>,
+  idleThresholdMin = 30,
+): Promise<TeamActivityRow[]> {
+  await ensureTable();
+  await autoCloseStaleSessions();
+  const pool = getPool();
+
+  // Open sessions right now (one per person, by design).
+  const openRes = await pool.query(
+    `SELECT DISTINCT ON (staff_id) staff_id, case_id, started_at
+       FROM case_time_logs WHERE ended_at IS NULL ORDER BY staff_id, started_at DESC`
+  );
+  const open = new Map<string, { caseId: string; startedAt: string }>();
+  for (const r of openRes.rows as any[]) open.set(r.staff_id, { caseId: r.case_id, startedAt: r.started_at });
+
+  // Per-staff: last activity + today's total seconds.
+  const statRes = await pool.query(
+    `SELECT staff_id,
+            MAX(COALESCE(ended_at, started_at)) AS last_at,
+            COALESCE(SUM(CASE WHEN started_at >= date_trunc('day', NOW()) THEN duration_seconds ELSE 0 END), 0)::int AS today_seconds
+       FROM case_time_logs GROUP BY staff_id`
+  );
+  const stat = new Map<string, { lastAt: string; todaySeconds: number }>();
+  for (const r of statRes.rows as any[]) stat.set(r.staff_id, { lastAt: r.last_at, todaySeconds: r.today_seconds });
+
+  // Last reported outcome per staff (most recent closed session).
+  const outRes = await pool.query(
+    `SELECT DISTINCT ON (staff_id) staff_id, case_id, outcome
+       FROM case_time_logs WHERE ended_at IS NOT NULL ORDER BY staff_id, ended_at DESC`
+  );
+  const lastOut = new Map<string, { caseId: string; outcome: string }>();
+  for (const r of outRes.rows as any[]) lastOut.set(r.staff_id, { caseId: r.case_id, outcome: r.outcome || "" });
+
+  const now = Date.now();
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+
+  return staff.map((s) => {
+    const o = open.get(s.id);
+    const st = stat.get(s.id);
+    const lo = lastOut.get(s.id);
+    const lastAtMs = st?.lastAt ? Date.parse(st.lastAt) : 0;
+    const workedToday = lastAtMs >= startOfDay.getTime();
+
+    let status: TeamActivityRow["status"];
+    if (o) status = "active";
+    else if (workedToday) status = "idle";   // active earlier today, not punched in now
+    else status = "offline";                 // nothing today
+
+    return {
+      staffId: s.id,
+      staffName: s.name,
+      role: s.role || "",
+      status,
+      activeCaseId: o?.caseId || null,
+      activeStartedAt: o?.startedAt || null,
+      activeMinutes: o ? Math.max(0, Math.round((now - Date.parse(o.startedAt)) / 60000)) : 0,
+      idleMinutes: !o && lastAtMs ? Math.max(0, Math.round((now - lastAtMs) / 60000)) : 0,
+      lastActivityAt: st?.lastAt || null,
+      todaySeconds: st?.todaySeconds || 0,
+      lastCaseId: lo?.caseId || null,
+      lastOutcome: lo?.outcome || "",
+    };
+  });
 }

@@ -9,6 +9,7 @@ import OfficeVoiceManager from "@/components/office-voice-manager";
 import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
 import TeamTimeOverview from "@/components/team-time-overview";
+import TeamActivity from "@/components/team-activity";
 import MyDay from "@/components/my-day";
 import TeamAtRisk from "@/components/team-at-risk";
 import ReviewQueue from "@/components/review-queue";
@@ -11778,6 +11779,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
               {/* Monthly review-quality performance (visible to all team members) */}
               {(sessionUser?.userType === "staff") && <PerformanceDashboard />}
+
+              {/* Live floor view — who's active / idle / offline right now (managers only; self-hides) */}
+              {(sessionUser?.userType === "staff") && <TeamActivity apiFetch={apiFetch} />}
 
               {/* Team application-time overview (check-in hours per person / application) */}
               {(sessionUser?.userType === "staff") && <TeamTimeOverview apiFetch={apiFetch} />}
