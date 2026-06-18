@@ -9,7 +9,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { canSeeAllCases } from "@/lib/rbac";
 import { listAllStaff } from "@/lib/store";
 import { teamActivity, recentCheckouts } from "@/lib/time-tracking";
 
@@ -19,8 +18,9 @@ export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (user.userType !== "staff") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  if (!canSeeAllCases(user.role)) {
-    return NextResponse.json({ error: "Forbidden — managers only" }, { status: 403 });
+  // ADMIN ONLY — "who's working / idle right now" is owner/admin-only.
+  if (user.role !== "Admin") {
+    return NextResponse.json({ error: "Forbidden — admins only" }, { status: 403 });
   }
 
   try {
