@@ -124,13 +124,22 @@ export async function GET(request: NextRequest) {
           AND text NOT LIKE '✅ Changes done%'`,
       [start, end]
     );
+    // A reviewer's note only counts as an ERROR if it's actually a correction.
+    // Skip clearly positive / closing notes (approvals, "looks good", "ready to
+    // submit", ✅/👍 prefixes) so a preparer isn't penalised for praise. Kept
+    // deliberately conservative — anything that isn't an obvious approval still
+    // counts, so we don't silently drop real errors.
+    const NONERR_PREFIX = /^\s*(✅|👍|🎉|🌟|⭐|💯)/u;
+    const NONERR_PHRASE = /^\s*(looks?\s*good|all\s*good|approved|ready\s*to\s*submit|no\s*changes?(\s*needed)?|no\s*issues?|good\s*(job|work)|well\s*done|perfect|great\s*work|lgtm|👍)\b/i;
     for (const r of res3.rows as any[]) {
+      const t = String(r.text || "");
+      if (NONERR_PREFIX.test(t) || NONERR_PHRASE.test(t)) continue; // reviewer praise/closing note — not an error
       comments.push({
         case_id: r.case_id,
         created_at: r.created_at,
         author_name: r.added_by || "",
         author_role: "",
-        body: String(r.text || ""),
+        body: t,
         status: "open",
       });
     }
