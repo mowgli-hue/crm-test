@@ -15,7 +15,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listAllStaff, listAllCases } from "@/lib/store";
 import { getPool } from "@/lib/postgres-store";
-import { canSeeAllCases } from "@/lib/rbac";
 import { buildCanonicalizer } from "@/lib/staff-names";
 
 export const runtime = "nodejs";
@@ -55,9 +54,10 @@ const isExcluded = (name: string) => {
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // Managers only — this exposes every preparer's error counts + reviewer comments.
-  if (user.userType !== "staff" || !canSeeAllCases(user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // ADMIN ONLY — this exposes every preparer's error counts. Per office: only the
+  // owner/admin accounts see who's making errors, NOT leads or reviewers.
+  if (user.userType !== "staff" || user.role !== "Admin") {
+    return NextResponse.json({ error: "Forbidden — admins only" }, { status: 403 });
   }
 
   const month = new URL(request.url).searchParams.get("month") || "";

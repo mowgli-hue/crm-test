@@ -11783,7 +11783,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               </div>
 
               {/* Monthly review-quality performance (visible to all team members) */}
-              {(sessionUser?.userType === "staff") && <PerformanceDashboard />}
+              {(sessionUser?.role === "Admin") && <PerformanceDashboard />}
 
               {/* Live floor view — who's active / idle / offline right now (managers only; self-hides) */}
               {(sessionUser?.userType === "staff") && <TeamActivity apiFetch={apiFetch} />}
@@ -11795,7 +11795,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {(sessionUser?.userType === "staff") && <TeamAtRisk apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />}
 
               {/* AI performance review (managers only; self-hides otherwise) */}
-              {(sessionUser?.userType === "staff") && <TeamPerformanceReview apiFetch={apiFetch} />}
+              {(sessionUser?.role === "Admin") && <TeamPerformanceReview apiFetch={apiFetch} />}
 
               {/* ── Workload Bar Chart ──
                   Quick visual of which team members are over/under-allocated.

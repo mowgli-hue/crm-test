@@ -13,7 +13,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { listAllStaff, listAllCases } from "@/lib/store";
 import { getPool } from "@/lib/postgres-store";
-import { canSeeAllCases } from "@/lib/rbac";
 import { teamTimeSummary } from "@/lib/time-tracking";
 import { buildCanonicalizer } from "@/lib/staff-names";
 
@@ -82,8 +81,9 @@ async function aiReviews(rows: Row[], label: string): Promise<Record<string, str
 export async function GET(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.userType !== "staff" || !canSeeAllCases(user.role)) {
-    return NextResponse.json({ error: "Forbidden — managers only" }, { status: 403 });
+  // ADMIN ONLY — per-person quality/performance data is owner/admin-only.
+  if (user.userType !== "staff" || user.role !== "Admin") {
+    return NextResponse.json({ error: "Forbidden — admins only" }, { status: 403 });
   }
 
   const { start, end, label } = monthRange(new URL(request.url).searchParams.get("month") || "");
