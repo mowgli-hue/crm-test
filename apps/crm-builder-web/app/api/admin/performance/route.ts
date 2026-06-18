@@ -87,15 +87,29 @@ export async function GET(request: NextRequest) {
   // board the same way. (The review→notes mirror uses a different prefix, so
   // there's no double-counting.)
   try {
+    // Match the change-flag REGARDLESS of the exact prefix/emoji. Reviewers write
+    // these many ways — "⚠️ CHANGES NEEDED…", "CHANGES NEEDED…", "Changes needed…",
+    // "Changes Highlighted…". The old code only matched the ⚠️-emoji form, so a
+    // reviewer like Serbleen (who writes "CHANGES NEEDED 5710 - Employment Position
+    // Wrong…" with no emoji, and isn't tagged as a Reviewer role) had every one of
+    // her flags silently dropped. These are forced to count as reviewer flags.
     const res2 = await pool.query(
       `SELECT case_id, created_at, added_by, text
          FROM case_notes
-        WHERE text LIKE '⚠️ CHANGES NEEDED%'
-          AND created_at >= $1 AND created_at < $2`,
+        WHERE created_at >= $1 AND created_at < $2
+          AND (
+            text ILIKE '⚠️%CHANGES NEEDED%'
+            OR text ILIKE 'CHANGES NEEDED%'
+            OR text ILIKE 'CHANGE NEEDED%'
+            OR text ILIKE 'CHANGES HIGHLIGHTED%'
+            OR text ILIKE 'CHANGES REQUIRED%'
+          )`,
       [start, end]
     );
     for (const r of res2.rows as any[]) {
-      const clean = String(r.text || "").replace(/^⚠️ CHANGES NEEDED \(by [^)]*\):\s*/u, "").trim();
+      const clean = String(r.text || "")
+        .replace(/^(⚠️\s*)?changes?\s*(needed|highlighted|required)\s*(\(by [^)]*\))?\s*:?\s*/iu, "")
+        .trim();
       comments.push({
         case_id: r.case_id,
         created_at: r.created_at,
@@ -120,8 +134,14 @@ export async function GET(request: NextRequest) {
          FROM case_notes
         WHERE created_at >= $1 AND created_at < $2
           AND id NOT LIKE 'NOTE-rc-%'
-          AND text NOT LIKE '⚠️ CHANGES NEEDED%'
-          AND text NOT LIKE '✅ Changes done%'`,
+          AND text NOT ILIKE '⚠️%CHANGES NEEDED%'
+          AND text NOT ILIKE 'CHANGES NEEDED%'
+          AND text NOT ILIKE 'CHANGE NEEDED%'
+          AND text NOT ILIKE 'CHANGES HIGHLIGHTED%'
+          AND text NOT ILIKE 'CHANGES REQUIRED%'
+          AND text NOT ILIKE '✅%Changes done%'
+          AND text NOT ILIKE 'Changes done%'
+          AND text NOT ILIKE '🤖 Auto-prepare%'`,
       [start, end]
     );
     // A reviewer's note only counts as an ERROR if it's actually a correction.
