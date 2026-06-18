@@ -5456,6 +5456,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                       </div>
                     </section>
 
+                    {/* Manager floor view — who's active / idle right now (self-hides for non-managers).
+                        Surfaced on the dashboard so leads see the team the moment they open the CRM;
+                        also available under the Team tab. */}
+                    {(sessionUser?.userType === "staff") && <TeamActivity apiFetch={apiFetch} />}
+
                     {/* My Day — your applications, prioritized, with check-in (all staff, RBAC-scoped) */}
                     <MyDay apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />
 

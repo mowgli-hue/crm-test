@@ -26,6 +26,7 @@ type DayCase = {
 type WorkNow = {
   caseId: string; client: string; type: string;
   step: string; owner: string; how: string; sla: Sla; reason: string;
+  sop?: { title: string; steps: string[] };
 };
 type TodayEntry = { caseId: string; durationSeconds: number | null; outcome: string; note: string; endedAt: string | null };
 
@@ -95,6 +96,7 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [stopFor, setStopFor] = useState<string | null>(null);
   const [stopOutcome, setStopOutcome] = useState<string>("");
   const [stopNote, setStopNote] = useState<string>("");
+  const [showSop, setShowSop] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -192,6 +194,19 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
                 <span className="ml-1 rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-500">{workNow.owner}</span>
               </p>
               <p className="mt-1 text-xs text-slate-500">{workNow.how}</p>
+              {workNow.sop && workNow.sop.steps.length > 0 && (
+                <div className="mt-1.5">
+                  <button type="button" onClick={() => setShowSop((v) => !v)}
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800">
+                    {showSop ? "▾ Hide how-to" : "▸ How to do this"}
+                  </button>
+                  {showSop && (
+                    <ol className="mt-1 ml-1 list-decimal space-y-1 pl-4 text-[11px] text-slate-600">
+                      {workNow.sop.steps.map((s, i) => <li key={i}>{s}</li>)}
+                    </ol>
+                  )}
+                </div>
+              )}
               <p className="mt-0.5 text-[11px] text-slate-400">{workNow.type} · target {workNow.sla.totalBudgetHours}h to submit</p>
             </div>
             <div className="shrink-0">

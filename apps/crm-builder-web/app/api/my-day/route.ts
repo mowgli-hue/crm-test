@@ -17,6 +17,7 @@ import { getActiveSession, myDayLog } from "@/lib/time-tracking";
 import { scoreCase, isClosed, ageDays } from "@/lib/case-priority";
 import { computeSla } from "@/lib/case-sla";
 import { nextActionFor } from "@/lib/next-action";
+import { getSop } from "@/lib/sops";
 
 export const runtime = "nodejs";
 
@@ -131,6 +132,7 @@ export async function GET(request: NextRequest) {
         step: top.nextAction.step,
         owner: top.nextAction.owner,
         how: top.nextAction.how,
+        sop: getSop(top.nextAction.key, top.type), // full step-by-step procedure
         sla: top.sla,
         reason: top.reason,
       }

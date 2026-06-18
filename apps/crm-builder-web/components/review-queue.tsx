@@ -14,6 +14,7 @@ type ApiFetch = (path: string, init?: RequestInit) => Promise<Response>;
 type Row = {
   caseId: string; client: string; type: string; preparedBy: string;
   reason: string; deadlineDays: number | null; amountPaid: number; daysInSystem: number;
+  completionPct?: number; missing?: string[];
 };
 
 export default function ReviewQueue({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; onOpenCase?: (caseId: string) => void }) {
@@ -59,6 +60,11 @@ export default function ReviewQueue({ apiFetch, onOpenCase }: { apiFetch: ApiFet
               </div>
               <div className="mt-0.5 flex items-center gap-2 flex-wrap">
                 <span className="text-[11px] text-slate-400">{c.type}</span>
+                {typeof c.completionPct === "number" && (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${c.completionPct >= 100 ? "bg-emerald-100 text-emerald-700" : c.completionPct >= 90 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                    {c.completionPct}% ready
+                  </span>
+                )}
                 {c.deadlineDays !== null && (
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${c.deadlineDays < 0 ? "bg-red-100 text-red-700" : c.deadlineDays <= 7 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
                     {c.deadlineDays < 0 ? `expired ${Math.abs(c.deadlineDays)}d` : `${c.deadlineDays}d`}
@@ -66,6 +72,9 @@ export default function ReviewQueue({ apiFetch, onOpenCase }: { apiFetch: ApiFet
                 )}
               </div>
               <p className="mt-1 text-xs text-slate-500">{c.reason}</p>
+              {c.missing && c.missing.length > 0 && (
+                <p className="mt-0.5 text-[11px] text-red-500">Missing: {c.missing.join(", ")}</p>
+              )}
             </button>
           ))}
         </div>

@@ -9,8 +9,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { listCases } from "@/lib/store";
+import { listCases, listAllDocumentsByCase } from "@/lib/store";
 import { scoreReview, isClosed } from "@/lib/case-priority";
+import { getCaseReadiness } from "@/lib/case-readiness";
 import { isReviewer, reviewerHandles } from "@/lib/review-routing";
 
 export const runtime = "nodejs";
@@ -23,7 +24,10 @@ export async function GET(request: NextRequest) {
   if (user.userType !== "staff") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (!isReviewer(user.role)) return NextResponse.json({ ok: true, reviewer: false, cases: [] });
 
-  const all = await listCases(user.companyId || COMPANY_ID);
+  const [all, docsByCase] = await Promise.all([
+    listCases(user.companyId || COMPANY_ID),
+    listAllDocumentsByCase(),
+  ]);
 
   const queue = all
     .filter((c: any) => !isClosed(c))
@@ -40,6 +44,14 @@ export async function GET(request: NextRequest) {
     .filter((c: any) => reviewerHandles(user.name, user.role, String(c.formType || "")))
     .map((c: any) => {
       const s = scoreReview(c);
+      // How complete the package is (0-100). A reviewer should pick up the
+      // packages that are actually ready FIRST — a half-built one shouldn't jump
+      // the queue just because it's urgent.
+      const r = getCaseReadiness(c, docsByCase.get(c.id) || []);
+      const completionPct = r.submissionReady
+        ? 100
+        : Math.round((r.intake.complete ? 30 : 0) + (r.clientDocs.complete ? 45 : 0) + (r.forms.complete ? 25 : 0));
+      const missing = [...r.intake.missing, ...r.clientDocs.missing, ...r.forms.missing].slice(0, 3);
       return {
         caseId: c.id,
         client: String(c.client || ""),
@@ -50,9 +62,19 @@ export async function GET(request: NextRequest) {
         amountPaid: s.amountPaid,
         daysInSystem: s.daysInSystem,
         score: s.score,
+        completionPct,
+        missing,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    // Per office: sort by COMPLETENESS first (review the ready ones first), then
+    // by URGENCY (expiry/payment/age via scoreReview). Bucket completeness into
+    // 10-pt bands so a 97% and a 100% aren't reordered by a tiny diff — within a
+    // band, urgency decides.
+    .sort((a, b) => {
+      const band = (p: number) => Math.floor(p / 10);
+      if (band(b.completionPct) !== band(a.completionPct)) return band(b.completionPct) - band(a.completionPct);
+      return b.score - a.score;
+    });
 
   return NextResponse.json({ ok: true, reviewer: true, count: queue.length, cases: queue });
 }
