@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canSeeAllCases } from "@/lib/rbac";
 import { listAllStaff } from "@/lib/store";
-import { teamActivity } from "@/lib/time-tracking";
+import { teamActivity, recentCheckouts } from "@/lib/time-tracking";
 
 export const runtime = "nodejs";
 
@@ -46,14 +46,18 @@ export async function GET(request: NextRequest) {
       return a.staffName.localeCompare(b.staffName);
     });
 
+    const flagged = rows.filter((r) => r.needsAttention).map((r) => ({ staffName: r.staffName, idleMinutes: r.idleMinutes, lastCaseId: r.lastCaseId }));
     const summary = {
       active: rows.filter((r) => r.status === "active").length,
       idle: rows.filter((r) => r.status === "idle").length,
       offline: rows.filter((r) => r.status === "offline").length,
       idleThresholdMin: idleThreshold,
+      flaggedCount: flagged.length,
     };
 
-    return NextResponse.json({ ok: true, summary, members: rows });
+    const recent = await recentCheckouts(25);
+
+    return NextResponse.json({ ok: true, summary, flagged, members: rows, recent });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

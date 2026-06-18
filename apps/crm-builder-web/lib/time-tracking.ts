@@ -285,6 +285,45 @@ export interface TeamActivityRow {
   todaySeconds: number;        // total logged today
   lastCaseId: string | null;   // case of their last reported status
   lastOutcome: string;         // their last reported status
+  lastNote: string;            // the note from their last check-out
+  needsAttention: boolean;     // idle at/over the threshold — manager alert
+}
+
+// A real check-out (someone stopped a timer and reported status/note).
+export interface CheckoutEntry {
+  staffId: string;
+  staffName: string;
+  caseId: string;
+  durationSeconds: number;
+  outcome: string;
+  note: string;
+  endedAt: string;
+}
+
+// The most recent real check-outs across the team — the manager-readable feed of
+// "who stopped what, what they said." Only rows where someone reported a status
+// or note (skips the silent auto-closed/empty ones).
+export async function recentCheckouts(limit = 25): Promise<CheckoutEntry[]> {
+  await ensureTable();
+  const pool = getPool();
+  const r = await pool.query(
+    `SELECT staff_id, MAX(staff_name) OVER (PARTITION BY staff_id) AS staff_name,
+            case_id, duration_seconds, outcome, note, ended_at
+       FROM case_time_logs
+      WHERE ended_at IS NOT NULL AND (COALESCE(outcome,'') <> '' OR COALESCE(note,'') <> '')
+   ORDER BY ended_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(1, limit), 100)]
+  );
+  return r.rows.map((x: any) => ({
+    staffId: x.staff_id,
+    staffName: x.staff_name || "",
+    caseId: x.case_id,
+    durationSeconds: x.duration_seconds || 0,
+    outcome: x.outcome || "",
+    note: x.note || "",
+    endedAt: x.ended_at,
+  }));
 }
 
 export async function teamActivity(
@@ -313,13 +352,13 @@ export async function teamActivity(
   const stat = new Map<string, { lastAt: string; todaySeconds: number }>();
   for (const r of statRes.rows as any[]) stat.set(r.staff_id, { lastAt: r.last_at, todaySeconds: r.today_seconds });
 
-  // Last reported outcome per staff (most recent closed session).
+  // Last reported outcome + note per staff (most recent closed session).
   const outRes = await pool.query(
-    `SELECT DISTINCT ON (staff_id) staff_id, case_id, outcome
+    `SELECT DISTINCT ON (staff_id) staff_id, case_id, outcome, note
        FROM case_time_logs WHERE ended_at IS NOT NULL ORDER BY staff_id, ended_at DESC`
   );
-  const lastOut = new Map<string, { caseId: string; outcome: string }>();
-  for (const r of outRes.rows as any[]) lastOut.set(r.staff_id, { caseId: r.case_id, outcome: r.outcome || "" });
+  const lastOut = new Map<string, { caseId: string; outcome: string; note: string }>();
+  for (const r of outRes.rows as any[]) lastOut.set(r.staff_id, { caseId: r.case_id, outcome: r.outcome || "", note: r.note || "" });
 
   const now = Date.now();
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
@@ -349,6 +388,8 @@ export async function teamActivity(
       todaySeconds: st?.todaySeconds || 0,
       lastCaseId: lo?.caseId || null,
       lastOutcome: lo?.outcome || "",
+      lastNote: lo?.note || "",
+      needsAttention: !o && workedToday && Math.round((now - lastAtMs) / 60000) >= idleThresholdMin,
     };
   });
 }
