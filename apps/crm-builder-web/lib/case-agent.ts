@@ -124,8 +124,12 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
     a.nextAction = "Awaiting RCIC review.";
     if (d > 3) { a.reasons.push(`In review ${Math.floor(d)} days.`); a.priority += 15; }
   }
-  // ── Still waiting on the client's documents ──
-  else if (progress.missingRequired.length > 0) {
+  // ── Still waiting on the client's documents (OUT-OF-SCOPE types only) ──
+  // For the agent's in-scope types the agent is RELAXED: a missing document does
+  // not stop preparation — it falls through to "ready to prepare" below, drafts
+  // everything it can, and notes what's still missing. Only the types the agent
+  // doesn't prepare wait here.
+  else if (progress.missingRequired.length > 0 && !a.inScope) {
     a.stage = "awaiting_docs"; a.stageLabel = "Awaiting documents";
     a.nextAction = `Request ${progress.missingRequired.length} missing document(s) from the client: ${progress.missingRequired.slice(0, 5).join(", ")}${progress.missingRequired.length > 5 ? "…" : ""}.`;
     a.autoDoable = true; a.autoActionKey = "request_docs";
@@ -134,14 +138,22 @@ export function assessCase(c: CaseItem, docs: DocumentItem[]): CaseAssessment {
     if (waiting > 7) { a.reasons.push(`Waiting ${Math.floor(waiting)} days.`); a.priority += 20; }
     a.priority += 10;
   }
-  // ── All docs in but not assembled → AGENT CAN ASSEMBLE THE FILE ──
+  // ── Ready to prepare → AGENT DRAFTS THE FILE (relaxed: even with docs pending) ──
   else if (String((c as any).aiStatus || "") !== "completed") {
-    a.stage = "ready_to_prepare"; a.stageLabel = "Ready to prepare";
-    a.nextAction = "All required documents are in — run auto-prepare to assemble the file (letter + package) and move it to review.";
-    a.autoDoable = true; a.autoActionKey = "auto_prepare";
-    a.reasons.push("All required docs received.");
+    a.stage = "ready_to_prepare"; a.autoDoable = true; a.autoActionKey = "auto_prepare";
+    if (progress.missingRequired.length > 0) {
+      // Relaxed prep: draft what we can now, note the gaps for client follow-up.
+      a.stageLabel = "Ready to prepare · docs pending";
+      a.nextAction = `Auto-prepare what's available now (forms + letter + assemble), and note the ${progress.missingRequired.length} missing doc(s) for client follow-up: ${progress.missingRequired.slice(0, 5).join(", ")}${progress.missingRequired.length > 5 ? "…" : ""}. Held from RCIC review until they arrive.`;
+      a.reasons.push(`${progress.receivedRequired.length}/${progress.required.length} required docs in — agent prepares anyway and notes the rest.`);
+      a.priority += 15;
+    } else {
+      a.stageLabel = "Ready to prepare";
+      a.nextAction = "All required documents are in — run auto-prepare to assemble the file (letter + package) and move it to review.";
+      a.reasons.push("All required docs received.");
+      a.priority += 25;
+    }
     if (a.formsMissing.length) a.reasons.push(`IRCC forms still to fill: ${a.formsMissing.join(", ")}.`);
-    a.priority += 25;
   }
   // ── Assembled. If the IRCC forms still aren't filled, that's the next gap ──
   else if (a.formsMissing.length > 0) {

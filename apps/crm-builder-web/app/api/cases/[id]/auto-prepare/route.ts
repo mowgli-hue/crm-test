@@ -145,21 +145,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
   const formType = String(caseItem.formType || "");
 
-  // ── STEP 1: Doc-completeness precheck ──
-  // Don't prepare an incomplete package. If required documents are still
-  // missing, report what's needed and stop — nothing is changed.
+  // ── STEP 1: Doc-completeness check (RELAXED — note, don't block) ──
+  // The agent is relaxed: a missing document does NOT stop preparation. It
+  // generates everything it can right now (rep letter, IRCC form drafts,
+  // assembles whatever documents ARE present) and records what's still missing
+  // as a note for client follow-up. The ONLY thing missing docs hold back is the
+  // final push into RCIC review (handled in STEP 4/5) — you can't submit an
+  // incomplete file, but you also shouldn't wait to do all the prep work.
   const docs = await listDocuments(companyId, params.id);
   const progress = getChecklistProgress(formType, docs);
-  if (progress.missingRequired.length > 0) {
-    return NextResponse.json({
-      ok: true,
-      prepared: false,
-      reason: "missing_documents",
-      missingRequired: progress.missingRequired,
-      received: progress.receivedRequired,
-      message: `Not prepared — still missing ${progress.missingRequired.length} required document(s).`,
-    });
-  }
+  const docsComplete = progress.missingRequired.length === 0;
 
   const systemToken = getAuthRecoveryToken();
   const results: Record<string, { ok: boolean; error?: string; personalized?: boolean }> = {};
@@ -210,6 +205,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const retainerOk = Boolean(caseItem.retainerSigned);
   const paymentOk = caseItem.paymentStatus === "paid" || caseItem.paymentStatus === "not_required";
   const financialBlockers: string[] = [];
+  if (!docsComplete) financialBlockers.push(`Missing ${progress.missingRequired.length} required document(s): ${progress.missingRequired.join(", ")}`);
   if (!retainerOk) financialBlockers.push("Retainer not signed");
   if (!paymentOk) financialBlockers.push(`Payment outstanding (status: ${caseItem.paymentStatus || "pending"})`);
   const readyForReview = financialBlockers.length === 0;
@@ -233,7 +229,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (results.package) {
     lines.push(`• Submission package assembled in Drive: ${results.package.ok ? "done ✓ (forms + supporting docs, ordered)" : `not built — ${results.package.error}`}`);
   }
-  lines.push(`• Required documents: all received ✓ (${progress.receivedRequired.length})`);
+  if (docsComplete) {
+    lines.push(`• Required documents: all received ✓ (${progress.receivedRequired.length})`);
+  } else {
+    lines.push(`• Required documents: ${progress.receivedRequired.length} in, ${progress.missingRequired.length} STILL MISSING ⚠️ — chase the client:`);
+    for (const m of progress.missingRequired.slice(0, 12)) lines.push(`   – ${m}`);
+    lines.push(`   (Prepared everything else anyway — file will be ready the moment these arrive.)`);
+  }
   if (systemVerifiedItems.length > 0) {
     lines.push(`• System-verified, no need to re-check: ${systemVerifiedItems.length} item(s) (${systemVerifiedItems.map((i) => i.label).slice(0, 4).join("; ")}${systemVerifiedItems.length > 4 ? "; …" : ""})`);
   }
