@@ -19,7 +19,7 @@ import { MAPPABLE_FORMS } from "@/lib/form-fill";
 // auto-assemble or auto-fill it. Start narrow (PGWP, Visitor Record, TRV) and
 // widen via AGENT_SCOPE_FORMTYPES (comma-separated substrings) as we validate
 // each type, without a code change.
-const AGENT_SCOPE_DEFAULT = ["pgwp", "post-graduation", "post graduation", "visitor record", "trv"];
+const AGENT_SCOPE_DEFAULT = ["pgwp", "post-graduation", "post graduation", "visitor record", "trv", "study permit", "study permit extension"];
 export function inAgentScope(formType: string): boolean {
   const ft = String(formType || "").toLowerCase();
   const env = String(process.env.AGENT_SCOPE_FORMTYPES || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
