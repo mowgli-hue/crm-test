@@ -1067,6 +1067,91 @@ Draft the letter as a JSON object with bodyLines (using HEADING/BULLET markers) 
 // Main route
 // ──────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────
+// Editable Google Doc rendition of the letter.
+//
+// Builds the SAME content as the PDF (subject, body with HEADING/BULLET
+// markers, enclosed-docs list, RCIC sign-off) as clean HTML that Google Drive
+// converts into a native, editable Google Doc. Staff can then tweak wording in
+// the browser instead of regenerating a locked PDF.
+// ──────────────────────────────────────────────────────────────
+function esc(s: string): string {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildLetterHtml(p: {
+  clientName: string;
+  subjectLine: string;
+  date: string;
+  bodyLines: string[];
+  docs: string[];
+}): string {
+  // Convert the marker-based body lines into HTML, grouping consecutive
+  // BULLET: lines into a single <ul>.
+  const parts: string[] = [];
+  let bulletBuffer: string[] = [];
+  const flushBullets = () => {
+    if (bulletBuffer.length) {
+      parts.push(`<ul>${bulletBuffer.join("")}</ul>`);
+      bulletBuffer = [];
+    }
+  };
+  for (const raw of p.bodyLines) {
+    const line = String(raw || "");
+    if (line.startsWith("HEADING:")) {
+      flushBullets();
+      parts.push(`<h3 style="color:#0f172a;margin:16px 0 4px;">${esc(line.slice(8).trim())}</h3>`);
+    } else if (line.startsWith("BULLET:")) {
+      const rest = line.slice(7);
+      const sep = rest.indexOf(":|");
+      if (sep >= 0) {
+        const label = rest.slice(0, sep).trim();
+        const text = rest.slice(sep + 2).trim();
+        bulletBuffer.push(`<li><strong>${esc(label)}</strong> ${esc(text)}</li>`);
+      } else {
+        bulletBuffer.push(`<li>${esc(rest.trim())}</li>`);
+      }
+    } else if (line.trim() === "") {
+      flushBullets();
+    } else {
+      flushBullets();
+      parts.push(`<p style="margin:8px 0;line-height:1.5;">${esc(line)}</p>`);
+    }
+  }
+  flushBullets();
+
+  const docItems = p.docs.map((d) => `<li>${esc(d)}</li>`).join("");
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;color:#1a1a1a;">
+  <p style="margin:0;font-size:20pt;font-weight:bold;"><span style="color:#D6191F;">NEWTON</span> IMMIGRATION</p>
+  <p style="margin:0 0 2px;color:#555;font-size:9pt;">${esc(RCIC_COMPANY)} &nbsp;|&nbsp; ${esc(RCIC_ADDRESS_LINE_1)}, ${esc(RCIC_ADDRESS_LINE_2)}</p>
+  <p style="margin:0 0 10px;color:#555;font-size:9pt;">${esc(RCIC_PHONE)} &nbsp;|&nbsp; ${esc(RCIC_EMAIL)} &nbsp;|&nbsp; ${esc(RCIC_WEBSITE)}</p>
+  <hr style="border:none;border-top:2px solid #D6191F;margin:0 0 16px;">
+
+  <p style="margin:0 0 14px;">${esc(p.date)}</p>
+  <p style="margin:0 0 10px;">To: Immigration, Refugees and Citizenship Canada (IRCC)</p>
+  <p style="margin:0 0 14px;"><strong>Re: ${esc(p.subjectLine)}</strong></p>
+  <p style="margin:0 0 12px;">Dear Sir/Madam,</p>
+
+  ${parts.join("\n  ")}
+
+  <h3 style="color:#0f172a;margin:18px 0 4px;">Documents Enclosed</h3>
+  <ul>${docItems}</ul>
+
+  <p style="margin:22px 0 2px;">Sincerely,</p>
+  <p style="margin:0;font-weight:bold;">${esc(RCIC_NAME)}</p>
+  <p style="margin:0;">Regulated Canadian Immigration Consultant (RCIC)</p>
+  <p style="margin:0;">RCIC No. ${esc(RCIC_NUMBER)}</p>
+  <p style="margin:0;">${esc(RCIC_COMPANY)}</p>
+  <p style="margin:0;">${esc(RCIC_ADDRESS_LINE_1)}, ${esc(RCIC_ADDRESS_LINE_2)}</p>
+  <p style="margin:0;">${esc(RCIC_PHONE)} &nbsp;|&nbsp; ${esc(RCIC_EMAIL)}</p>
+</body></html>`;
+}
+
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -1214,6 +1299,41 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         // Echo back generation context the editor might want to display.
         generated: generationMode,
       });
+    }
+
+    // ── Editable Google Doc mode ──
+    // Instead of a locked PDF, render the letter as an editable Google Doc in
+    // the case's Drive folder and return its link so the UI can open it for
+    // tweaking. Reuses the exact bodyLines/docs/subject computed above (incl.
+    // any staff edits via editedBodyLines), so the Doc matches the PDF.
+    if (mode === "gdoc" || mode === "googledoc" || String(body.format || "").toLowerCase() === "gdoc") {
+      const safeName = clientName.replace(/[^a-zA-Z0-9 ]/g, "").trim() || "Client";
+      const html = buildLetterHtml({ clientName, subjectLine, date: today, bodyLines, docs });
+      try {
+        const { createGoogleDocFromHtml, extractDriveFolderId, createCaseDriveStructure } = await import("@/lib/google-drive");
+        let folderId: string | null = extractDriveFolderId(caseItem.docsUploadLink || "");
+        if (!folderId && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID) {
+          const structure = await createCaseDriveStructure(
+            process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+            `${safeName} (${params.id})`
+          );
+          folderId = structure.subfolders.clientDocuments.id;
+        }
+        if (!folderId) {
+          return NextResponse.json({ ok: false, error: "No Drive folder is linked to this case yet." }, { status: 400 });
+        }
+        const docName = `${safeName} - Representative Letter`;
+        const res = await createGoogleDocFromHtml({ folderId, name: docName, html });
+        return NextResponse.json({
+          ok: true,
+          editLink: res.webViewLink,
+          name: docName,
+          updated: res.updated,
+          generated: generationMode,
+        });
+      } catch (e) {
+        return NextResponse.json({ ok: false, error: `Google Doc creation failed: ${(e as Error).message}` }, { status: 500 });
+      }
     }
 
     // Build PDF

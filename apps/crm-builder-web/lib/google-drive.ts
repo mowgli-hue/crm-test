@@ -274,6 +274,97 @@ async function findDriveFileByName(parentFolderId: string, fileName: string): Pr
   return { id: match.id, webViewLink: match.webViewLink };
 }
 
+// Create (or update) an EDITABLE Google Doc in a Drive folder from HTML.
+//
+// Why: documents we generate as PDFs (e.g. the representative submission
+// letter) can't be tweaked afterward — staff had to regenerate from scratch to
+// fix a name or add a line. A Google Doc opens and edits right in Drive.
+// Drive converts the uploaded HTML into a native Google Doc when the file
+// metadata mimeType is "application/vnd.google-apps.document" and the media
+// part is text/html, so headings, bullets and bold all survive.
+//
+// Dedupe: if a doc with the same name already exists in the folder we REPLACE
+// its contents in place (so re-generating updates the working copy instead of
+// piling up "Letter (1) (2)"). We never delete — only create or overwrite.
+export async function createGoogleDocFromHtml(input: {
+  folderId: string;
+  name: string;
+  html: string;
+}): Promise<{ id: string; webViewLink: string; updated: boolean }> {
+  const accessToken = await getDriveAccessToken();
+  const safeName = sanitizeFolderName(input.name);
+  const htmlBuf = Buffer.from(input.html, "utf8");
+
+  // ── Update existing same-named Doc in place ──
+  try {
+    const existing = await findDriveFileByName(input.folderId, safeName);
+    if (existing?.id) {
+      const upRes = await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media&supportsAllDrives=true&fields=id,webViewLink`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "text/html" },
+          body: htmlBuf,
+          cache: "no-store",
+        }
+      );
+      if (upRes.ok) {
+        const upData = (await upRes.json()) as { id?: string; webViewLink?: string };
+        if (upData.id) {
+          return {
+            id: upData.id,
+            webViewLink: upData.webViewLink || `https://docs.google.com/document/d/${upData.id}/edit`,
+            updated: true,
+          };
+        }
+      }
+      // Update failed — fall through to a fresh create so the letter is never lost.
+    }
+  } catch {
+    // ignore — dedupe is best-effort
+  }
+
+  // ── Create new Google Doc (HTML → Doc conversion) ──
+  const boundary = `flowdesk_gdoc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const metadata = {
+    name: safeName,
+    parents: [input.folderId],
+    mimeType: "application/vnd.google-apps.document",
+  };
+  const preamble =
+    `--${boundary}\r\n` +
+    "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    "Content-Type: text/html; charset=UTF-8\r\n\r\n";
+  const ending = `\r\n--${boundary}--`;
+  const body = Buffer.concat([Buffer.from(preamble, "utf8"), htmlBuf, Buffer.from(ending, "utf8")]);
+
+  const res = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body,
+      cache: "no-store",
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google Doc create failed (${res.status}): ${text}`);
+  }
+  const data = (await res.json()) as { id?: string; webViewLink?: string };
+  if (!data.id) throw new Error("Google Doc id missing");
+  return {
+    id: data.id,
+    webViewLink: data.webViewLink || `https://docs.google.com/document/d/${data.id}/edit`,
+    updated: false,
+  };
+}
+
 export async function uploadFileToDriveFolder(input: {
   folderId: string;
   fileName: string;

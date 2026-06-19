@@ -8022,6 +8022,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     <button id="__rep_edit_back__" style="border:1px solid #e2e8f0;background:white;padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">← Back</button>
                                     <div style="display:flex;gap:8px;align-items:center;">
                                       <span id="__rep_edit_status__" style="font-size:12px;color:#7e22ce;font-weight:600;display:none;">⏳ Building PDF…</span>
+                                      <button id="__rep_edit_gdoc__" style="background:#2563eb;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📝 Open editable Google Doc</button>
                                       <button id="__rep_edit_download__" style="background:#059669;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📥 Download PDF</button>
                                     </div>
                                   </div>
@@ -8075,6 +8076,66 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 // ── Download: rebuild bodyLines + editedDocs from textareas + POST ──
                                 const downloadBtn = document.getElementById("__rep_edit_download__") as HTMLButtonElement;
                                 const editStatus = document.getElementById("__rep_edit_status__")!;
+
+                                // Build the edited payload (subject + body + docs) from the
+                                // textareas — shared by both the PDF download and the Google Doc.
+                                const buildEditedPayload = () => {
+                                  const editedBodyLines: string[] = [];
+                                  const paragraphs = bodyArea.value.split(/\n\n+/);
+                                  paragraphs.forEach((p, i) => {
+                                    const trimmed = p.trim();
+                                    if (trimmed) editedBodyLines.push(trimmed);
+                                    if (i < paragraphs.length - 1) editedBodyLines.push("");
+                                  });
+                                  const editedDocs: string[] = docsArea.value.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+                                  const subjectInput = document.getElementById("__rep_edit_subject__") as HTMLInputElement | null;
+                                  const editedSubject = (subjectInput?.value || "").trim();
+                                  return { editedBodyLines, editedDocs, editedSubject, bodyChars: editedBodyLines.filter(l => l.trim()).join(" ").length };
+                                };
+
+                                // ── Open as editable Google Doc ──
+                                const gdocBtn = document.getElementById("__rep_edit_gdoc__") as HTMLButtonElement;
+                                gdocBtn?.addEventListener("click", async () => {
+                                  const payload = buildEditedPayload();
+                                  if (payload.bodyChars < 50) {
+                                    alert("Body is too short — please add more content first.");
+                                    return;
+                                  }
+                                  gdocBtn.disabled = true;
+                                  gdocBtn.textContent = "Creating Doc…";
+                                  editStatus.textContent = "📝 Creating Google Doc…";
+                                  editStatus.style.display = "inline";
+                                  try {
+                                    const res = await apiFetch(`/cases/${caseId}/rep-letter`, {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        mode: "gdoc",
+                                        editedBodyLines: payload.editedBodyLines,
+                                        editedDocs: payload.editedDocs,
+                                        editedSubject: payload.editedSubject,
+                                        pronouns: selectedPronoun,
+                                      }),
+                                    });
+                                    const d = await res?.json().catch(() => ({}));
+                                    if (!res?.ok || !d?.editLink) {
+                                      alert(`Failed: ${d?.error || "Could not create Google Doc"}`);
+                                      gdocBtn.disabled = false;
+                                      gdocBtn.textContent = "📝 Open editable Google Doc";
+                                      editStatus.style.display = "none";
+                                      return;
+                                    }
+                                    window.open(d.editLink, "_blank");
+                                    setCaseActionStatus(d.updated ? "✅ Google Doc updated — opened in a new tab to edit." : "✅ Editable Google Doc created in Drive — opened in a new tab.");
+                                    close();
+                                  } catch (e: any) {
+                                    alert(`Error: ${e?.message || "Unknown"}`);
+                                    gdocBtn.disabled = false;
+                                    gdocBtn.textContent = "📝 Open editable Google Doc";
+                                    editStatus.style.display = "none";
+                                  }
+                                  setTimeout(() => setCaseActionStatus(""), 5000);
+                                });
                                 downloadBtn?.addEventListener("click", async () => {
                                   // Reconstruct bodyLines: split on blank lines = paragraph breaks.
                                   // Empty entries between paragraphs are preserved as blank strings
