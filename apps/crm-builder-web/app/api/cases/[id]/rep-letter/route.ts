@@ -1708,6 +1708,30 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const driveRes = await uploadFileToDriveFolder({ folderId, fileName, mimeType: "application/pdf", fileBuffer: Buffer.from(pdfBytes) });
       driveLink = driveRes.webViewLink || "";
       console.log(`✅ Rep letter uploaded to Drive: ${fileName}`);
+
+      // ── Keep every version the team produces ──
+      // The canonical file above (dedup'd) is what the submission package picks
+      // up — always the latest. In addition, drop a timestamped COPY into a
+      // "Rep Letter Versions" subfolder (dedupe:false → never overwritten) so
+      // staff can see / recover any earlier draft they generated. Best-effort:
+      // a failure here must not break the download.
+      try {
+        const { getOrCreateDriveSubfolder } = await import("@/lib/google-drive");
+        const stamp = new Date()
+          .toLocaleString("en-CA", { timeZone: "America/Vancouver", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+          .replace(/[,/]/g, "-").replace(/\s+/g, " ").replace(/:/g, "").trim();
+        const versionsFolder = await getOrCreateDriveSubfolder(folderId, "Rep Letter Versions");
+        await uploadFileToDriveFolder({
+          folderId: versionsFolder.id,
+          fileName: `${safeName} - Rep Letter ${stamp}.pdf`,
+          mimeType: "application/pdf",
+          fileBuffer: Buffer.from(pdfBytes),
+          dedupe: false,
+        });
+        console.log(`🗂️  Saved rep-letter version: ${stamp}`);
+      } catch (ve) {
+        console.error("Rep-letter version save failed (non-fatal):", (ve as Error).message);
+      }
     } catch (e) {
       console.error("Drive upload failed (returning PDF directly):", (e as Error).message);
     }

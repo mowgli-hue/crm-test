@@ -7833,7 +7833,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             const caseType = selectedCase?.formType || "Application";
                             const existingNotes = String((selectedCase as any)?.additionalNotes || "").trim();
                             modal.innerHTML = `
-                              <div id="__rep_letter_panel__" style="background:white;border-radius:16px;padding:24px;width:100%;max-width:640px;box-shadow:0 25px 50px rgba(0,0,0,0.25);max-height:90vh;overflow-y:auto;">
+                              <div id="__rep_letter_panel__" style="background:white;border-radius:16px;padding:24px;width:96vw;max-width:1180px;box-shadow:0 25px 50px rgba(0,0,0,0.25);max-height:94vh;overflow-y:auto;">
                                 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
                                   <div>
                                     <h2 style="margin:0;font-size:16px;font-weight:bold;color:#0f172a;">📜 Representative Letter</h2>
@@ -7880,7 +7880,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             // Wire up event handlers
                             let selectedPronoun = "they";
                             const close = () => modal.remove();
-                            modal.addEventListener("click", (ev) => { if (ev.target === modal) close(); });
+                            // NOTE: deliberately NOT closing on backdrop click — accidental
+                            // outside clicks were making the rep-letter popup disappear mid-edit.
+                            // Close only via the X / Cancel buttons (or Escape, wired below).
+                            const onEsc = (ev: KeyboardEvent) => { if (ev.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
+                            document.addEventListener("keydown", onEsc);
                             (document.getElementById("__rep_letter_close__") as HTMLButtonElement)?.addEventListener("click", close);
                             (document.getElementById("__rep_letter_cancel__") as HTMLButtonElement)?.addEventListener("click", close);
 
@@ -7999,10 +8003,20 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     <div style="margin-top:4px;font-style:italic;color:#64748b;">Dear Sir/Madam,</div>
                                   </div>
 
-                                  <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Letter body (edit anything)</label>
-                                  <textarea id="__rep_edit_body__" rows="16"
-                                    style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;line-height:1.6;box-sizing:border-box;resize:vertical;"></textarea>
-                                  <p id="__rep_edit_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
+                                  <div style="display:flex;gap:16px;align-items:stretch;flex-wrap:wrap;">
+                                    <div style="flex:2 1 420px;min-width:0;display:flex;flex-direction:column;">
+                                      <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Letter body (edit anything)</label>
+                                      <textarea id="__rep_edit_body__"
+                                        style="width:100%;height:46vh;min-height:280px;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;line-height:1.6;box-sizing:border-box;resize:vertical;"></textarea>
+                                      <p id="__rep_edit_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
+                                    </div>
+                                    <div style="flex:1 1 280px;min-width:0;display:flex;flex-direction:column;">
+                                      <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">📎 Enclosed Documents <span style="color:#94a3b8;font-weight:400;">— one per line</span></label>
+                                      <textarea id="__rep_edit_docs__"
+                                        style="width:100%;height:46vh;min-height:280px;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:12px;line-height:1.5;box-sizing:border-box;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"></textarea>
+                                      <p id="__rep_edit_docs_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
+                                    </div>
+                                  </div>
 
                                   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:12px;font-size:11px;color:#334155;line-height:1.6;">
                                     <div style="font-style:italic;color:#64748b;">Sincerely,</div>
@@ -8011,19 +8025,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     <div>8327 120 Street, Delta, BC V4C 6R1</div>
                                   </div>
 
-                                  <div style="margin-top:16px;border-top:2px solid #f1f5f9;padding-top:12px;">
-                                    <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">📎 Enclosed Documents <span style="color:#94a3b8;font-weight:400;">— one per line, in submission order</span></label>
-                                    <textarea id="__rep_edit_docs__" rows="10"
-                                      style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:12px;line-height:1.5;box-sizing:border-box;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"></textarea>
-                                    <p id="__rep_edit_docs_meta__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;"></p>
-                                  </div>
-
                                   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;">
                                     <button id="__rep_edit_back__" style="border:1px solid #e2e8f0;background:white;padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;color:#334155;">← Back</button>
                                     <div style="display:flex;gap:8px;align-items:center;">
                                       <span id="__rep_edit_status__" style="font-size:12px;color:#7e22ce;font-weight:600;display:none;">⏳ Building PDF…</span>
-                                      <button id="__rep_edit_gdoc__" style="background:#2563eb;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📝 Open editable Google Doc</button>
-                                      <button id="__rep_edit_download__" style="background:#059669;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📥 Download PDF</button>
+                                      <button id="__rep_edit_download__" style="background:#059669;color:white;padding:6px 16px;font-size:12px;font-weight:bold;border-radius:8px;cursor:pointer;border:none;">📥 Download PDF (saves a version)</button>
                                     </div>
                                   </div>
                                 `;
@@ -8077,65 +8083,6 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                 const downloadBtn = document.getElementById("__rep_edit_download__") as HTMLButtonElement;
                                 const editStatus = document.getElementById("__rep_edit_status__")!;
 
-                                // Build the edited payload (subject + body + docs) from the
-                                // textareas — shared by both the PDF download and the Google Doc.
-                                const buildEditedPayload = () => {
-                                  const editedBodyLines: string[] = [];
-                                  const paragraphs = bodyArea.value.split(/\n\n+/);
-                                  paragraphs.forEach((p, i) => {
-                                    const trimmed = p.trim();
-                                    if (trimmed) editedBodyLines.push(trimmed);
-                                    if (i < paragraphs.length - 1) editedBodyLines.push("");
-                                  });
-                                  const editedDocs: string[] = docsArea.value.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-                                  const subjectInput = document.getElementById("__rep_edit_subject__") as HTMLInputElement | null;
-                                  const editedSubject = (subjectInput?.value || "").trim();
-                                  return { editedBodyLines, editedDocs, editedSubject, bodyChars: editedBodyLines.filter(l => l.trim()).join(" ").length };
-                                };
-
-                                // ── Open as editable Google Doc ──
-                                const gdocBtn = document.getElementById("__rep_edit_gdoc__") as HTMLButtonElement;
-                                gdocBtn?.addEventListener("click", async () => {
-                                  const payload = buildEditedPayload();
-                                  if (payload.bodyChars < 50) {
-                                    alert("Body is too short — please add more content first.");
-                                    return;
-                                  }
-                                  gdocBtn.disabled = true;
-                                  gdocBtn.textContent = "Creating Doc…";
-                                  editStatus.textContent = "📝 Creating Google Doc…";
-                                  editStatus.style.display = "inline";
-                                  try {
-                                    const res = await apiFetch(`/cases/${caseId}/rep-letter`, {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({
-                                        mode: "gdoc",
-                                        editedBodyLines: payload.editedBodyLines,
-                                        editedDocs: payload.editedDocs,
-                                        editedSubject: payload.editedSubject,
-                                        pronouns: selectedPronoun,
-                                      }),
-                                    });
-                                    const d = await res?.json().catch(() => ({}));
-                                    if (!res?.ok || !d?.editLink) {
-                                      alert(`Failed: ${d?.error || "Could not create Google Doc"}`);
-                                      gdocBtn.disabled = false;
-                                      gdocBtn.textContent = "📝 Open editable Google Doc";
-                                      editStatus.style.display = "none";
-                                      return;
-                                    }
-                                    window.open(d.editLink, "_blank");
-                                    setCaseActionStatus(d.updated ? "✅ Google Doc updated — opened in a new tab to edit." : "✅ Editable Google Doc created in Drive — opened in a new tab.");
-                                    close();
-                                  } catch (e: any) {
-                                    alert(`Error: ${e?.message || "Unknown"}`);
-                                    gdocBtn.disabled = false;
-                                    gdocBtn.textContent = "📝 Open editable Google Doc";
-                                    editStatus.style.display = "none";
-                                  }
-                                  setTimeout(() => setCaseActionStatus(""), 5000);
-                                });
                                 downloadBtn?.addEventListener("click", async () => {
                                   // Reconstruct bodyLines: split on blank lines = paragraph breaks.
                                   // Empty entries between paragraphs are preserved as blank strings
