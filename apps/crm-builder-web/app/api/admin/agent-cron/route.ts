@@ -46,6 +46,16 @@ async function run(request: NextRequest) {
     agent = await res.json().catch(() => ({}));
   } catch (e) { agent = { error: (e as Error).message }; }
 
+  // 1b. Self-heal any WhatsApp uploads stuck at "Uploading…" (download torn
+  // down inline). Safety net — ideally a dedicated cron hits
+  // /api/admin/stuck-uploads/sweep every few minutes; running it here too means
+  // even a daily-only schedule recovers stranded client docs.
+  let swept: any = {};
+  try {
+    const res = await fetch(`${baseUrl()}/api/admin/stuck-uploads/sweep?systemToken=${encodeURIComponent(sys)}&limit=50`, { method: "POST" });
+    swept = await res.json().catch(() => ({}));
+  } catch (e) { swept = { error: (e as Error).message }; }
+
   // 2. Build the manager briefing (plain text).
   let briefing = "";
   try {
@@ -75,6 +85,7 @@ async function run(request: NextRequest) {
     ok: true,
     ranAt: new Date().toISOString(),
     agent: { assembled, formsFilled, raw: agent },
+    stuckUploadsSwept: { recovered: swept?.recovered ?? 0, scanned: swept?.scanned ?? 0, raw: swept },
     briefing,
     email: { to: emailed ? to : null, sent: emailed, error: emailError },
   });

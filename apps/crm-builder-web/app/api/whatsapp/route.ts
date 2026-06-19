@@ -13,11 +13,26 @@ const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 const WA_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 
 // Download media from WhatsApp
+// Hard timeout for Meta calls. Without this, a slow/hung CDN response pins the
+// webhook worker open until the platform kills the whole request — which is how
+// uploads ended up stuck at "Uploading…" and (worse) lost. With a timeout the
+// download fails fast and cleanly; the stuck-uploads sweep recovers it later
+// from the stored mediaId.
+async function waFetchWithTimeout(url: string, init: RequestInit, timeoutMs = 20000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function downloadWaMedia(mediaId: string): Promise<{ buffer: Buffer; mimeType: string; filename: string } | null> {
   try {
     // Get media URL — Meta gives us a temporary download URL (5-15 min lifetime
     // typically; nominally 30 days but often shorter in practice).
-    const urlRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+    const urlRes = await waFetchWithTimeout(`https://graph.facebook.com/v18.0/${mediaId}`, {
       headers: { Authorization: `Bearer ${WA_TOKEN}` }
     });
     if (!urlRes.ok) {
@@ -36,7 +51,7 @@ async function downloadWaMedia(mediaId: string): Promise<{ buffer: Buffer; mimeT
     }
 
     // Download the file from the temporary CDN URL
-    const fileRes = await fetch(urlData.url, {
+    const fileRes = await waFetchWithTimeout(urlData.url, {
       headers: { Authorization: `Bearer ${WA_TOKEN}` }
     });
     if (!fileRes.ok) {
