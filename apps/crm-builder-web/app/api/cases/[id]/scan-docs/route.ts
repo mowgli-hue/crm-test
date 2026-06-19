@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { getCase, updateCasePgwpIntake } from "@/lib/store";
+import { getCase, updateCasePgwpIntake, listDocuments, addDocument } from "@/lib/store";
 import {
   extractDriveFolderId,
   listFilesInFolder,
@@ -75,12 +75,27 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     name: string;
     category?: string;
     fieldsAdded?: string[];
+    registered?: boolean;
     error?: string;
   }> = [];
 
   // Working merge — track what's been filled across all docs in this run
   // (so a later doc doesn't overwrite an earlier one)
   const runningIntake: Record<string, any> = { ...existingIntake };
+
+  // ── Register Drive files as document ROWS ──
+  // The checklist / case-agent / readiness all read the documents TABLE
+  // (listDocuments). A file dropped straight into the Drive folder was being
+  // OCR-scanned for FIELDS here but never registered as a document — so the
+  // checklist still counted it as "missing" and the case never flipped to
+  // ready-to-prepare. We now register each scanned client file so a Drive drop
+  // counts toward the checklist. Idempotent on (caseId, "drive:"+fileId), and
+  // we skip files whose normalized name already exists to avoid doubling up a
+  // doc that was also uploaded via WhatsApp.
+  const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const existingDocs = await listDocuments(user.companyId, params.id);
+  const existingNorm = new Set(existingDocs.map((d) => normName(d.name)));
+  let docsRegistered = 0;
 
   for (const file of scannableFiles) {
     try {
@@ -142,10 +157,39 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         allMergedFields[k] = v;
       }
 
+      // Register this Drive file as a document row so the checklist counts it.
+      // Append the OCR category token to the stored name (e.g. "scan001.pdf
+      // [transcripts]") so even a poorly-named file is matched by the checklist's
+      // keyword/category logic, not just well-named files like "Transcripts.pdf".
+      const cat = String(extracted.category || "").trim();
+      const storedName =
+        cat && cat !== "other" ? `${file.name} [${cat}]` : file.name;
+      let registered = false;
+      if (!existingNorm.has(normName(file.name)) && !existingNorm.has(normName(storedName))) {
+        try {
+          await addDocument({
+            companyId: user.companyId,
+            caseId: params.id,
+            name: storedName,
+            category: "general",
+            status: "received",
+            link: `https://drive.google.com/file/d/${file.id}/view`,
+            sourceMsgId: `drive:${file.id}`,
+          });
+          existingNorm.add(normName(storedName));
+          existingNorm.add(normName(file.name));
+          docsRegistered += 1;
+          registered = true;
+        } catch {
+          // Non-fatal — field extraction already succeeded; registration is a bonus.
+        }
+      }
+
       perFileResults.push({
         name: file.name,
         category: extracted.category,
         fieldsAdded: Object.keys(newFields),
+        registered,
       });
     } catch (e) {
       perFileResults.push({
@@ -174,6 +218,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     filesTotal: files.length,
     fieldsAdded: Object.keys(allMergedFields).length,
     fieldsAddedDetails: allMergedFields,
+    docsRegistered,
     results: perFileResults,
   });
 }
