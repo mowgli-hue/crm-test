@@ -21,6 +21,7 @@ import { getPool } from "@/lib/postgres-store";
 import { buildCanonicalizer } from "@/lib/staff-names";
 import { computeSla } from "@/lib/case-sla";
 import { teamActivity } from "@/lib/time-tracking";
+import { profileForName, laneHandlesType, type OpsProfile } from "@/lib/team-config";
 import type { ReadyKind } from "@/lib/case-priority";
 import type { AppUser, CaseItem } from "@/lib/models";
 
@@ -75,6 +76,13 @@ export interface StaffMetrics {
   activeCaseId: string | null;
   // risk on their plate now
   atRiskAssigned: number;     // open cases breached / due_soon
+  // operating profile (from team-config)
+  lanes: string[] | "all";
+  functions: string[];
+  employment: "full_time" | "part_time";
+  capacityHours: number;      // hours/week available (capacity seed)
+  offToday: boolean;          // it's their scheduled off-day
+  laneLead: boolean;
 }
 
 export interface TeamSummary {
@@ -96,7 +104,8 @@ export type RebalanceRule =
   | "departed"
   | "orphaned_inactive"
   | "unassigned_at_risk"
-  | "overloaded_at_risk";
+  | "overloaded_at_risk"
+  | "wrong_lane";
 
 export interface RebalanceMove {
   caseId: string;
@@ -178,10 +187,29 @@ export async function gatherOpsData(opts?: {
 
   const [staffAll, cases] = await Promise.all([listAllStaff(), listAllCases()]);
 
-  // Prep roster — the people we score and can assign to.
-  const roster = staffAll.filter(
-    (s) => s.userType === "staff" && !isExcluded(s.name) && PREP_ROLES.has(lc(s.role))
-  );
+  // ── Operating roster from the team-config (not the crude CRM access role) ──
+  // A person is in scope if their operating profile is active and they prep or
+  // review. We match the profile to a real CRM account to get the stable id used
+  // by time-tracking; new hires without a login yet simply aren't scored.
+  const profileByUserId = new Map<string, OpsProfile>();
+  const roster: AppUser[] = [];
+  for (const u of staffAll) {
+    if (u.userType !== "staff") continue;
+    const prof = profileForName(u.name);
+    if (!prof || !prof.active) continue;
+    if (!(prof.functions.includes("prep") || prof.functions.includes("review"))) continue;
+    roster.push(u);
+    profileByUserId.set(u.id, prof);
+  }
+  // Safety net: if the config matched nobody (names drifted), fall back to the
+  // old role-based roster so the dashboard never goes blank.
+  if (roster.length === 0) {
+    for (const s of staffAll.filter((s) => s.userType === "staff" && !isExcluded(s.name) && PREP_ROLES.has(lc(s.role)))) roster.push(s);
+  }
+
+  // Today's weekday in Pacific time — for off-day awareness.
+  const todayDow = new Date(new Date(now).toLocaleString("en-US", { timeZone: "America/Vancouver" })).getDay();
+
   const canonical = buildCanonicalizer(staffAll.map((s) => String(s.name || "")));
 
   // Map canonical staff-name → AppUser (for resolving case.assignedTo → person).
@@ -332,6 +360,7 @@ export async function gatherOpsData(opts?: {
     const tw = timeWindow.get(s.id);
     const live = liveById.get(s.id);
     const fseen = firstSeen.get(s.id);
+    const prof = profileByUserId.get(s.id);
     const tenureDays = fseen ? Math.max(0, Math.floor((now - Date.parse(fseen)) / 86_400_000)) : null;
     const submitted = a?.submittedWindow ?? 0;
     const slaTotal = (a?.slaHits ?? 0) + (a?.slaMisses ?? 0);
@@ -340,6 +369,12 @@ export async function gatherOpsData(opts?: {
       name: s.name,
       role: s.role,
       active: s.active !== false,
+      lanes: prof?.lanes ?? "all",
+      functions: prof?.functions ?? ["prep"],
+      employment: prof?.employment ?? "full_time",
+      capacityHours: prof?.weeklyHours ?? 35,
+      offToday: prof?.offDays ? prof.offDays.includes(todayDow) : false,
+      laneLead: prof?.laneLead ?? false,
       tenureDays,
       isNewHire: tenureDays !== null && tenureDays < NEW_HIRE_DAYS,
       casesAssigned: a?.casesAssigned ?? 0,
@@ -451,9 +486,11 @@ export function computeRebalanceMoves(args: {
   if (targets.length === 0) return [];
 
   const rank = (a: typeof targets[number], b: typeof targets[number]) => {
-    // Prefer people online now, then lighter projected load, then fewer at-risk.
+    // Off-day people sink (still eligible as a last resort), then prefer people
+    // online now, then lighter projected load, then fewer at-risk.
+    const offRank = (t: typeof targets[number]) => (t.offToday ? 1 : 0);
     const liveRank = (st: LiveStatus) => (st === "active" ? 0 : st === "idle" ? 1 : 2);
-    return liveRank(a.status) - liveRank(b.status) || a.projLoad - b.projLoad || a.atRiskAssigned - b.atRiskAssigned;
+    return offRank(a) - offRank(b) || liveRank(a.status) - liveRank(b.status) || a.projLoad - b.projLoad || a.atRiskAssigned - b.atRiskAssigned;
   };
 
   const moves: RebalanceMove[] = [];
@@ -472,10 +509,14 @@ export function computeRebalanceMoves(args: {
     args.roster.filter((s) => s.active !== false).map((s) => args.canonical(s.name).toLowerCase())
   );
 
-  const pickTarget = (excludeName: string): typeof targets[number] | null => {
+  // Lane-aware target pick: prefer people whose lane handles this app type; only
+  // fall back to anyone if no lane-owner has room.
+  const pickTarget = (excludeName: string, formType: string): typeof targets[number] | null => {
     const ex = excludeName.toLowerCase();
-    const pool = targets.filter((t) => t.name.toLowerCase() !== ex && t.intake < maxIntake);
-    if (pool.length === 0) return null;
+    const eligible = targets.filter((t) => t.name.toLowerCase() !== ex && t.intake < maxIntake);
+    if (eligible.length === 0) return null;
+    const laneMatch = eligible.filter((t) => laneHandlesType(t.lanes, formType));
+    const pool = laneMatch.length ? laneMatch : eligible;
     pool.sort(rank);
     return pool[0];
   };
@@ -485,7 +526,7 @@ export function computeRebalanceMoves(args: {
     if (movedCaseIds.has(c.id)) return;
     if (args.openCaseIds.has(c.id)) return; // someone is working it right now — hands off
     const from = assigneeOf(c);
-    const t = pickTarget(from);
+    const t = pickTarget(from, String(c.formType || ""));
     if (!t) return;
     t.projLoad++; t.intake++;
     movedCaseIds.add(c.id);
@@ -541,6 +582,25 @@ export function computeRebalanceMoves(args: {
     for (const c of theirAtRisk.slice(0, 2)) {
       addMove(c, "overloaded_at_risk", `${o.name} is carrying ${o.casesAssigned} (median ${median}); moving an at-risk case to balance load`);
     }
+  }
+
+  // RULE 5 — wrong lane: a case sitting with a lane-restricted owner who doesn't
+  // handle that application type goes to someone whose lane does. This is how
+  // "give Avneet only PGWP/VR/SP-ext/TRV; move her other files out" happens.
+  // Naturally gradual — capped by maxMoves, so it corrects a few per run.
+  const laneByName = new Map(args.staff.map((s) => [s.name.toLowerCase(), s.lanes] as const));
+  for (const c of args.cases) {
+    if (!open(c)) continue;
+    const who = assigneeOf(c);
+    if (!who) continue;
+    const ownerLanes = laneByName.get(who.toLowerCase());
+    // Only lane-restricted owners (not "all"-lane reviewers/generalists/trainees).
+    if (!ownerLanes || ownerLanes === "all") continue;
+    if (laneHandlesType(ownerLanes, String(c.formType || ""))) continue; // already right lane
+    // Only move if some OTHER active person actually handles this lane.
+    const hasLaneOwner = args.staff.some((s) => s.active && s.name.toLowerCase() !== who.toLowerCase() && laneHandlesType(s.lanes, String(c.formType || "")));
+    if (!hasLaneOwner) continue;
+    addMove(c, "wrong_lane", `${c.formType} isn't ${who}'s lane — routing to the right lane owner`);
   }
 
   return moves;

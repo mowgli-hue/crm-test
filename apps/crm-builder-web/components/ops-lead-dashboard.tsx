@@ -64,6 +64,7 @@ const SLA_CHIP: Record<string, string> = {
 const RULE_LABEL: Record<string, string> = {
   departed: "owner left", orphaned_inactive: "owner offline",
   unassigned_at_risk: "was unassigned", overloaded_at_risk: "load balancing",
+  wrong_lane: "wrong lane",
 };
 
 export default function OpsLeadDashboard({ apiFetch }: { apiFetch: ApiFetch }) {

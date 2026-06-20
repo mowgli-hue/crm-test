@@ -126,6 +126,11 @@ function buildPrompt(data: OpsLeadData): string {
     hoursLogged: s.hoursLoggedWindow,
     activeDays: s.activeDays,
     liveStatus: s.status,
+    lanes: s.lanes,
+    functions: s.functions,
+    employment: s.employment,
+    capacityHours: s.capacityHours,
+    offToday: s.offToday,
   }));
   return [
     `You are the Operations Lead for Newton Immigration, a Canadian immigration consultancy scaling from 120 to 500 cases/day.`,
