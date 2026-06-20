@@ -2119,6 +2119,28 @@ export async function updateUserEmail(args: {
   return store.users[idx];
 }
 
+// Reassign many cases in ONE store write (vs. one heavy mutation + sheet sync
+// per case). Used for bulk team rebalancing. Matches by case id only (single
+// firm). Returns how many landed.
+export async function bulkReassignCases(
+  assignments: Array<{ caseId: string; assignTo: string }>
+): Promise<{ updated: number; notFound: string[] }> {
+  const want = new Map(
+    assignments.map((a) => [String(a.caseId), String(a.assignTo || "").trim() || "Unassigned"])
+  );
+  return mutateStore((store) => {
+    let updated = 0;
+    const notFound: string[] = [];
+    for (const [caseId, assignTo] of want) {
+      const idx = store.cases.findIndex((c) => c.id === caseId);
+      if (idx === -1) { notFound.push(caseId); continue; }
+      store.cases[idx] = { ...store.cases[idx], assignedTo: assignTo, updatedAt: new Date().toISOString() };
+      updated++;
+    }
+    return { updated, notFound };
+  });
+}
+
 export async function updateUserRole(args: {
   companyId: string; userId: string; newRole: Role;
 }): Promise<AppUser | null> {
