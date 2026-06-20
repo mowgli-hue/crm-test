@@ -110,6 +110,24 @@ export interface RebalanceMove {
   slaStatus: string;
 }
 
+export interface AtRiskCase {
+  caseId: string;
+  client: string;
+  formType: string;
+  assignee: string;      // "Unassigned" if none
+  slaStatus: string;     // breached | due_soon
+  slaLabel: string;      // e.g. "2h 5m overdue"
+  remainingHours: number;
+}
+
+export interface ReassignEvent {
+  caseId: string;
+  from: string;
+  to: string;
+  reason: string;
+  at: string;            // ISO
+}
+
 export interface OpsLeadData {
   generatedAt: string;
   windowDays: number;
@@ -117,6 +135,8 @@ export interface OpsLeadData {
   team: TeamSummary;
   staff: StaffMetrics[];
   rebalance: RebalanceMove[];
+  atRiskCases: AtRiskCase[];        // open & slipping now (worst first)
+  recentReassignments: ReassignEvent[]; // what the Ops Lead moved in the last 24h
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -247,6 +267,7 @@ export async function gatherOpsData(opts?: {
 
   let openCases = 0, unassignedCases = 0, atRiskOpen = 0, submittedWindow = 0, totalReworkFlags = 0;
   const openAtRiskUnassigned: CaseItem[] = [];
+  const atRiskList: AtRiskCase[] = [];
 
   for (const c of cases) {
     const who = assigneeOf(c);
@@ -257,7 +278,18 @@ export async function gatherOpsData(opts?: {
     if (open) {
       openCases++;
       if (!who) { unassignedCases++; if (atRisk) openAtRiskUnassigned.push(c); }
-      if (atRisk) atRiskOpen++;
+      if (atRisk) {
+        atRiskOpen++;
+        atRiskList.push({
+          caseId: c.id,
+          client: String((c as any).client || ""),
+          formType: String(c.formType || ""),
+          assignee: who || "Unassigned",
+          slaStatus: sla.status,
+          slaLabel: sla.label,
+          remainingHours: sla.remainingHours,
+        });
+      }
       if (who) {
         const a = ensureAcc(who);
         a.casesAssigned++;
@@ -353,8 +385,37 @@ export async function gatherOpsData(opts?: {
     openAtRiskUnassigned, now,
   });
 
+  // Worst-first at-risk list (most overdue at the top), capped for readability.
+  atRiskList.sort((a, b) => a.remainingHours - b.remainingHours);
+  const atRiskCases = atRiskList.slice(0, 30);
+
+  // What the Ops Lead has already moved in the last 24h (from the audit trail) —
+  // so the brief can tell the owner what happened while they weren't looking.
+  const recentReassignments: ReassignEvent[] = [];
+  try {
+    const pool = getPool();
+    const since = new Date(now - 86_400_000).toISOString();
+    const r = await pool.query(
+      `SELECT resource_id, metadata, created_at
+         FROM audit_logs
+        WHERE action = 'reassign_case' AND created_at >= $1
+     ORDER BY created_at DESC LIMIT 40`,
+      [since]
+    );
+    for (const x of r.rows as any[]) {
+      const md = x.metadata || {};
+      recentReassignments.push({
+        caseId: x.resource_id,
+        from: String(md.from || ""),
+        to: String(md.to || ""),
+        reason: String(md.reason || ""),
+        at: x.created_at,
+      });
+    }
+  } catch { /* audit table may not exist yet */ }
+
   const windowLabel = `last ${windowDays} days`;
-  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance };
+  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments };
 }
 
 function pickBottleneck(args: { atRiskOpen: number; unassignedCases: number; totalReworkFlags: number; staff: StaffMetrics[]; openCases: number }): string {

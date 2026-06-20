@@ -16,6 +16,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isValidSystemToken, getAuthRecoveryToken } from "@/lib/auth-recovery-token";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { sendEmail, isEmailConfigured } from "@/lib/email";
+import { gatherOpsData } from "@/lib/ops-lead";
+import { aiJudgment } from "@/lib/ops-lead-ai";
 
 export const runtime = "nodejs";
 
@@ -67,7 +69,15 @@ async function run(request: NextRequest) {
     rebalanced = await res.json().catch(() => ({}));
   } catch (e) { rebalanced = { error: (e as Error).message }; }
 
-  // 2. Build the manager briefing (plain text).
+  // 2. THE OPERATIONS LEAD — read the team + cases (post-rebalance) and have
+  // the management brain write the owner's personal briefing.
+  let ops: any = null, judgment: any = null;
+  try {
+    ops = await gatherOpsData({ windowDays: 30 });
+    judgment = await aiJudgment(ops);
+  } catch (e) { console.error("[agent-cron] ops-lead failed:", (e as Error).message); }
+
+  // Pipeline detail (existing manager briefing) kept as a secondary section.
   let briefing = "";
   try {
     const res = await fetch(`${baseUrl()}/api/admin/manager-briefing?format=text&systemToken=${encodeURIComponent(sys)}`);
@@ -78,18 +88,65 @@ async function run(request: NextRequest) {
   const formsFilled = agent?.formsFilled?.succeeded ?? 0;
   const reassigned = rebalanced?.appliedCount ?? 0;
   const agentLine = `🤖 Agent run: assembled ${assembled} file(s), filled forms on ${formsFilled} case(s)` +
-    (reassigned > 0 ? `, AI Ops Lead reassigned ${reassigned} case(s) to balance load / protect deadlines.` : ".");
+    (reassigned > 0 ? `, reassigned ${reassigned} case(s) to balance load / protect deadlines.` : ".");
 
-  // 3. Email it to the manager.
+  // ── Compose the personal Operations Lead briefing ──
+  const esc = (s: string) => String(s || "").replace(/[<>&]/g, (m) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[m] as string));
+  const dateLabel = new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver", weekday: "long", month: "long", day: "numeric" });
+
+  const briefLines: string[] = judgment?.brief ? String(judgment.brief).split("\n").filter(Boolean) : [];
+  const verdicts: any[] = judgment?.verdicts || [];
+  const needAttention = verdicts.filter((v) => v.rating === "at_risk" || v.rating === "coaching");
+  const strong = verdicts.filter((v) => v.rating === "strong");
+  const newHireReads = (ops?.staff || []).filter((s: any) => s.isNewHire)
+    .map((s: any) => ({ name: s.name, read: (verdicts.find((v) => v.name.toLowerCase() === s.name.toLowerCase())?.rampRead) || "" }))
+    .filter((x: any) => x.read);
+  const moved: any[] = rebalanced?.applied || [];
+
+  const subjectLine = `Newton — Operations Lead briefing (${new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })})`;
+
+  // Plain-text version (always sent alongside HTML).
+  const textParts: string[] = [];
+  textParts.push(`OPERATIONS LEAD — ${dateLabel}`, "");
+  if (briefLines.length) textParts.push(...briefLines, "");
+  if (moved.length) { textParts.push("WHAT I MOVED WHILE YOU WERE AWAY:"); moved.forEach((m) => textParts.push(`  • ${m.caseId}: ${m.from} → ${m.to}`)); textParts.push(""); }
+  if (needAttention.length) { textParts.push("COACH / WATCH:"); needAttention.forEach((v) => textParts.push(`  • ${v.name} (${v.ratingLabel}): ${v.fix}`)); textParts.push(""); }
+  if (strong.length) textParts.push(`CARRYING THE FIRM: ${strong.map((v) => v.name).join(", ")}`, "");
+  if (newHireReads.length) { textParts.push("NEW HIRES:"); newHireReads.forEach((x: any) => textParts.push(`  • ${x.name}: ${x.read}`)); textParts.push(""); }
+  textParts.push(agentLine, "", "— PIPELINE DETAIL —", briefing);
+  const text = textParts.join("\n");
+
+  // HTML version.
+  const chip = (txt: string, bg: string, fg: string) => `<span style="display:inline-block;background:${bg};color:${fg};border-radius:10px;padding:1px 8px;font-size:11px;font-weight:bold">${esc(txt)}</span>`;
+  const section = (title: string, inner: string) => inner ? `<div style="margin:14px 0"><div style="font-size:12px;font-weight:bold;color:#0B2F5C;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">${title}</div>${inner}</div>` : "";
+
+  const briefHtml = briefLines.length
+    ? `<div style="background:#0f172a;color:#e2e8f0;border-radius:12px;padding:14px 16px;line-height:1.6;font-size:14px">${briefLines.map((l) => `<div style="margin:3px 0">${esc(l)}</div>`).join("")}</div>`
+    : `<p style="color:#888">Operations Lead read unavailable today — see pipeline detail below.</p>`;
+  const movedHtml = moved.length ? `<ul style="margin:4px 0 0;padding-left:18px">${moved.map((m) => `<li><b>${esc(m.caseId)}</b>: ${esc(m.from)} → <b>${esc(m.to)}</b></li>`).join("")}</ul>` : "";
+  const attnHtml = needAttention.length ? needAttention.map((v) => `<div style="margin:4px 0">${chip(v.ratingLabel, v.rating === "at_risk" ? "#fee2e2" : "#fef3c7", v.rating === "at_risk" ? "#b91c1c" : "#92400e")} <b>${esc(v.name)}</b> — ${esc(v.fix)}</div>`).join("") : "";
+  const strongHtml = strong.length ? `<div>${strong.map((v) => chip(v.name, "#dcfce7", "#166534")).join(" ")}</div>` : "";
+  const newHireHtml = newHireReads.length ? newHireReads.map((x: any) => `<div style="margin:4px 0"><b>${esc(x.name)}</b> — ${esc(x.read)}</div>`).join("") : "";
+
+  const html =
+    `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.5;max-width:680px">` +
+    `<div style="font-size:18px;font-weight:bold;color:#0B2F5C">🧭 Your Operations Lead</div>` +
+    `<div style="color:#888;font-size:12px;margin-bottom:10px">${dateLabel}${judgment?.aiUsed ? ` · ${esc(judgment.model)}` : ""}</div>` +
+    briefHtml +
+    section("What I moved while you were away", movedHtml) +
+    section("Coach / watch today", attnHtml) +
+    section("Carrying the firm", strongHtml) +
+    section("New hires — ramp", newHireHtml) +
+    `<div style="margin:14px 0;color:#C0392B;font-weight:bold">${esc(agentLine)}</div>` +
+    `<details style="margin-top:10px"><summary style="cursor:pointer;color:#0B2F5C;font-weight:bold;font-size:12px">Pipeline detail</summary>` +
+    `<pre style="white-space:pre-wrap;font-family:inherit;background:#f7f7f7;padding:12px;border-radius:8px;font-size:13px">${esc(briefing)}</pre></details>` +
+    `<p style="color:#999;font-size:11px;margin-top:14px">Automated by the Newton CRM Operations Lead. It assembled files, filled form drafts, and reassigned cases within strict rules — nothing was sent to clients or submitted to IRCC. Verdicts are guidance, not automated employment decisions.</p></div>`;
+
+  // 3. Email it to the owner.
   const to = (process.env.AGENT_BRIEFING_EMAIL || process.env.GMAIL_FROM_EMAIL || "newtonimmigration@gmail.com").trim();
   let emailed = false, emailError: string | undefined;
   if (isEmailConfigured() && to) {
-    const html =
-      `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.5">` +
-      `<p style="font-weight:bold;color:#C0392B">${agentLine}</p>` +
-      `<pre style="white-space:pre-wrap;font-family:inherit;background:#f7f7f7;padding:12px;border-radius:8px">${briefing.replace(/[<>&]/g, (m) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[m] as string))}</pre>` +
-      `<p style="color:#888;font-size:12px">Automated by the Newton CRM Case Agent. It assembled files and filled form drafts only — nothing was sent to clients or submitted to IRCC.</p></div>`;
-    const r = await sendEmail({ to, subject: `Newton CRM — Daily Briefing (${new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })})`, html, text: `${agentLine}\n\n${briefing}` });
+    const r = await sendEmail({ to, subject: subjectLine, html, text });
     emailed = r.success; emailError = r.error;
   }
 
@@ -99,6 +156,7 @@ async function run(request: NextRequest) {
     ranAt: new Date().toISOString(),
     agent: { assembled, formsFilled, raw: agent },
     opsLeadRebalance: { reassigned, raw: rebalanced },
+    opsLead: judgment ? { brief: judgment.brief, model: judgment.model, aiUsed: judgment.aiUsed } : null,
     stuckUploadsSwept: { recovered: swept?.recovered ?? 0, scanned: swept?.scanned ?? 0, raw: swept },
     briefing,
     email: { to: emailed ? to : null, sent: emailed, error: emailError },

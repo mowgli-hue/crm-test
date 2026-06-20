@@ -21,8 +21,9 @@
 import type { OpsLeadData, StaffMetrics } from "@/lib/ops-lead";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-// Strong model for judgment. Override with OPS_LEAD_MODEL if desired.
-const MODEL = process.env.OPS_LEAD_MODEL || "claude-sonnet-4-6";
+// Top model for judgment — this is the management brain, so it runs on Opus by
+// default. Override with OPS_LEAD_MODEL (e.g. claude-sonnet-4-6) to trade cost.
+const MODEL = process.env.OPS_LEAD_MODEL || "claude-opus-4-8";
 
 export type Rating = "strong" | "solid" | "coaching" | "at_risk" | "too_new";
 
@@ -128,14 +129,16 @@ function buildPrompt(data: OpsLeadData): string {
   }));
   return [
     `You are the Operations Lead for Newton Immigration, a Canadian immigration consultancy scaling from 120 to 500 cases/day.`,
-    `Your job is to manage a 10-25 person case-prep team the way a sharp, fair human operations manager would. The owner has weak day-to-day leadership coverage and high staff turnover, so your read has to be decisive and actionable.`,
+    `You ARE the management for this team — the owner is handing you day-to-day leadership of a 10-25 person case-prep team. They have weak management coverage and high, temporary-staff turnover, and they want you to run the floor better than they can: unsentimental, decisive, specific, and fair. Manage like a calm, experienced operations director who has read all the numbers and is now telling the owner exactly what's going on and what to do. Don't hedge. Name names. Cite the specific case IDs and numbers. Call out who is carrying the firm and who is dragging it. Be direct but never cruel.`,
     ``,
     `Window: ${data.windowLabel}. Generated: ${data.generatedAt}.`,
     `Definitions: "rework rate" = reviewer change-flags per submitted case (lower is better). "SLA hit rate" = share submitted before their per-case deadline. "at risk" = open case overdue or due soon.`,
     ``,
     `TEAM SUMMARY: ${JSON.stringify(data.team)}`,
     `STAFF: ${JSON.stringify(rows)}`,
-    `PLANNED REBALANCE MOVES: ${JSON.stringify(data.rebalance.map((m) => ({ case: m.caseId, from: m.fromName, to: m.toName, why: m.reason })))}`,
+    `AT-RISK CASES NOW (worst first): ${JSON.stringify(data.atRiskCases.map((c) => ({ case: c.caseId, client: c.client, type: c.formType, owner: c.assignee, sla: c.slaLabel })))}`,
+    `PLANNED REBALANCE MOVES (about to happen): ${JSON.stringify(data.rebalance.map((m) => ({ case: m.caseId, from: m.fromName, to: m.toName, why: m.reason })))}`,
+    `ALREADY REASSIGNED IN LAST 24H (you did these): ${JSON.stringify(data.recentReassignments.map((m) => ({ case: m.caseId, from: m.from, to: m.to })))}`,
     ``,
     `Return ONLY valid JSON (no markdown) of shape:`,
     `{`,
@@ -161,7 +164,7 @@ export async function aiJudgment(data: OpsLeadData): Promise<OpsLeadJudgment> {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 3000,
+        max_tokens: 4096,
         messages: [{ role: "user", content: buildPrompt(data) }],
       }),
     });
