@@ -152,11 +152,19 @@ export interface OpsLeadData {
 
 const lc = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
+// "Active" = a case actually in the working pipeline, matching the dashboard's
+// "active cases" KPI (Assigned + Under Review + Intake). We exclude:
+//   • submitted / closed / decision — work is done
+//   • Lead — a marketing lead, not an engaged client (not operational work)
+//   • Paid — retainer paid but not yet started (pre-work; surfaced separately)
+// Without these exclusions the Ops Lead counted ~209 ("everything not submitted")
+// while the dashboard showed ~124, which made the AI look wrong.
 function isOpenCase(c: CaseItem): boolean {
   const st = lc((c as any).processingStatus);
   const stage = lc((c as any).stage);
   if (st === "submitted" || st === "closed") return false;
   if (stage === "submitted" || stage === "decision") return false;
+  if (stage === "lead" || stage === "paid") return false;
   return true;
 }
 
