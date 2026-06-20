@@ -25,6 +25,8 @@
  * of the deploy.
  */
 
+import { timingSafeEqual } from "node:crypto";
+
 let cachedToken: string | null | undefined;
 
 function readToken(): string | null {
@@ -70,7 +72,13 @@ export function isValidSystemToken(candidate: unknown): boolean {
   const expected = readToken();
   if (!expected) return false;
   if (typeof candidate !== "string") return false;
-  return candidate.trim() === expected;
+  // Constant-time compare so the token can't be recovered byte-by-byte via
+  // response-timing differences. Length check first (timingSafeEqual throws on
+  // mismatched lengths) — length isn't the secret.
+  const a = Buffer.from(candidate.trim(), "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /**
