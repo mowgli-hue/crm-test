@@ -10,6 +10,7 @@ import SentResultsLog from "@/components/sent-results-log";
 import PerformanceDashboard from "@/components/performance-dashboard";
 import TeamTimeOverview from "@/components/team-time-overview";
 import TeamActivity from "@/components/team-activity";
+import OpsLeadDashboard from "@/components/ops-lead-dashboard";
 import MyDay from "@/components/my-day";
 import TeamAtRisk from "@/components/team-at-risk";
 import ReviewQueue from "@/components/review-queue";
@@ -11789,6 +11790,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <h2 className="text-lg font-bold text-slate-900">👥 Team</h2>
                 <p className="mt-0.5 text-xs text-slate-500">View team members, their cases, and leave notes.</p>
               </div>
+
+              {/* AI Operations Lead — management brain: scorecards, new-hire reads,
+                  daily leadership brief, and auto work-distribution (Admin only) */}
+              {(sessionUser?.role === "Admin") && <OpsLeadDashboard apiFetch={apiFetch} />}
 
               {/* Monthly review-quality performance (visible to all team members) */}
               {(sessionUser?.role === "Admin") && <PerformanceDashboard />}

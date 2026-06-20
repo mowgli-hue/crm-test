@@ -56,6 +56,17 @@ async function run(request: NextRequest) {
     swept = await res.json().catch(() => ({}));
   } catch (e) { swept = { error: (e as Error).message }; }
 
+  // 1c. AI Operations Lead — auto-rebalance work within rules (reassign
+  // departed/orphaned/at-risk/overloaded cases). Side-effecting but guarded;
+  // every move is logged + noted on the case. We surface the count in the brief.
+  let rebalanced: any = {};
+  try {
+    const res = await fetch(`${baseUrl()}/api/admin/ops-lead/rebalance/apply?systemToken=${encodeURIComponent(sys)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    rebalanced = await res.json().catch(() => ({}));
+  } catch (e) { rebalanced = { error: (e as Error).message }; }
+
   // 2. Build the manager briefing (plain text).
   let briefing = "";
   try {
@@ -65,7 +76,9 @@ async function run(request: NextRequest) {
 
   const assembled = agent?.assembled?.succeeded ?? 0;
   const formsFilled = agent?.formsFilled?.succeeded ?? 0;
-  const agentLine = `🤖 Agent run: assembled ${assembled} file(s), filled forms on ${formsFilled} case(s).`;
+  const reassigned = rebalanced?.appliedCount ?? 0;
+  const agentLine = `🤖 Agent run: assembled ${assembled} file(s), filled forms on ${formsFilled} case(s)` +
+    (reassigned > 0 ? `, AI Ops Lead reassigned ${reassigned} case(s) to balance load / protect deadlines.` : ".");
 
   // 3. Email it to the manager.
   const to = (process.env.AGENT_BRIEFING_EMAIL || process.env.GMAIL_FROM_EMAIL || "newtonimmigration@gmail.com").trim();
@@ -85,6 +98,7 @@ async function run(request: NextRequest) {
     ok: true,
     ranAt: new Date().toISOString(),
     agent: { assembled, formsFilled, raw: agent },
+    opsLeadRebalance: { reassigned, raw: rebalanced },
     stuckUploadsSwept: { recovered: swept?.recovered ?? 0, scanned: swept?.scanned ?? 0, raw: swept },
     briefing,
     email: { to: emailed ? to : null, sent: emailed, error: emailError },
