@@ -31,28 +31,45 @@ export interface StageBudget {
   submit: number;
 }
 
-// Same-day default: ~8 working hours start-to-submit.
-const DEFAULT_BUDGET: StageBudget = { docs: 4, assemble: 2, review: 1, submit: 1 };
+// ── Budgets are CONTINUOUS clock hours from case creation to submission ──
+// IMPORTANT: this clock runs from case creation, and the bulk of that elapsed
+// time is the client sending documents — NOT prep time. Measured reality at
+// Newton is ~10–26 days (240–640h) creation→submission, so same-day (8h) budgets
+// flagged ~every open case as "at-risk," making the signal useless.
+//
+// These are recalibrated to realistic calendar windows (×24h/day), weighted so
+// most of the budget sits in the `docs` stage (the client-document wait). Result:
+// "at-risk" now flags the genuinely-late files, not the whole pipeline.
+//
+// TUNE THESE from /api/admin/sla-calibration (configured vs. actual measured
+// times) as more submission data accrues — they are config, not logic.
+const DAY = 24;
+// Default ~10 calendar days, docs-heavy.
+const DEFAULT_BUDGET: StageBudget = { docs: 7 * DAY, assemble: 36, review: 24, submit: 12 }; // 240h
 
-// Per-family overrides. Temporary-residence work/study/visitor = same day.
-// PR-track applications (sponsorship, EE PR, citizenship) are inherently
-// multi-day, so their budgets are in working-hours-across-days.
 const BUDGET_BY_KEY: Partial<Record<string, StageBudget>> = {
-  pgwp: { docs: 4, assemble: 2, review: 1, submit: 1 },
-  work_permit: { docs: 4, assemble: 2, review: 1, submit: 1 },
-  sowp: { docs: 5, assemble: 2, review: 1, submit: 1 },
-  vowp: { docs: 4, assemble: 2, review: 1, submit: 1 },
-  trv_inside: { docs: 3, assemble: 1, review: 1, submit: 1 },
-  visitor_visa: { docs: 3, assemble: 1, review: 1, submit: 1 },
-  visitor_record: { docs: 3, assemble: 1, review: 1, submit: 1 },
-  study_permit: { docs: 4, assemble: 2, review: 1, submit: 1 },
-  study_permit_extension: { docs: 4, assemble: 2, review: 1, submit: 1 },
-  super_visa: { docs: 6, assemble: 2, review: 1, submit: 1 },
-  pr_card_renewal: { docs: 8, assemble: 4, review: 2, submit: 1 },
-  citizenship: { docs: 16, assemble: 8, review: 4, submit: 2 },
-  family_sponsorship: { docs: 40, assemble: 16, review: 8, submit: 4 },
-  express_entry: { docs: 40, assemble: 16, review: 8, submit: 4 },
-  express_entry_pr: { docs: 40, assemble: 16, review: 8, submit: 4 },
+  // Quick temporary-residence types — target ~7 days.
+  visitor_record: { docs: 5 * DAY, assemble: 24, review: 16, submit: 8 },   // 168h
+  trv_inside:     { docs: 5 * DAY, assemble: 24, review: 16, submit: 8 },   // 168h
+  visitor_visa:   { docs: 5 * DAY, assemble: 24, review: 16, submit: 8 },   // 168h
+  // Work/study permits — target ~10 days.
+  pgwp:                   { docs: 7 * DAY, assemble: 36, review: 24, submit: 12 }, // 240h
+  study_permit:           { docs: 7 * DAY, assemble: 36, review: 24, submit: 12 }, // 240h
+  study_permit_extension: { docs: 7 * DAY, assemble: 36, review: 24, submit: 12 }, // 240h
+  // Document-heavy work permits — target ~12 days.
+  work_permit: { docs: 204, assemble: 42, review: 28, submit: 14 }, // 288h
+  sowp:        { docs: 204, assemble: 42, review: 28, submit: 14 }, // 288h
+  vowp:        { docs: 204, assemble: 42, review: 28, submit: 14 }, // 288h
+  // Heavier — target ~14 days.
+  super_visa: { docs: 240, assemble: 48, review: 32, submit: 16 }, // 336h
+  // PR card renewal — target ~21 days.
+  pr_card_renewal: { docs: 360, assemble: 72, review: 48, submit: 24 }, // 504h
+  // Citizenship — target ~30 days.
+  citizenship: { docs: 504, assemble: 108, review: 72, submit: 36 }, // 720h
+  // PR-track (sponsorship, Express Entry) — inherently multi-week, target ~45 days.
+  family_sponsorship: { docs: 760, assemble: 160, review: 100, submit: 60 }, // 1080h
+  express_entry:      { docs: 760, assemble: 160, review: 100, submit: 60 }, // 1080h
+  express_entry_pr:   { docs: 760, assemble: 160, review: 100, submit: 60 }, // 1080h
 };
 
 const HOUR_MS = 3_600_000;
