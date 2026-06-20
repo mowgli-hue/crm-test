@@ -47,6 +47,13 @@ function hrs(seconds: number): string {
   const m = Math.round(seconds / 60);
   return mins(m);
 }
+// Time-of-day in Pacific (the team's timezone), e.g. "9:34 AM".
+function clockPT(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "—";
+  return new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/Vancouver", hour: "numeric", minute: "2-digit" });
+}
 function timeAgo(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
   if (!Number.isFinite(ms)) return "";
@@ -64,6 +71,19 @@ export default function TeamActivity({ apiFetch }: { apiFetch: ApiFetch }) {
   const [recent, setRecent] = useState<Recent[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  // Click-a-name → that person's day (Pacific) history.
+  const [openStaff, setOpenStaff] = useState<string | null>(null);
+  const [day, setDay] = useState<any | null>(null);
+  const [dayLoading, setDayLoading] = useState(false);
+
+  const toggleDay = useCallback(async (staffId: string) => {
+    if (openStaff === staffId) { setOpenStaff(null); setDay(null); return; }
+    setOpenStaff(staffId); setDay(null); setDayLoading(true);
+    try {
+      const res = await apiFetch(`/admin/staff-day?staffId=${encodeURIComponent(staffId)}`);
+      if (res.ok) setDay(await res.json());
+    } catch { /* ignore */ } finally { setDayLoading(false); }
+  }, [apiFetch, openStaff]);
 
   const load = useCallback(async () => {
     try {
@@ -119,12 +139,16 @@ export default function TeamActivity({ apiFetch }: { apiFetch: ApiFetch }) {
       ) : (
         <div className="space-y-1.5">
           {members.map((m) => (
-            <div key={m.staffId} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${m.needsAttention ? "border-red-300 bg-red-50" : ROW[m.status]}`}>
+            <div key={m.staffId}>
+            <div className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${m.needsAttention ? "border-red-300 bg-red-50" : ROW[m.status]}`}>
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${m.needsAttention ? "bg-red-500" : DOT[m.status]}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-bold text-slate-800">{m.staffName}</span>
+                  <button onClick={() => toggleDay(m.staffId)} className="truncate text-left text-sm font-bold text-slate-800 hover:text-indigo-700 hover:underline" title="See today's history">
+                    {m.staffName}
+                  </button>
                   <span className="text-[10px] uppercase tracking-wide text-slate-400">{m.role}</span>
+                  <span className="text-[10px] text-indigo-400">{openStaff === m.staffId ? "▲" : "▾"}</span>
                 </div>
                 <p className="text-xs text-slate-500">
                   {m.status === "active" && (
@@ -146,6 +170,44 @@ export default function TeamActivity({ apiFetch }: { apiFetch: ApiFetch }) {
                 <p className="text-xs font-semibold tabular-nums text-slate-600">{hrs(m.todaySeconds)}</p>
                 <p className="text-[10px] text-slate-400">today</p>
               </div>
+            </div>
+
+            {/* Click-to-expand: this person's day (Pacific) */}
+            {openStaff === m.staffId && (
+              <div className="mt-1 ml-5 rounded-xl border border-indigo-100 bg-indigo-50/40 p-2.5">
+                {dayLoading ? (
+                  <p className="text-xs text-slate-400">Loading {m.staffName}'s day…</p>
+                ) : !day || (!day.sessions?.length && !day.active) ? (
+                  <p className="text-xs text-slate-400">No work logged today.</p>
+                ) : (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-500">
+                      {m.staffName}'s day · {hrs(day.totalSeconds || 0)} total
+                    </p>
+                    {day.active && (
+                      <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-2 py-1 text-xs">
+                        <span className="font-semibold text-emerald-700">▶ Now: {day.active.caseId}{day.active.client ? ` · ${day.active.client}` : ""}</span>
+                        <span className="text-[10px] text-emerald-600">since {clockPT(day.active.startedAt)}</span>
+                      </div>
+                    )}
+                    {(day.sessions || []).map((s: any, i: number) => (
+                      <div key={i} className="rounded-lg bg-white px-2 py-1 ring-1 ring-slate-100">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs font-semibold text-slate-700">{s.caseId}{s.client ? ` · ${s.client}` : ""}</span>
+                          <span className="shrink-0 text-[10px] text-slate-400">{clockPT(s.startedAt)}–{clockPT(s.endedAt)} · {hrs(s.durationSeconds)}</span>
+                        </div>
+                        {(s.outcome || s.note) && (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                            {s.outcome && <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{OUTCOME_LABEL[s.outcome] || s.outcome}</span>}
+                            {s.note && <span className="truncate text-[11px] italic text-slate-500">“{s.note}”</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             </div>
           ))}
         </div>

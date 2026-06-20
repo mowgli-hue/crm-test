@@ -18,6 +18,14 @@ import { getPool } from "@/lib/postgres-store";
 
 export const MAX_OPEN_HOURS = 4; // a single live session is capped at this
 
+// The team works on Pacific time (~9:30am–6:30pm, with overtime). The work "day"
+// must therefore reset at Pacific midnight — NOT the DB's UTC midnight, which
+// falls in the middle of the Pacific afternoon and rolled everyone's "today"
+// over mid-shift. This SQL fragment is the timestamptz of the most recent
+// Pacific midnight; every "today" boundary below uses it so the day restarts
+// when the team's day actually does.
+const PACIFIC_DAY_START = `(date_trunc('day', now() AT TIME ZONE 'America/Vancouver') AT TIME ZONE 'America/Vancouver')`;
+
 export type TimeSource = "live" | "manual" | "auto_closed";
 
 export interface TimeLogRow {
@@ -234,7 +242,7 @@ export async function myDayLog(staffId: string): Promise<TimeLogRow[]> {
   const pool = getPool();
   const r = await pool.query(
     `SELECT * FROM case_time_logs
-      WHERE staff_id = $1 AND ended_at IS NOT NULL AND started_at >= date_trunc('day', NOW())
+      WHERE staff_id = $1 AND ended_at IS NOT NULL AND started_at >= ${PACIFIC_DAY_START}
    ORDER BY started_at DESC`,
     [clean(staffId)]
   );
@@ -370,15 +378,18 @@ export async function teamActivity(
   const open = new Map<string, { caseId: string; startedAt: string }>();
   for (const r of openRes.rows as any[]) open.set(r.staff_id, { caseId: r.case_id, startedAt: r.started_at });
 
-  // Per-staff: last activity + today's total seconds.
+  // Per-staff: last activity + today's total seconds + whether they worked at
+  // all in the current Pacific day. Computing "worked today" in SQL (Pacific)
+  // avoids brittle JS timezone/DST math.
   const statRes = await pool.query(
     `SELECT staff_id,
             MAX(COALESCE(ended_at, started_at)) AS last_at,
-            COALESCE(SUM(CASE WHEN started_at >= date_trunc('day', NOW()) THEN duration_seconds ELSE 0 END), 0)::int AS today_seconds
+            COALESCE(SUM(CASE WHEN started_at >= ${PACIFIC_DAY_START} THEN duration_seconds ELSE 0 END), 0)::int AS today_seconds,
+            bool_or(COALESCE(ended_at, started_at) >= ${PACIFIC_DAY_START}) AS worked_today
        FROM case_time_logs GROUP BY staff_id`
   );
-  const stat = new Map<string, { lastAt: string; todaySeconds: number }>();
-  for (const r of statRes.rows as any[]) stat.set(r.staff_id, { lastAt: r.last_at, todaySeconds: r.today_seconds });
+  const stat = new Map<string, { lastAt: string; todaySeconds: number; workedToday: boolean }>();
+  for (const r of statRes.rows as any[]) stat.set(r.staff_id, { lastAt: r.last_at, todaySeconds: r.today_seconds, workedToday: !!r.worked_today });
 
   // Last reported outcome + note per staff (most recent closed session).
   const outRes = await pool.query(
@@ -389,14 +400,13 @@ export async function teamActivity(
   for (const r of outRes.rows as any[]) lastOut.set(r.staff_id, { caseId: r.case_id, outcome: r.outcome || "", note: r.note || "" });
 
   const now = Date.now();
-  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
 
   return staff.map((s) => {
     const o = open.get(s.id);
     const st = stat.get(s.id);
     const lo = lastOut.get(s.id);
     const lastAtMs = st?.lastAt ? Date.parse(st.lastAt) : 0;
-    const workedToday = lastAtMs >= startOfDay.getTime();
+    const workedToday = st?.workedToday ?? false; // Pacific-day flag from SQL
 
     let status: TeamActivityRow["status"];
     if (o) status = "active";

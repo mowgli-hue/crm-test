@@ -60,6 +60,23 @@ export async function POST(request: Request) {
     }
   }
 
+  // Authenticator-app path (MFA_PASSWORDLESS): staff log in with their email and
+  // the 6-digit code from their authenticator app IN PLACE of a password — one
+  // login in the morning, and the session lasts the Pacific day (set below).
+  // The owner's real password still works above, so nobody is ever locked out.
+  if (!user && String(process.env.MFA_PASSWORDLESS || "").toLowerCase() === "true") {
+    const candidate = await findActiveUserByEmail(email);
+    if (
+      candidate &&
+      candidate.mfaEnabled &&
+      String(candidate.mfaSecret || "").trim() &&
+      verifyTotp(String(candidate.mfaSecret), password, { window: 1 })
+    ) {
+      user = candidate;
+      codeUsed = true; // end-of-day session + skip the separate MFA step
+    }
+  }
+
   if (!user) {
     return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
   }
