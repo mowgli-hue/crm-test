@@ -97,7 +97,16 @@ export interface TeamSummary {
   submittedWindow: number;
   totalReworkFlags: number;
   medianLoad: number;
+  paidNotStarted: number;   // retainer paid, work not yet started (money waiting)
   bottleneck: string;
+}
+
+export interface PaidCase {
+  caseId: string;
+  client: string;
+  formType: string;
+  assignee: string;
+  daysWaiting: number;
 }
 
 export type RebalanceRule =
@@ -146,6 +155,7 @@ export interface OpsLeadData {
   rebalance: RebalanceMove[];
   atRiskCases: AtRiskCase[];        // open & slipping now (worst first)
   recentReassignments: ReassignEvent[]; // what the Ops Lead moved in the last 24h
+  paidNotStartedCases: PaidCase[];  // paid clients whose work hasn't started (longest-waiting first)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -323,11 +333,25 @@ export async function gatherOpsData(opts?: {
   let openCases = 0, unassignedCases = 0, atRiskOpen = 0, submittedWindow = 0, totalReworkFlags = 0;
   const openAtRiskUnassigned: CaseItem[] = [];
   const atRiskList: AtRiskCase[] = [];
+  const paidList: PaidCase[] = [];
 
   for (const c of cases) {
     const who = assigneeOf(c);
     const open = isOpenCase(c);
     const sla = slaFor(c, now);
+
+    // Paid retainer but work not started — surfaced separately (it's excluded
+    // from "active", but it's money waiting and must not be invisible).
+    if (lc((c as any).stage) === "paid") {
+      const createdMs = Date.parse((c as any).createdAt || "");
+      paidList.push({
+        caseId: c.id,
+        client: String((c as any).client || ""),
+        formType: String(c.formType || ""),
+        assignee: who || "Unassigned",
+        daysWaiting: Number.isNaN(createdMs) ? 0 : Math.max(0, Math.floor((now - createdMs) / 86_400_000)),
+      });
+    }
     const atRisk = sla.status === "breached" || sla.status === "due_soon";
 
     if (open) {
@@ -438,6 +462,7 @@ export async function gatherOpsData(opts?: {
     activeNow, idleNow, offlineNow,
     openCases, unassignedCases, atRiskOpen, submittedWindow, totalReworkFlags,
     medianLoad,
+    paidNotStarted: paidList.length,
     bottleneck,
   };
 
@@ -476,8 +501,11 @@ export async function gatherOpsData(opts?: {
     }
   } catch { /* audit table may not exist yet */ }
 
+  paidList.sort((a, b) => b.daysWaiting - a.daysWaiting);
+  const paidNotStartedCases = paidList.slice(0, 30);
+
   const windowLabel = `last ${windowDays} days`;
-  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments };
+  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments, paidNotStartedCases };
 }
 
 function pickBottleneck(args: { atRiskOpen: number; unassignedCases: number; totalReworkFlags: number; staff: StaffMetrics[]; openCases: number }): string {

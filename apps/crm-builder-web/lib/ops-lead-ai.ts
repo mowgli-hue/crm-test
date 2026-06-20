@@ -142,6 +142,7 @@ function buildPrompt(data: OpsLeadData): string {
     `TEAM SUMMARY: ${JSON.stringify(data.team)}`,
     `STAFF: ${JSON.stringify(rows)}`,
     `AT-RISK CASES NOW (worst first): ${JSON.stringify(data.atRiskCases.map((c) => ({ case: c.caseId, client: c.client, type: c.formType, owner: c.assignee, sla: c.slaLabel })))}`,
+    `PAID BUT NOT STARTED (clients who paid, work hasn't begun — money waiting; longest first): ${JSON.stringify(data.paidNotStartedCases.map((c) => ({ case: c.caseId, client: c.client, type: c.formType, daysWaiting: c.daysWaiting })))}`,
     `PLANNED REBALANCE MOVES (about to happen): ${JSON.stringify(data.rebalance.map((m) => ({ case: m.caseId, from: m.fromName, to: m.toName, why: m.reason })))}`,
     `ALREADY REASSIGNED IN LAST 24H (you did these): ${JSON.stringify(data.recentReassignments.map((m) => ({ case: m.caseId, from: m.from, to: m.to })))}`,
     ``,

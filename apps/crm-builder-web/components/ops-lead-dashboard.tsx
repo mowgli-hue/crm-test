@@ -34,8 +34,9 @@ interface StaffMetrics {
 interface TeamSummary {
   staffCount: number; prepStaff: number; activeNow: number; idleNow: number; offlineNow: number;
   openCases: number; unassignedCases: number; atRiskOpen: number; submittedWindow: number;
-  totalReworkFlags: number; medianLoad: number; bottleneck: string;
+  totalReworkFlags: number; medianLoad: number; paidNotStarted: number; bottleneck: string;
 }
+interface PaidCase { caseId: string; client: string; formType: string; assignee: string; daysWaiting: number; }
 interface RebalanceMove {
   caseId: string; client: string; formType: string; fromName: string; toName: string;
   rule: string; reason: string; slaStatus: string;
@@ -45,7 +46,7 @@ interface StaffVerdict {
   headline: string; fix: string; rampRead?: string;
 }
 interface Payload {
-  data: { generatedAt: string; windowLabel: string; team: TeamSummary; staff: StaffMetrics[]; rebalance: RebalanceMove[] };
+  data: { generatedAt: string; windowLabel: string; team: TeamSummary; staff: StaffMetrics[]; rebalance: RebalanceMove[]; paidNotStartedCases?: PaidCase[] };
   judgment: { brief: string; verdicts: StaffVerdict[]; aiUsed: boolean; model: string };
 }
 
@@ -133,12 +134,13 @@ export default function OpsLeadDashboard({ apiFetch }: { apiFetch: ApiFetch }) {
         </div>
 
         {/* Team stat strip */}
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
           <Stat label="Active now" value={`${data.team.activeNow}`} sub={`${data.team.idleNow} idle · ${data.team.offlineNow} off`} />
           <Stat label="Open cases" value={`${data.team.openCases}`} sub={`${data.team.unassignedCases} unassigned`} />
           <Stat label="At risk" value={`${data.team.atRiskOpen}`} tone={data.team.atRiskOpen > 0 ? "warn" : "ok"} sub="open & slipping" />
           <Stat label="Submitted" value={`${data.team.submittedWindow}`} sub={data.windowLabel} />
           <Stat label="Rework flags" value={`${data.team.totalReworkFlags}`} tone={data.team.totalReworkFlags > 0 ? "warn" : "ok"} sub="reviewer changes" />
+          <Stat label="Paid · not started" value={`${data.team.paidNotStarted ?? 0}`} tone={(data.team.paidNotStarted ?? 0) > 0 ? "warn" : "ok"} sub="money waiting" />
           <Stat label="Median load" value={`${data.team.medianLoad}`} sub="cases/person" />
         </div>
       </div>
@@ -198,6 +200,24 @@ export default function OpsLeadDashboard({ apiFetch }: { apiFetch: ApiFetch }) {
           </div>
         )}
       </div>
+
+      {/* Paid but not started — money waiting */}
+      {(p.data.paidNotStartedCases?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+          <h3 className="text-sm font-bold text-slate-900">💸 Paid — work not started ({p.data.paidNotStartedCases!.length})</h3>
+          <p className="text-xs text-slate-500">Clients who paid but whose case hasn't begun. Assign and start these — it's revenue already in the door.</p>
+          <div className="mt-2 space-y-1">
+            {p.data.paidNotStartedCases!.slice(0, 12).map((c) => (
+              <div key={c.caseId} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-100 bg-white px-3 py-1.5 text-xs">
+                <span className="font-mono text-slate-400">{c.caseId}</span>
+                <span className="font-semibold text-slate-700">{c.client || "—"}</span>
+                <span className="text-slate-400">{c.formType}</span>
+                <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">{c.daysWaiting}d waiting</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* New-hire ramp reads */}
       {newHires.length > 0 && (
