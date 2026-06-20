@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { applySessionCookie } from "@/lib/auth";
-import { addAuditLog, createSessionWithContext, findCompanyById, findUserByCredentials } from "@/lib/store";
+import { addAuditLog, createSessionWithContext, findCompanyById, findUserByCredentials, findActiveUserByEmail } from "@/lib/store";
 import { createPreAuthToken, verifyTotp } from "@/lib/mfa";
 import { clearAuthRateLimit, consumeAuthRateLimit } from "@/lib/auth-rate-limit";
 import { isValidEmail, normalizeEmail } from "@/lib/validation";
+import { dailyCodeLoginEnabled, verifyTodayCode, endOfPacificDayISO } from "@/lib/daily-code";
 
 export async function POST(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for") || "";
@@ -42,7 +43,23 @@ export async function POST(request: Request) {
     // Keep authentication available even if rate-limit persistence is unavailable.
   }
 
-  const user = await findUserByCredentials(email, password);
+  // Primary path: email + password (unchanged).
+  let user = await findUserByCredentials(email, password);
+
+  // Daily-code path (only when DAILY_CODE_LOGIN=true): if the password didn't
+  // match, accept today's shared office code in its place. The user is still
+  // identified by their own email, so per-user identity is preserved. The
+  // owner's real password always works above, so a missed/late code email can
+  // never lock the office out.
+  let codeUsed = false;
+  if (!user && dailyCodeLoginEnabled()) {
+    const candidate = await findActiveUserByEmail(email);
+    if (candidate && (await verifyTodayCode(password))) {
+      user = candidate;
+      codeUsed = true;
+    }
+  }
+
   if (!user) {
     return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
   }
@@ -51,7 +68,9 @@ export async function POST(request: Request) {
     String(process.env.FORCE_STAFF_MFA || (process.env.NODE_ENV === "production" ? "true" : "false")).toLowerCase() ===
     "true";
   const isStaff = user.userType === "staff";
-  if (isStaff && forceStaffMfa) {
+  // When the daily office code was used, it IS the access control for the day —
+  // don't additionally demand a TOTP code.
+  if (isStaff && forceStaffMfa && !codeUsed) {
     if (!user.mfaEnabled || !String(user.mfaSecret || "").trim()) {
       const preAuthToken = createPreAuthToken({
         userId: user.id,
@@ -104,7 +123,13 @@ export async function POST(request: Request) {
     }
   }
 
-  const session = await createSessionWithContext(user, { ipAddress, userAgent });
+  // Daily-code logins expire at the end of the Pacific day, so a fresh code is
+  // required tomorrow. Password logins keep the normal rolling session.
+  const session = await createSessionWithContext(user, {
+    ipAddress,
+    userAgent,
+    expiresAt: codeUsed ? endOfPacificDayISO() : undefined,
+  });
   try {
     await clearAuthRateLimit(limiterKey);
   } catch {
@@ -134,6 +159,7 @@ export async function POST(request: Request) {
       metadata: {
         email: user.email,
         userType: user.userType,
+        method: codeUsed ? "daily_code" : "password",
         ipAddress: ipAddress || "unknown"
       }
     });

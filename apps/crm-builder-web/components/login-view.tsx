@@ -134,7 +134,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
           </label>
 
           <label className="block text-sm">
-            <span className="text-xs font-medium text-slate-600">Password</span>
+            <span className="text-xs font-medium text-slate-600">Password or today's access code</span>
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -142,6 +142,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
               type="password"
               required
             />
+            <span className="mt-1 block text-[11px] text-slate-400">Staff: enter today's office access code. Sign in with your own email so your work is tracked to you.</span>
           </label>
 
           {error ? <p className="text-xs text-danger">{error}</p> : null}

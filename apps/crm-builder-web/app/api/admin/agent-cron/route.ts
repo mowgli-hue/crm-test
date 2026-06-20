@@ -18,6 +18,7 @@ import { getCurrentUserFromRequest } from "@/lib/auth";
 import { sendEmail, isEmailConfigured } from "@/lib/email";
 import { gatherOpsData } from "@/lib/ops-lead";
 import { aiJudgment } from "@/lib/ops-lead-ai";
+import { dailyCodeLoginEnabled, getOrCreateTodayCode } from "@/lib/daily-code";
 
 export const runtime = "nodejs";
 
@@ -103,11 +104,19 @@ async function run(request: NextRequest) {
     .filter((x: any) => x.read);
   const moved: any[] = rebalanced?.applied || [];
 
+  // Today's shared office access code (only when daily-code login is enabled) —
+  // put it at the top of the briefing so the owner has it each morning to share.
+  let accessCode: { dayKey: string; code: string } | null = null;
+  if (dailyCodeLoginEnabled()) {
+    try { accessCode = await getOrCreateTodayCode(); } catch (e) { console.error("[agent-cron] daily code failed:", (e as Error).message); }
+  }
+
   const subjectLine = `Newton — Operations Lead briefing (${new Date().toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })})`;
 
   // Plain-text version (always sent alongside HTML).
   const textParts: string[] = [];
   textParts.push(`OPERATIONS LEAD — ${dateLabel}`, "");
+  if (accessCode) textParts.push(`TODAY'S OFFICE ACCESS CODE: ${accessCode.code} (share with the team)`, "");
   if (briefLines.length) textParts.push(...briefLines, "");
   if (moved.length) { textParts.push("WHAT I MOVED WHILE YOU WERE AWAY:"); moved.forEach((m) => textParts.push(`  • ${m.caseId}: ${m.from} → ${m.to}`)); textParts.push(""); }
   if (needAttention.length) { textParts.push("COACH / WATCH:"); needAttention.forEach((v) => textParts.push(`  • ${v.name} (${v.ratingLabel}): ${v.fix}`)); textParts.push(""); }
@@ -128,10 +137,17 @@ async function run(request: NextRequest) {
   const strongHtml = strong.length ? `<div>${strong.map((v) => chip(v.name, "#dcfce7", "#166534")).join(" ")}</div>` : "";
   const newHireHtml = newHireReads.length ? newHireReads.map((x: any) => `<div style="margin:4px 0"><b>${esc(x.name)}</b> — ${esc(x.read)}</div>`).join("") : "";
 
+  const accessCodeHtml = accessCode
+    ? `<div style="margin:12px 0;background:#0f172a;border-radius:12px;padding:12px 16px;color:#fff;display:flex;align-items:center;justify-content:space-between">` +
+      `<span style="font-size:12px;color:#cbd5e1">🔑 Today's office access code (share with the team)</span>` +
+      `<span style="font-size:26px;font-weight:bold;letter-spacing:4px">${esc(accessCode.code)}</span></div>`
+    : "";
+
   const html =
     `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.5;max-width:680px">` +
     `<div style="font-size:18px;font-weight:bold;color:#0B2F5C">🧭 Your Operations Lead</div>` +
     `<div style="color:#888;font-size:12px;margin-bottom:10px">${dateLabel}${judgment?.aiUsed ? ` · ${esc(judgment.model)}` : ""}</div>` +
+    accessCodeHtml +
     briefHtml +
     section("What I moved while you were away", movedHtml) +
     section("Coach / watch today", attnHtml) +

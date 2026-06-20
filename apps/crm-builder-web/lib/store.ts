@@ -525,6 +525,16 @@ export async function findUserByCredentials(email: string, password: string): Pr
   return found ?? null;
 }
 
+// Identify an active user by email WITHOUT checking a password — used by the
+// daily-code login path, where the shared office code (not the password) is the
+// secret. The code is verified separately; this only resolves who is logging in
+// so per-user identity (RBAC, time tracking, scorecards) is preserved.
+export async function findActiveUserByEmail(email: string): Promise<AppUser | null> {
+  const store = await readStore();
+  const normalized = email.toLowerCase().trim();
+  return store.users.find((u) => u.email.toLowerCase() === normalized && u.active !== false) ?? null;
+}
+
 export async function createCompanyWithAdmin(input: {
   companyName: string;
   adminName: string;
@@ -594,10 +604,12 @@ function deriveIpSubnet(ip: string): string {
 
 export async function createSessionWithContext(
   user: AppUser,
-  context?: { ipAddress?: string; userAgent?: string }
+  context?: { ipAddress?: string; userAgent?: string; expiresAt?: string }
 ): Promise<Session> {
   const store = await readStore();
-  const expiresAt = new Date(Date.now() + 1000 * SESSION_MAX_AGE_SECONDS).toISOString();
+  // Daily-code logins pass an end-of-day expiry so access lapses overnight and
+  // a fresh code is needed tomorrow; otherwise the normal rolling max-age.
+  const expiresAt = String(context?.expiresAt || "").trim() || new Date(Date.now() + 1000 * SESSION_MAX_AGE_SECONDS).toISOString();
   const ipAddress = String(context?.ipAddress || "").trim() || undefined;
   const userAgent = String(context?.userAgent || "").slice(0, 500) || undefined;
   const session: Session = {

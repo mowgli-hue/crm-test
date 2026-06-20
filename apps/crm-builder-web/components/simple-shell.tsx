@@ -11,6 +11,7 @@ import PerformanceDashboard from "@/components/performance-dashboard";
 import TeamTimeOverview from "@/components/team-time-overview";
 import TeamActivity from "@/components/team-activity";
 import OpsLeadDashboard from "@/components/ops-lead-dashboard";
+import DailyCodeCard from "@/components/daily-code-card";
 import MyDay from "@/components/my-day";
 import TeamAtRisk from "@/components/team-at-risk";
 import ReviewQueue from "@/components/review-queue";
@@ -11790,6 +11791,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 <h2 className="text-lg font-bold text-slate-900">👥 Team</h2>
                 <p className="mt-0.5 text-xs text-slate-500">View team members, their cases, and leave notes.</p>
               </div>
+
+              {/* Today's shared office access code (Admin only; self-hides) */}
+              {(sessionUser?.role === "Admin") && <DailyCodeCard apiFetch={apiFetch} />}
 
               {/* AI Operations Lead — management brain: scorecards, new-hire reads,
                   daily leadership brief, and auto work-distribution (Admin only) */}
