@@ -2125,9 +2125,15 @@ export async function updateUserRole(args: {
   const allowed: Role[] = ["Admin", "Marketing", "Processing", "ProcessingLead", "Reviewer"];
   if (!allowed.includes(args.newRole)) return null;
   return mutateStore((store) => {
-    const idx = store.users.findIndex(
+    let idx = store.users.findIndex(
       (u) => u.companyId === args.companyId && u.id === args.userId && u.userType === "staff"
     );
+    // Single-firm deployment: staff accounts can drift across company ids
+    // ("CMP-1" vs "newton"), which made role changes fail for the drifted ones.
+    // Fall back to a stable id match so the update always lands.
+    if (idx === -1) {
+      idx = store.users.findIndex((u) => u.id === args.userId && u.userType === "staff");
+    }
     if (idx === -1) return null;
     store.users[idx] = { ...store.users[idx], role: args.newRole };
     return store.users[idx];

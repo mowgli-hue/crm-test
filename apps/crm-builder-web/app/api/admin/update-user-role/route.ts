@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { updateUserRole } from "@/lib/store";
+import type { Role } from "@/lib/models";
 
 const ROLES = ["Admin", "Marketing", "Processing", "ProcessingLead", "Reviewer"];
 
@@ -29,7 +30,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "You can't change your own role away from Admin (ask another admin)." }, { status: 400 });
   }
 
-  const updated = await updateUserRole({ companyId: user.companyId, userId, role: role as any });
+  // BUGFIX: this previously passed `role`, but updateUserRole reads `newRole`,
+  // so the value arrived undefined and every role change silently failed with
+  // "user not found". Pass the correct key.
+  const updated = await updateUserRole({ companyId: user.companyId, userId, newRole: role as Role });
   if (!updated) return NextResponse.json({ error: "User not found." }, { status: 404 });
   return NextResponse.json({ ok: true, user: { id: updated.id, name: updated.name, role: updated.role } });
 }
