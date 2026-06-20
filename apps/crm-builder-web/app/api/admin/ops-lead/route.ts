@@ -29,7 +29,9 @@ export async function GET(request: NextRequest) {
   const idleThresholdMin = Math.min(Math.max(Number(url.searchParams.get("idle")) || 30, 5), 240);
 
   try {
-    const data = await gatherOpsData({ windowDays, idleThresholdMin });
+    // Scope to the admin's company so the AI's case counts match the dashboard
+    // / Cases tab the same person sees.
+    const data = await gatherOpsData({ windowDays, idleThresholdMin, companyId: user.companyId });
     const judgment = await aiJudgment(data);
     return NextResponse.json({ ok: true, data, judgment });
   } catch (e) {

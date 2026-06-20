@@ -175,17 +175,36 @@ function slaFor(c: CaseItem, now: number) {
 
 // ── main gather ──────────────────────────────────────────────────────
 
+// The company id that owns the most cases — the firm's primary company. Used to
+// scope the Ops Lead to the SAME case set the dashboard / Cases tab show, so the
+// AI's counts match what the team sees (instead of summing across drifted/legacy
+// company ids).
+function primaryCompanyId(cases: CaseItem[]): string {
+  const counts = new Map<string, number>();
+  for (const c of cases) {
+    const id = String((c as any).companyId || "");
+    if (id) counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  let best = "", bestN = -1;
+  for (const [id, n] of counts) if (n > bestN) { best = id; bestN = n; }
+  return best;
+}
+
 export async function gatherOpsData(opts?: {
   windowDays?: number;
   idleThresholdMin?: number;
   now?: number;
+  companyId?: string;
 }): Promise<OpsLeadData> {
   const windowDays = opts?.windowDays ?? 30;
   const idleThresholdMin = opts?.idleThresholdMin ?? 30;
   const now = opts?.now ?? Date.now();
   const sinceISO = new Date(now - windowDays * 86_400_000).toISOString();
 
-  const [staffAll, cases] = await Promise.all([listAllStaff(), listAllCases()]);
+  const [staffAll, allCases] = await Promise.all([listAllStaff(), listAllCases()]);
+  // Scope to one company so "open cases" matches the dashboard's "active cases".
+  const companyId = String(opts?.companyId || "").trim() || primaryCompanyId(allCases);
+  const cases = companyId ? allCases.filter((c) => String((c as any).companyId || "") === companyId) : allCases;
 
   // ── Operating roster from the team-config (not the crude CRM access role) ──
   // A person is in scope if their operating profile is active and they prep or
