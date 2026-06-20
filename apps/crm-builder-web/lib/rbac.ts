@@ -28,17 +28,20 @@ const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Admin sees everything
   Admin: ["dashboard", "admin-dashboard", "agent", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
 
-  // Marketing creates cases, tracks leads, logs calls
-  Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "newton-ai"],
+  // Marketing = the office-management circle (Manpreet, Neha). They run leads,
+  // and per Newton policy also see Team, Settings, and Accounting alongside the
+  // owner. Everyone below this is rank-and-file processing/review staff and does
+  // NOT see those management screens.
+  Marketing: ["dashboard", "cases", "communications", "tasks", "inbox", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "accounting", "newton-ai"],
 
-  // Processing works cases assigned to them — no need to create cases or see accounting
-  Processing: ["dashboard", "cases", "submission", "tasks", "inbox", "web-forms", "team", "newton-ai"],
+  // Processing works only cases assigned to them — no team list, no settings, no accounting.
+  Processing: ["dashboard", "cases", "submission", "tasks", "inbox", "web-forms", "newton-ai"],
 
-  // Processing Lead can also see results and reassign
-  ProcessingLead: ["dashboard", "agent", "cases", "results", "submission", "tasks", "inbox", "web-forms", "team", "settings", "newton-ai"],
+  // Processing Lead can also see results and reassign — but not the management screens.
+  ProcessingLead: ["dashboard", "agent", "cases", "results", "submission", "tasks", "inbox", "web-forms", "newton-ai"],
 
-  // Reviewer reviews cases — needs to see under-review cases, what's being submitted, and results
-  Reviewer: ["dashboard", "cases", "submission", "results", "tasks", "inbox", "team", "newton-ai"],
+  // Reviewer reviews cases — under-review queue, submissions, results. No management screens.
+  Reviewer: ["dashboard", "cases", "submission", "results", "tasks", "inbox", "newton-ai"],
 };
 
 function normalizeRole(role: Role | string): Role {
@@ -73,7 +76,9 @@ export function canCreateCase(role: Role): boolean {
 
 export function canUseAccounting(role: Role): boolean {
   const r = normalizeRole(role);
-  return r === "Admin";
+  // Owner (Admin) + office-management (Marketing: Manpreet, Neha). Rank-and-file
+  // processing/review staff never see accounting.
+  return r === "Admin" || r === "Marketing";
 }
 
 export function canUseCommunications(role: Role): boolean {

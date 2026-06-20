@@ -1612,6 +1612,16 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     [sessionUser?.role, sessionUser?.userType]
   );
   const visibleTabs = useMemo(() => tabs.filter((t) => allowedTabs.includes(t.id)), [allowedTabs]);
+  // Defense-in-depth: hiding the nav button isn't enough — if a user's current
+  // screen isn't permitted for their role (e.g. they deep-linked or kept it from
+  // a prior session), bounce them to a screen they ARE allowed to see. The
+  // sensitive DATA (accounting, user management) is also gated server-side.
+  useEffect(() => {
+    if (sessionUser?.userType !== "staff" || allowedTabs.length === 0) return;
+    if (!allowedTabs.includes(screen as AppScreen)) {
+      setScreen((allowedTabs.includes("dashboard" as AppScreen) ? "dashboard" : allowedTabs[0]) as typeof screen);
+    }
+  }, [screen, allowedTabs, sessionUser?.userType]);
   const taskAssigneeOptions = useMemo(() => {
     const names = new Set<string>();
     teamUsers
