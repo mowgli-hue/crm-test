@@ -1244,14 +1244,23 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
   const visibleCases = useMemo(() => {
     const byRole = filterCasesByRole(cases, viewRole, sessionUser?.name);
     const q = caseSearch.trim().toLowerCase();
-    // Exclude submitted cases from main view — they live in Submission tab
+    // Exclude submitted cases from main view — they live in Submission tab.
+    // A case counts as SUBMITTED (and leaves the active board) if ANY of these
+    // are true — not just processingStatus — because a case can have a submitted
+    // date / Submitted stage while its processingStatus drifts back, which made
+    // submitted files leak into the active list.
     const isProcessingCase = (c: CaseItem) => !NON_PROCESSING_APPLICATION_TYPES.has(c.formType);
+    const isSubmitted = (c: CaseItem) =>
+      c.processingStatus === "submitted" ||
+      c.stage === "Submitted" ||
+      c.stage === "Decision" ||
+      Boolean((c as any).submittedAt);
     const byStatus =
       caseStatusFilter === "all"
-        ? byRole.filter(c => c.processingStatus !== "submitted" && isProcessingCase(c))
+        ? byRole.filter(c => !isSubmitted(c) && isProcessingCase(c))
         : caseStatusFilter === "submitted"
-          ? byRole.filter(c => c.processingStatus === "submitted" && isProcessingCase(c))
-          : byRole.filter((c) => (c.processingStatus || "docs_pending") === caseStatusFilter && isProcessingCase(c));
+          ? byRole.filter(c => isSubmitted(c) && isProcessingCase(c))
+          : byRole.filter((c) => !isSubmitted(c) && (c.processingStatus || "docs_pending") === caseStatusFilter && isProcessingCase(c));
     if (!q) return byStatus;
     return byStatus.filter((c) => {
       const candidate = `${c.id} ${c.client} ${c.formType} ${c.assignedTo || ""} ${c.processingStatus || ""} ${c.processingStatusOther || ""}`.toLowerCase();
