@@ -89,6 +89,9 @@ export async function GET(request: NextRequest) {
         type: String(c.formType || ""),
         status: String(c.processingStatus || "docs_pending"),
         reviewStatus: String(c.reviewStatus || ""),
+        // When the reviewer last sent it back — used to show "waiting Xh" on the
+        // changes-needed nudge. updatedAt is set when reviewStatus flips.
+        changesSince: String(c.reviewStatus || "").toLowerCase() === "changes_needed" ? String((c as any).updatedAt || (c as any).createdAt || "") : "",
         ageDays: Math.round(ageDays(c)),
         ready: s.ready,
         deadlineDays: s.deadlineDays,

@@ -20,6 +20,7 @@ type NextAction = { key: string; step: string; owner: string; how: string };
 type DayCase = {
   caseId: string; client: string; type: string; status: string;
   reviewStatus: string; ageDays: number; reason: string;
+  changesSince?: string;
   completionPct?: number; daysInSystem?: number;
   sla?: Sla; nextAction?: NextAction;
 };
@@ -36,6 +37,14 @@ function fmtDuration(totalSeconds: number): string {
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
   return `${sec}s`;
+}
+
+// How long a changes-needed case has been waiting (since the reviewer sent it back).
+function fmtWaited(ms: number): string {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), d = Math.floor(h / 24);
+  return d > 0 ? `${d}d ${h % 24}h` : `${h}h ${m % 60}m`;
 }
 
 // Live SLA countdown from a due-by ISO. Negative = overdue.
@@ -195,6 +204,31 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         <h2 className="text-lg font-bold text-slate-900">My day</h2>
         <button onClick={() => { setLoading(true); load(); }} className="text-xs font-semibold text-slate-500 hover:text-slate-700">Refresh</button>
       </div>
+
+      {/* ── CHANGES NEEDED — fix & resubmit these FIRST (top priority) ── */}
+      {!loading && cases.some((c) => c.reviewStatus === "changes_needed") && (
+        <div className="rounded-xl border-2 border-red-400 bg-red-50 px-3 py-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-red-700">⚠️ Changes needed — do these first, then submit</p>
+          <div className="mt-2 space-y-1.5">
+            {cases.filter((c) => c.reviewStatus === "changes_needed").map((c) => {
+              const ms = c.changesSince ? now - Date.parse(c.changesSince) : 0;
+              const waited = c.changesSince && Number.isFinite(ms) && ms > 0 ? fmtWaited(ms) : "";
+              return (
+                <div key={c.caseId} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-red-100">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-900">{c.caseId} · {c.client || "—"}</p>
+                    <p className="text-[11px] font-semibold text-red-700">
+                      {c.type} · reviewer sent it back{waited ? ` · ⏱ waiting ${waited}` : ""}
+                    </p>
+                  </div>
+                  <button onClick={() => onOpenCase?.(c.caseId)}
+                    className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700">Fix &amp; submit →</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── WORK NOW — the strict punch-in directive ── */}
       {!loading && workNow && (
