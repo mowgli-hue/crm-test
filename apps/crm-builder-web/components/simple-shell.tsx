@@ -13,6 +13,7 @@ import TeamActivity from "@/components/team-activity";
 import OpsLeadDashboard from "@/components/ops-lead-dashboard";
 import DailyCodeCard from "@/components/daily-code-card";
 import MyDay from "@/components/my-day";
+import MyPerformance from "@/components/my-performance";
 import TeamAtRisk from "@/components/team-at-risk";
 import ReviewQueue from "@/components/review-queue";
 import TeamPerformanceReview from "@/components/team-performance-review";
@@ -5475,6 +5476,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
                     {/* My Day — your applications, prioritized, with check-in (all staff, RBAC-scoped) */}
                     <MyDay apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />
+
+                    {/* My performance — personal day-by-day calendar (everyone sees their own) */}
+                    <MyPerformance apiFetch={apiFetch} />
 
                     {/* Reviewer's prioritized "to review" queue (self-hides for non-reviewers) */}
                     <ReviewQueue apiFetch={apiFetch} onOpenCase={(id) => { setSelectedCaseId(id); setScreen("cases"); }} />
