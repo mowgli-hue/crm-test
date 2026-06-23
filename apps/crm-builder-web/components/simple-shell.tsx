@@ -5604,7 +5604,11 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                             <div className="mt-3 space-y-2">
                               {underReviewCases.map((c) => (
                                 <button key={c.id} onClick={() => { setSelectedCaseId(c.id); setScreen("cases"); }}
-                                  className="w-full rounded-xl border-2 border-amber-300 bg-white p-3 text-left hover:bg-amber-50">
+                                  className={`w-full rounded-xl border-2 p-3 text-left ${
+                                    (c as any).reviewStatus === "changes_needed" ? "border-red-400 bg-red-50 hover:bg-red-100"
+                                      : (c as any).reviewStatus === "changes_done" ? "border-emerald-400 bg-emerald-50 hover:bg-emerald-100"
+                                      : "border-amber-300 bg-white hover:bg-amber-50"
+                                  }`}>
                                   <div className="flex items-center justify-between">
                                     <div>
                                       <p className="text-sm font-semibold text-slate-900">{c.client}</p>
@@ -6957,9 +6961,13 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                   <button
                     key={c.id}
                     onClick={() => setSelectedCaseId(c.id)}
-                    className={`w-full rounded-xl border p-4 text-left transition-all hover:shadow-sm ${
+                    className={`w-full rounded-xl border-2 p-4 text-left transition-all hover:shadow-sm ${
                       selectedCase?.id === c.id
                         ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                        : (c as any).reviewStatus === "changes_needed"
+                        ? "border-red-400 bg-red-50 hover:border-red-500"
+                        : (c as any).reviewStatus === "changes_done"
+                        ? "border-emerald-400 bg-emerald-50 hover:border-emerald-500"
                         : isUrgentCase(c)
                         ? "border-red-200 bg-red-50 hover:border-red-300"
                         : "border-slate-200 bg-white hover:border-slate-300"
@@ -6968,7 +6976,10 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                          selectedCase?.id === c.id ? "bg-white text-slate-900" : isUrgentCase(c) ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"
+                          selectedCase?.id === c.id ? "bg-white text-slate-900"
+                            : (c as any).reviewStatus === "changes_needed" ? "bg-red-200 text-red-800"
+                            : (c as any).reviewStatus === "changes_done" ? "bg-emerald-200 text-emerald-800"
+                            : isUrgentCase(c) ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"
                         }`}>
                           {(c.client||"?").charAt(0).toUpperCase()}
                         </div>
