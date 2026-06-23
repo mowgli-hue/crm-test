@@ -193,6 +193,26 @@ export async function getOrCreateDriveSubfolder(parentFolderId: string, folderNa
   return createDriveSubfolder(parentFolderId, folderName);
 }
 
+// Find an existing subfolder by name WITHOUT creating it (read-only). Returns
+// null if it doesn't exist yet.
+export async function findExistingSubfolder(parentFolderId: string, folderName: string): Promise<DriveFolderResult | null> {
+  return findDriveSubfolderByName(parentFolderId, folderName);
+}
+
+// List files in a Drive folder, newest first. Used to show saved rep-letter
+// versions inside the CRM.
+export async function listDriveFolderFiles(folderId: string): Promise<Array<{ id: string; name: string; webViewLink?: string; createdTime?: string }>> {
+  const accessToken = await getDriveAccessToken();
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&supportsAllDrives=true&includeItemsFromAllDrives=true&orderBy=createdTime desc&pageSize=100&fields=files(id,name,webViewLink,createdTime)`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) throw new Error(`Drive list failed: ${res.status}`);
+  const data = (await res.json()) as { files?: Array<{ id: string; name: string; webViewLink?: string; createdTime?: string }> };
+  return data.files || [];
+}
+
 // ── SERIALIZED per case folder ──
 // A client's burst of document uploads fired this concurrently for the SAME
 // case. Because getOrCreateDriveSubfolder is check-then-create, each concurrent

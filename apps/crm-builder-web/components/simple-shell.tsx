@@ -7869,6 +7869,8 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                   style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;box-sizing:border-box;resize:vertical;">${existingNotes}</textarea>
                                 <p id="__rep_letter_count__" style="margin:4px 0 0;font-size:10px;color:#94a3b8;">${existingNotes.length} characters · AI drafts a tailored letter for this application type — the more detail you give, the stronger it is. Missing facts become [bracketed placeholders] to fill in.</p>
 
+                                <div id="__rep_letter_versions__" style="margin-top:10px;"></div>
+
                                 <div style="margin-top:12px;">
                                   <label style="display:block;font-size:11px;font-weight:600;color:#334155;margin-bottom:4px;">Client pronouns</label>
                                   <div id="__rep_letter_pronouns__" style="display:flex;gap:8px;">
@@ -7892,6 +7894,25 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                               </div>
                             `;
                             document.body.appendChild(modal);
+
+                            // ── Load previously-saved versions of this letter (from Drive) ──
+                            (async () => {
+                              const box = document.getElementById("__rep_letter_versions__");
+                              if (!box || !caseId) return;
+                              try {
+                                const res = await apiFetch(`/cases/${caseId}/rep-letter/versions`);
+                                const d = await res?.json().catch(() => ({}));
+                                const versions: Array<{ name: string; link: string; createdTime: string }> = d?.versions || [];
+                                if (!versions.length) return;
+                                const fmt = (iso: string) => { const t = Date.parse(iso); return Number.isFinite(t) ? new Date(t).toLocaleString("en-CA", { timeZone: "America/Vancouver", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; };
+                                box.innerHTML =
+                                  `<details style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#f8fafc;">` +
+                                  `<summary style="cursor:pointer;font-size:11px;font-weight:700;color:#0B2F5C;">📑 Previous versions (${versions.length}) — saved each time a letter is generated</summary>` +
+                                  `<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">` +
+                                  versions.map((v) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;"><span style="color:#475569;">${fmt(v.createdTime)}</span>${v.link ? `<a href="${v.link}" target="_blank" rel="noopener" style="color:#2563eb;font-weight:600;text-decoration:none;">Open PDF ↗</a>` : `<span style="color:#94a3b8;">${v.name}</span>`}</div>`).join("") +
+                                  `</div></details>`;
+                              } catch { /* ignore — versions are a nicety */ }
+                            })();
 
                             // Wire up event handlers
                             let selectedPronoun = "they";
