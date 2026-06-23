@@ -109,6 +109,14 @@ export interface PaidCase {
   daysWaiting: number;
 }
 
+export interface ReworkStuckCase {
+  caseId: string;
+  client: string;
+  formType: string;
+  owner: string;       // who has to fix it
+  daysStuck: number;   // how long since the reviewer sent it back
+}
+
 export type RebalanceRule =
   | "departed"
   | "orphaned_inactive"
@@ -156,6 +164,7 @@ export interface OpsLeadData {
   atRiskCases: AtRiskCase[];        // open & slipping now (worst first)
   recentReassignments: ReassignEvent[]; // what the Ops Lead moved in the last 24h
   paidNotStartedCases: PaidCase[];  // paid clients whose work hasn't started (longest-waiting first)
+  reworkStuckCases: ReworkStuckCase[]; // sent back by review, not yet refixed (longest-stuck first)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -334,11 +343,25 @@ export async function gatherOpsData(opts?: {
   const openAtRiskUnassigned: CaseItem[] = [];
   const atRiskList: AtRiskCase[] = [];
   const paidList: PaidCase[] = [];
+  const reworkList: ReworkStuckCase[] = [];
 
   for (const c of cases) {
     const who = assigneeOf(c);
     const open = isOpenCase(c);
     const sla = slaFor(c, now);
+
+    // Sent back by review and not yet refixed — the rework bottleneck. Tracked
+    // separately so the manager sees who's sitting on changes and for how long.
+    if (open && lc((c as any).reviewStatus) === "changes_needed") {
+      const upMs = Date.parse((c as any).updatedAt || "");
+      reworkList.push({
+        caseId: c.id,
+        client: String((c as any).client || ""),
+        formType: String(c.formType || ""),
+        owner: who || "Unassigned",
+        daysStuck: Number.isNaN(upMs) ? 0 : Math.max(0, Math.floor((now - upMs) / 86_400_000)),
+      });
+    }
 
     // Paid retainer but work not started — surfaced separately (it's excluded
     // from "active", but it's money waiting and must not be invisible).
@@ -427,7 +450,10 @@ export async function gatherOpsData(opts?: {
       offToday: prof?.offDays ? prof.offDays.includes(todayDow) : false,
       laneLead: prof?.laneLead ?? false,
       tenureDays,
-      isNewHire: tenureDays !== null && tenureDays < NEW_HIRE_DAYS,
+      // Trust the explicit config flag when the person is in team-config (so
+      // veterans aren't mislabeled "new" just because tracking started recently);
+      // fall back to tenure only for people without a profile.
+      isNewHire: prof ? prof.isNewHire === true : (tenureDays !== null && tenureDays < NEW_HIRE_DAYS),
       casesAssigned: a?.casesAssigned ?? 0,
       submittedWindow: submitted,
       avgHoursToSubmit: a && a.submitTimedCount > 0 ? Math.round((a.sumHoursToSubmit / a.submitTimedCount) * 10) / 10 : null,
@@ -504,8 +530,11 @@ export async function gatherOpsData(opts?: {
   paidList.sort((a, b) => b.daysWaiting - a.daysWaiting);
   const paidNotStartedCases = paidList.slice(0, 30);
 
+  reworkList.sort((a, b) => b.daysStuck - a.daysStuck);
+  const reworkStuckCases = reworkList.slice(0, 30);
+
   const windowLabel = `last ${windowDays} days`;
-  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments, paidNotStartedCases };
+  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments, paidNotStartedCases, reworkStuckCases };
 }
 
 function pickBottleneck(args: { atRiskOpen: number; unassignedCases: number; totalReworkFlags: number; staff: StaffMetrics[]; openCases: number }): string {

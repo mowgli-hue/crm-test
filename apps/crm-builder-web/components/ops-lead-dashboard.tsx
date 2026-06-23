@@ -37,6 +37,7 @@ interface TeamSummary {
   totalReworkFlags: number; medianLoad: number; paidNotStarted: number; bottleneck: string;
 }
 interface PaidCase { caseId: string; client: string; formType: string; assignee: string; daysWaiting: number; }
+interface ReworkStuckCase { caseId: string; client: string; formType: string; owner: string; daysStuck: number; }
 interface RebalanceMove {
   caseId: string; client: string; formType: string; fromName: string; toName: string;
   rule: string; reason: string; slaStatus: string;
@@ -46,7 +47,7 @@ interface StaffVerdict {
   headline: string; fix: string; rampRead?: string;
 }
 interface Payload {
-  data: { generatedAt: string; windowLabel: string; team: TeamSummary; staff: StaffMetrics[]; rebalance: RebalanceMove[]; paidNotStartedCases?: PaidCase[] };
+  data: { generatedAt: string; windowLabel: string; team: TeamSummary; staff: StaffMetrics[]; rebalance: RebalanceMove[]; paidNotStartedCases?: PaidCase[]; reworkStuckCases?: ReworkStuckCase[] };
   judgment: { brief: string; verdicts: StaffVerdict[]; aiUsed: boolean; model: string };
 }
 
@@ -213,6 +214,25 @@ export default function OpsLeadDashboard({ apiFetch }: { apiFetch: ApiFetch }) {
                 <span className="font-semibold text-slate-700">{c.client || "—"}</span>
                 <span className="text-slate-400">{c.formType}</span>
                 <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">{c.daysWaiting}d waiting</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stuck in rework — sent back by review, not yet refixed */}
+      {(p.data.reworkStuckCases?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4">
+          <h3 className="text-sm font-bold text-slate-900">🔁 Stuck in rework ({p.data.reworkStuckCases!.length})</h3>
+          <p className="text-xs text-slate-500">Reviewer sent these back and the preparer hasn't refixed/resubmitted. Every day here is a finished file not going out.</p>
+          <div className="mt-2 space-y-1">
+            {p.data.reworkStuckCases!.slice(0, 12).map((c) => (
+              <div key={c.caseId} className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-100 bg-white px-3 py-1.5 text-xs">
+                <span className="font-mono text-slate-400">{c.caseId}</span>
+                <span className="font-semibold text-slate-700">{c.client || "—"}</span>
+                <span className="text-slate-400">{c.formType}</span>
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{c.owner}</span>
+                <span className="ml-auto rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{c.daysStuck}d stuck</span>
               </div>
             ))}
           </div>

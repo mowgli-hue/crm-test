@@ -31,6 +31,10 @@ export interface OpsProfile {
   needsSupervision?: boolean;
   laneLead?: boolean;
   worksUnder?: string;
+  // Explicit new-hire flag. Without this the Ops Lead guessed tenure from the
+  // earliest work-session, which (time-tracking started recently) mislabeled
+  // veterans as new. Set true ONLY for genuine recent hires.
+  isNewHire?: boolean;
   active: boolean;
   notes?: string;
 }
@@ -134,6 +138,7 @@ export const TEAM: OpsProfile[] = [
   },
   {
     name: "Jinia",
+    isNewHire: true,
     match: ["jinia", "jinai", "jeenia", "jeena"],
     functions: ["prep"],
     lanes: "all",
@@ -144,6 +149,7 @@ export const TEAM: OpsProfile[] = [
   },
   {
     name: "Simran",
+    isNewHire: true,
     match: ["simran"],
     functions: ["prep"],
     lanes: "all",
