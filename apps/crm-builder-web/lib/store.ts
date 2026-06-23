@@ -1821,7 +1821,11 @@ export async function updateCaseProcessing(
   }
 ): Promise<CaseItem | null> {
   return mutateStore(async (store) => {
-  const idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+  let idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+  // Single-firm: cases can drift across company ids, which made processing
+  // updates (incl. marking a case SUBMITTED) silently fail — the case never
+  // left the active list. Fall back to a stable id match so the update lands.
+  if (idx === -1) idx = store.cases.findIndex((c) => c.id === id);
   if (idx === -1) return null;
   const current = store.cases[idx];
 
