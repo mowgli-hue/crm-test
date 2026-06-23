@@ -21,6 +21,7 @@ import {
   extractDriveFolderId,
   listFilesInFolder,
   downloadDriveFileBytes,
+  findExistingSubfolder,
 } from "@/lib/google-drive";
 import { extractDocumentFields, mapExtractedToIntake } from "@/lib/doc-ocr";
 
@@ -44,16 +45,29 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const existingIntake = (caseItem.pgwpIntake as Record<string, any>) || {};
   const clientName = caseItem.client || "Client";
 
-  // List all files in the case's Drive folder
+  // List all files in the case's Drive folder.
   let files: Array<{ id: string; name: string; mimeType: string }> = [];
+  let scannedFolderId = folderId;
   try {
     files = await listFilesInFolder(folderId);
+    // Fallback: the linked folder may be the case ROOT while the actual documents
+    // sit one level down in the "Client Documents" subfolder. If nothing was found
+    // directly, look there (targeted — NOT Application Forms / Submitted, so we
+    // never mistake a generated form for a client document).
+    if (files.length === 0) {
+      const sub = await findExistingSubfolder(folderId, "Client Documents");
+      if (sub) {
+        const subFiles = await listFilesInFolder(sub.id);
+        if (subFiles.length > 0) { files = subFiles; scannedFolderId = sub.id; }
+      }
+    }
   } catch (e) {
     return NextResponse.json({
       ok: false,
       error: `Failed to list Drive folder: ${(e as Error).message}`,
     }, { status: 500 });
   }
+  void scannedFolderId;
 
   if (files.length === 0) {
     return NextResponse.json({
