@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserFromRequest } from "@/lib/auth";
-import { bulkReassignCases } from "@/lib/store";
+import { bulkReassignCases, addNotifications, listAllStaff, listAllCases } from "@/lib/store";
 import { insertAuditLogRow } from "@/lib/postgres-store";
 
 export const runtime = "nodejs";
@@ -39,6 +39,31 @@ export async function POST(request: NextRequest) {
   // Per-person tally for the audit record.
   const tally: Record<string, number> = {};
   for (const a of assignments) tally[a.assignTo] = (tally[a.assignTo] || 0) + 1;
+
+  // ── Notify each person which applications they just got ──
+  try {
+    const [staff, cases] = await Promise.all([listAllStaff(), listAllCases()]);
+    const userByName = new Map(staff.filter((s) => s.userType === "staff").map((s) => [s.name.toLowerCase().trim(), s]));
+    const typeByCase = new Map(cases.map((c) => [c.id, String(c.formType || "")]));
+    const clientByCase = new Map(cases.map((c) => [c.id, String((c as any).client || "")]));
+    const byPerson = new Map<string, string[]>(); // name -> caseIds
+    for (const a of assignments) {
+      if (!byPerson.has(a.assignTo)) byPerson.set(a.assignTo, []);
+      byPerson.get(a.assignTo)!.push(a.caseId);
+    }
+    const notifs = [];
+    for (const [name, caseIds] of byPerson) {
+      const u = userByName.get(name.toLowerCase().trim());
+      if (!u) continue;
+      const sample = caseIds.slice(0, 3).map((id) => `${id}${clientByCase.get(id) ? ` (${clientByCase.get(id)})` : ""}`).join(", ");
+      const more = caseIds.length > 3 ? ` +${caseIds.length - 3} more` : "";
+      const msg = caseIds.length === 1
+        ? `📌 New assignment: ${sample} — ${typeByCase.get(caseIds[0]) || "application"}`
+        : `📌 You've been assigned ${caseIds.length} cases: ${sample}${more}`;
+      notifs.push({ companyId: u.companyId, userId: u.id, type: "ai_alert" as const, message: msg });
+    }
+    if (notifs.length) await addNotifications(notifs);
+  } catch (e) { console.error("[bulk-reassign] notify failed:", (e as Error).message); }
 
   try {
     await insertAuditLogRow({

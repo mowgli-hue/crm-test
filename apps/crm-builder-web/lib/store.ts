@@ -3021,6 +3021,27 @@ export async function addNotification(input: {
   });
 }
 
+// Add many notifications in ONE store write (for bulk reassignment etc.).
+export async function addNotifications(items: Array<{
+  companyId: string; userId: string;
+  type: "deadline" | "missing_doc" | "ai_alert" | "review_comment";
+  message: string; link?: string;
+}>): Promise<number> {
+  const valid = items.filter((i) => i.userId && i.message);
+  if (valid.length === 0) return 0;
+  await mutateStore((store) => {
+    for (const i of valid) {
+      store.notifications.unshift({
+        id: `NTF-${randomUUID().slice(0, 8)}`,
+        companyId: i.companyId, userId: i.userId, type: i.type as any,
+        message: i.message, link: i.link, read: false, createdAt: new Date().toISOString(),
+      } as any);
+    }
+    return store.notifications.length;
+  });
+  return valid.length;
+}
+
 export async function addAuditLog(input: {
   companyId: string;
   actorUserId: string;

@@ -113,6 +113,27 @@ async function run(request: NextRequest) {
     }
   }
 
+  // ── Notify each person which cases the Ops Lead just moved to them ──
+  if (applied.length) {
+    try {
+      const { listAllStaff, addNotifications } = await import("@/lib/store");
+      const staff = await listAllStaff();
+      const userByName = new Map(staff.filter((s) => s.userType === "staff").map((s) => [s.name.toLowerCase().trim(), s]));
+      const byPerson = new Map<string, string[]>();
+      for (const a of applied) { if (!byPerson.has(a.to)) byPerson.set(a.to, []); byPerson.get(a.to)!.push(a.caseId); }
+      const notifs = [];
+      for (const [name, ids] of byPerson) {
+        const u = userByName.get(name.toLowerCase().trim());
+        if (!u) continue;
+        const msg = ids.length === 1
+          ? `🔁 The Ops Lead moved ${ids[0]} to you`
+          : `🔁 The Ops Lead moved ${ids.length} cases to you: ${ids.slice(0, 4).join(", ")}${ids.length > 4 ? "…" : ""}`;
+        notifs.push({ companyId: u.companyId, userId: u.id, type: "ai_alert" as const, message: msg });
+      }
+      if (notifs.length) await addNotifications(notifs);
+    } catch (e) { console.error("[ops-lead apply] notify failed:", (e as Error).message); }
+  }
+
   console.log(`[ops-lead apply] applied=${applied.length} skipped=${skipped.length} by=${actor}`);
   return NextResponse.json({
     ok: true,
