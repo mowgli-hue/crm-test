@@ -134,7 +134,7 @@ export const TEAM: OpsProfile[] = [
   },
   {
     name: "Jinia",
-    match: ["jinia", "jinai"],
+    match: ["jinia", "jinai", "jeenia", "jeena"],
     functions: ["prep"],
     lanes: "all",
     employment: "full_time",

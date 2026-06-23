@@ -170,6 +170,25 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const liveSeconds = activeStartedAt ? (now - new Date(activeStartedAt).getTime()) / 1000 : 0;
   const isTop = (id: string) => topPicks.includes(id);
 
+  // ── "Working on something else" — log off-CRM work with a note so it counts ──
+  const onOtherWork = activeCaseId === "OFF-CRM";
+  const startOther = async () => {
+    const note = (typeof window !== "undefined" ? window.prompt("What are you working on? (brief note — e.g. 'client calls', 'training Jinia', 'walk-in')") : "")?.trim();
+    if (!note) return;
+    setBusyId("OFF-CRM");
+    try {
+      await apiFetch(`/me/other-work`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "start", note }) });
+      await load();
+    } finally { setBusyId(null); }
+  };
+  const stopOther = async () => {
+    setBusyId("OFF-CRM");
+    try {
+      await apiFetch(`/me/other-work`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "stop" }) });
+      await load();
+    } finally { setBusyId(null); }
+  };
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -230,6 +249,27 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
             <p className="mt-2 text-[11px] font-semibold text-amber-700">
               You're punched into {activeCaseId}. Punching in here will switch your timer to this case.
             </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Working on something else (off-CRM work, logged with a note) ── */}
+      {!loading && (
+        <div className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-3 ${onOtherWork ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">🔧 Working off the system?</p>
+            <p className="text-xs text-slate-500">
+              {onOtherWork
+                ? <span className="font-semibold text-amber-700">Logging other work — your time is counting. Stop when you're done.</span>
+                : "Doing something not in the CRM (calls, training, a walk-in, an off-system task)? Log it so your day isn't blank."}
+            </p>
+          </div>
+          {onOtherWork ? (
+            <button disabled={busyId === "OFF-CRM"} onClick={stopOther}
+              className="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">Stop</button>
+          ) : (
+            <button disabled={busyId === "OFF-CRM"} onClick={startOther}
+              className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">I'm working on something else</button>
           )}
         </div>
       )}
