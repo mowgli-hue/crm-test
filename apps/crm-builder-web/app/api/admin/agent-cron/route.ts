@@ -59,16 +59,21 @@ async function run(request: NextRequest) {
     swept = await res.json().catch(() => ({}));
   } catch (e) { swept = { error: (e as Error).message }; }
 
-  // 1c. AI Operations Lead — auto-rebalance work within rules (reassign
-  // departed/orphaned/at-risk/overloaded cases). Side-effecting but guarded;
-  // every move is logged + noted on the case. We surface the count in the brief.
-  let rebalanced: any = {};
-  try {
-    const res = await fetch(`${baseUrl()}/api/admin/ops-lead/rebalance/apply?systemToken=${encodeURIComponent(sys)}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    });
-    rebalanced = await res.json().catch(() => ({}));
-  } catch (e) { rebalanced = { error: (e as Error).message }; }
+  // 1c. AI Operations Lead — work rebalancing.
+  // OBSERVE MODE (default): we do NOT auto-move cases. The Ops Lead still computes
+  // and SHOWS the suggested moves (in the dashboard + this brief), but a human
+  // decides. This is the "watch the team for a week, learn who's good at what,
+  // then assign by capacity + skill" period. Flip OPS_AUTO_REBALANCE=true later to
+  // let it apply automatically within its rules.
+  let rebalanced: any = { mode: "observe", appliedCount: 0 };
+  if (String(process.env.OPS_AUTO_REBALANCE || "").toLowerCase() === "true") {
+    try {
+      const res = await fetch(`${baseUrl()}/api/admin/ops-lead/rebalance/apply?systemToken=${encodeURIComponent(sys)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      rebalanced = await res.json().catch(() => ({}));
+    } catch (e) { rebalanced = { error: (e as Error).message }; }
+  }
 
   // 2. THE OPERATIONS LEAD — read the team + cases (post-rebalance) and have
   // the management brain write the owner's personal briefing.

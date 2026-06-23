@@ -1,0 +1,39 @@
+name: Newton CRM — scheduled jobs
+
+# Fires the daily Ops Lead jobs on a fixed clock so the team is reviewed every
+# day automatically. Times are UTC; Pacific shifts ~1h with daylight saving.
+#   15:00 UTC ≈ 8am Pacific  → morning Ops Lead brief (+ suggestions)
+#   02:00 UTC ≈ 7pm Pacific  → end-of-day team activity reports
+#
+# REQUIRED: add a repo secret CRM_SYSTEM_TOKEN = the value of AUTH_RECOVERY_TOKEN
+# (GitHub → Settings → Secrets and variables → Actions → New repository secret).
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run now"
+        type: choice
+        options: [brief, reports]
+        default: brief
+  schedule:
+    - cron: "0 15 * * *"   # ~8am Pacific — morning Ops Lead brief
+    - cron: "0 2 * * *"    # ~7pm Pacific — end-of-day team reports
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Morning Ops Lead brief
+        if: github.event.schedule == '0 15 * * *' || github.event.inputs.job == 'brief'
+        run: |
+          curl -fsS -m 150 -X POST \
+            "https://crm.newtonimmigration.com/api/admin/agent-cron?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}" \
+            || { echo "::warning::morning brief call failed"; exit 0; }
+
+      - name: End-of-day team reports
+        if: github.event.schedule == '0 2 * * *' || github.event.inputs.job == 'reports'
+        run: |
+          curl -fsS -m 150 -X POST \
+            "https://crm.newtonimmigration.com/api/admin/daily-team-reports?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}" \
+            || { echo "::warning::team reports call failed"; exit 0; }
