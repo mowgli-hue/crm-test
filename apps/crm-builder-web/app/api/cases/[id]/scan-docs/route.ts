@@ -50,17 +50,19 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   let scannedFolderId = folderId;
   try {
     files = await listFilesInFolder(folderId);
-    // Fallback: the linked folder may be the case ROOT while the actual documents
-    // sit one level down in the "Client Documents" subfolder. If nothing was found
-    // directly, look there (targeted — NOT Application Forms / Submitted, so we
-    // never mistake a generated form for a client document).
-    if (files.length === 0) {
+    // The linked folder may be the case ROOT while the actual documents sit one
+    // level down in the "Client Documents" subfolder. Always pull that subfolder's
+    // files too and merge (deduped). Targeted — NOT Application Forms / Submitted —
+    // so a generated form is never mistaken for a client document. If the link
+    // already IS Client Documents, there's no nested copy and nothing extra is added.
+    try {
       const sub = await findExistingSubfolder(folderId, "Client Documents");
-      if (sub) {
+      if (sub && sub.id !== folderId) {
         const subFiles = await listFilesInFolder(sub.id);
-        if (subFiles.length > 0) { files = subFiles; scannedFolderId = sub.id; }
+        const seen = new Set(files.map((f) => f.id));
+        for (const f of subFiles) if (!seen.has(f.id)) files.push(f);
       }
-    }
+    } catch { /* subfolder optional */ }
   } catch (e) {
     return NextResponse.json({
       ok: false,
