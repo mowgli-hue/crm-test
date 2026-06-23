@@ -52,11 +52,14 @@ VISITOR / SUPER VISA — NO consultation fee:
   • ATIP Notes: $215
 
 PR / SPONSORSHIP / EXPRESS ENTRY — consultation REQUIRED:
+  (All fees below are PER PRINCIPAL APPLICANT. A spouse/partner or dependents make
+   the total HIGHER — never quote these as the final price for a couple/family; the
+   exact family fee is confirmed at the $52.50 consultation.)
   • PR Sponsorship Inside Canada: $2,100 (includes taxes)
   • PR Sponsorship Outside Canada: $3,000 + taxes
-  • Express Entry Profile Creation: $525 (includes taxes)
-  • Express Entry After Invitation: $2,000
-  • Express Entry Final Stage: $500
+  • Express Entry Profile Creation: $525 per principal applicant (a spouse adds to this)
+  • Express Entry After Invitation: $2,000 per principal applicant
+  • Express Entry Final Stage: $500 per principal applicant
   • PNP Only: $2,100 (includes taxes)
   • PNP + PR: $3,000 + taxes
   • Citizenship: $1,050 (includes taxes)
@@ -498,7 +501,7 @@ export const SERVICES: Record<string, ServiceInfo> = {
     key: "EXPRESS_ENTRY",
     displayName: "Express Entry (FSW / CEC / FST)",
     category: "pr",
-    feeText: "Profile creation: $525 / After invitation: $2,000 / Final stage: $500 (Consultation $52.50 required first)",
+    feeText: "Per principal applicant — Profile creation: $525 / After invitation: $2,000 / Final stage: $500. A spouse/dependent makes the total HIGHER (confirmed at the $52.50 consultation, which is required first).",
     feeAmount: 525,
     needsConsultation: true,
     eligibility: [
