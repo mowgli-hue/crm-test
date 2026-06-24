@@ -61,6 +61,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     processingStatus: "submitted",
     applicationNumber,
     submittedAt: body.submittedAt || new Date().toISOString(),
+    ...(body.submissionDocumentUploadedAt ? { submissionDocumentUploadedAt: String(body.submissionDocumentUploadedAt) } : {}),
   } as any);
   // Notify team that the case has been submitted to IRCC
   await notifyCaseEvent({

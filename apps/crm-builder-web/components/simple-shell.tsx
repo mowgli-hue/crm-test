@@ -2835,11 +2835,10 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
         setDocuments((prev) => [...prev, newDoc]);
       }
 
-      const res = await apiFetch(`/cases/${targetCase.id}`, {
-        method: "PATCH",
+      const res = await apiFetch(`/cases/${targetCase.id}/submit`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          processingStatus: "submitted",
           applicationNumber: appNo,
           submittedAt: nowIso,
           submissionDocumentUploadedAt: nowIso
@@ -3626,12 +3625,13 @@ export function SimpleShell({ expectedSlug }: SimpleShellProps) {
     setSubmitModalSaving(true);
     setSubmitModalStatus("Saving...");
     try {
-      // Save app number + mark submitted
-      const res = await apiFetch(`/cases/${caseId}`, {
-        method: "PATCH",
+      // Save app number + mark submitted via the full-flow submit endpoint
+      // (marks submitted + syncs lookup table + appends the submitted Google
+      // Sheet + notifies the team — a plain PATCH skipped the sheet sync).
+      const res = await apiFetch(`/cases/${caseId}/submit`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          processingStatus: "submitted",
           applicationNumber: appNo,
           submittedAt: new Date().toISOString(),
         })
@@ -7113,11 +7113,26 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                                     if (!confirm("No application number entered. Mark Submitted without one? You can add it later in the Submission tab.")) return;
                                   }
                                   const nowIso = new Date().toISOString();
-                                  await updateCaseProcessing(selectedCase.id, {
-                                    processingStatus: "submitted",
-                                    applicationNumber: cleanAppNum || undefined,
-                                    submittedAt: nowIso,
-                                  });
+                                  if (cleanAppNum) {
+                                    // Full-flow submit: marks submitted + lookup table +
+                                    // submitted Google Sheet + team notification.
+                                    const sres = await apiFetch(`/cases/${selectedCase.id}/submit`, {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ applicationNumber: cleanAppNum, submittedAt: nowIso }),
+                                    });
+                                    const spayload = await sres.json().catch(() => ({}));
+                                    if (sres.ok && spayload.case) {
+                                      setCases((prev) => prev.map((c) => (c.id === spayload.case.id ? spayload.case : c)));
+                                    }
+                                  } else {
+                                    // No IRCC number yet — flag submitted locally; the sheet row
+                                    // is added when the number is entered in the Submission tab.
+                                    await updateCaseProcessing(selectedCase.id, {
+                                      processingStatus: "submitted",
+                                      submittedAt: nowIso,
+                                    });
+                                  }
                                   // Actually record the submission from the CRM — create the
                                   // Submission Log row (idempotent) so the case is truly
                                   // "submitted", not just flagged. Submitted cases already drop
