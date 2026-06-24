@@ -1449,6 +1449,34 @@ function inferCaseStatusFromStage(stage: Stage): CaseStatus {
   return "active";
 }
 
+// One-time data hygiene: a case that was submitted in an older code path often
+// kept its old `stage` (commonly "Paid") even though processingStatus is
+// "submitted"/submittedAt is set. That drift makes submitted files show up as
+// "paid, not started" and pollutes every stage-based view. This realigns stage
+// (and the derived caseStatus) for every already-submitted case. Idempotent.
+export async function backfillSubmittedStages(): Promise<{ scanned: number; fixed: number; examples: string[] }> {
+  return mutateStore((store) => {
+    let fixed = 0;
+    const examples: string[] = [];
+    for (const c of store.cases) {
+      // Conservative: only realign cases whose processingStatus is definitively
+      // "submitted". A case with submittedAt but status under_review/docs_pending
+      // was submitted then RE-OPENED (e.g. IRCC request letter / sent back to
+      // review) — its current stage is correct and must be left alone.
+      if (c.processingStatus !== "submitted") continue;
+      if (c.stage === "Submitted" || c.stage === "Decision") continue;
+      const target: Stage = (c as any).finalOutcome ? "Decision" : "Submitted";
+      c.stage = target;
+      c.caseStatus = inferCaseStatusFromStage(c.stage);
+      if (!(c as any).submittedAt) (c as any).submittedAt = new Date().toISOString();
+      c.updatedAt = new Date().toISOString();
+      fixed += 1;
+      if (examples.length < 20) examples.push(c.id);
+    }
+    return { scanned: store.cases.length, fixed, examples };
+  });
+}
+
 function mapCaseStatusToStage(status: CaseStatus): Stage {
   if (status === "lead") return "Lead";
   if (status === "active") return "Assigned";

@@ -179,12 +179,28 @@ const lc = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").tr
 // Without these exclusions the Ops Lead counted ~209 ("everything not submitted")
 // while the dashboard showed ~124, which made the AI look wrong.
 function isOpenCase(c: CaseItem): boolean {
+  if (isSubmittedCase(c)) return false;
   const st = lc((c as any).processingStatus);
   const stage = lc((c as any).stage);
-  if (st === "submitted" || st === "closed") return false;
-  if (stage === "submitted" || stage === "decision") return false;
+  if (st === "closed") return false;
+  if (stage === "decision") return false;
   if (stage === "lead" || stage === "paid") return false;
   return true;
+}
+
+// A case is "submitted" if ANY submission signal is present. The `stage` field
+// often drifts (stays "Paid") after a case is submitted, so we must also honour
+// processingStatus and submittedAt — otherwise a submitted case wrongly shows up
+// as "paid, not started" or "at risk". Single source of truth for submitted-ness.
+function isSubmittedCase(c: CaseItem): boolean {
+  const st = lc((c as any).processingStatus);
+  const stage = lc((c as any).stage);
+  return (
+    st === "submitted" ||
+    stage === "submitted" ||
+    stage === "decision" ||
+    Boolean((c as any).submittedAt)
+  );
 }
 
 // Coarse stage signal without loading documents — good enough for the SLA
@@ -365,7 +381,10 @@ export async function gatherOpsData(opts?: {
 
     // Paid retainer but work not started — surfaced separately (it's excluded
     // from "active", but it's money waiting and must not be invisible).
-    if (lc((c as any).stage) === "paid") {
+    // Guard: a SUBMITTED case often still has stage "Paid" (stage drifts), so we
+    // must skip anything already submitted — otherwise submitted files wrongly
+    // appear as "paid, not started".
+    if (lc((c as any).stage) === "paid" && !isSubmittedCase(c)) {
       const createdMs = Date.parse((c as any).createdAt || "");
       paidList.push({
         caseId: c.id,
