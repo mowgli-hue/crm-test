@@ -525,6 +525,13 @@ export interface TrackerEntry {
   stageUpdatedAt: string;          // when the stage last changed (ISO)
   nextStep?: string;               // optional free-text reminder ("waiting on medical")
   notes?: string;
+  // Email-sync bookkeeping. lastEmailAt = date of the most recent IRCC email
+  // we've already processed for this file (so we don't re-flag it every poll).
+  // pendingReview = an IRCC email arrived that we couldn't map to a stage (e.g.
+  // a generic "sign in to your account" notice) — staff should check the portal.
+  lastEmailAt?: string;
+  pendingReview?: boolean;
+  pendingReviewNote?: string;      // subject/date of the update awaiting review
   caseId?: string | null;          // optional link to an originating case
   archived?: boolean;              // hidden from the active list (e.g. landed/closed)
   updatedBy?: string;              // staff who last touched it

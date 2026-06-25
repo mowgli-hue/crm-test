@@ -14,9 +14,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
   const body = await request.json().catch(() => ({}));
   const patch: Record<string, any> = { updatedBy: user.name };
-  for (const k of ["applicationNumber", "clientName", "clientPhone", "applicationType", "stage", "nextStep", "notes", "archived"]) {
-    if (body[k] !== undefined) patch[k] = k === "archived" ? Boolean(body[k]) : body[k];
+  for (const k of ["applicationNumber", "clientName", "clientPhone", "applicationType", "stage", "nextStep", "notes", "archived", "pendingReview"]) {
+    if (body[k] !== undefined) patch[k] = (k === "archived" || k === "pendingReview") ? Boolean(body[k]) : body[k];
   }
+  // Clearing the review flag also clears its note.
+  if (body.pendingReview === false) patch.pendingReviewNote = undefined;
   const updated = await updateTracker(user.companyId, params.id, patch);
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true, tracker: updated });

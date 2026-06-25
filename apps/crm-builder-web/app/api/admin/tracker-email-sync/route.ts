@@ -82,65 +82,92 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `IMAP read failed: ${(e as Error).message}` }, { status: 502 });
   }
 
-  const advanced: any[] = [];
-  const skipped: any[] = [];
+  // ── Pass 1: collect NEW IRCC emails grouped by the tracker they match ──
+  // "New" = newer than the last IRCC email we already processed for that file
+  // (lastEmailAt), so the 30-min poll never re-acts on the same message.
+  type Hit = { em: (typeof emails)[number]; parsed: ReturnType<typeof parseIrccEmail> };
+  const byTracker = new Map<string, Hit[]>();
+  const unmatched: any[] = [];
   let scannedIrcc = 0;
 
   for (const em of emails) {
     if (!looksLikeIrcc(em.from)) continue;
     const parsed = parseIrccEmail(em.subject, em.text);
-    if (!parsed.detectedStage || parsed.appNumbers.length === 0) continue;
+    if (parsed.appNumbers.length === 0) continue; // can't tie it to a file
     scannedIrcc++;
 
-    // Find a tracker whose app number matches any candidate in the email.
     let match: TrackerEntry | undefined;
     for (const cand of parsed.appNumbers) {
       const hit = byApp.get(norm(cand));
       if (hit) { match = hit; break; }
     }
-    if (!match) { skipped.push({ subject: em.subject.slice(0, 70), reason: "no matching tracker", apps: parsed.appNumbers }); continue; }
+    if (!match) { unmatched.push({ subject: em.subject.slice(0, 70), apps: parsed.appNumbers }); continue; }
+    if (match.lastEmailAt && em.date <= match.lastEmailAt) continue; // already processed
 
+    const arr = byTracker.get(match.id) || [];
+    arr.push({ em, parsed });
+    byTracker.set(match.id, arr);
+  }
+
+  // ── Pass 2: per file, advance if any email names a later stage, else flag ──
+  const advanced: any[] = [];
+  const flagged: any[] = [];
+
+  for (const [tid, hits] of byTracker) {
+    const match = trackers.find((t) => t.id === tid)!;
+    const newestDate = hits.reduce((mx, h) => (h.em.date > mx ? h.em.date : mx), match.lastEmailAt || "");
     const curIdx = stageIndex(match.stage);
-    const newIdx = parsed.stageIdx;
-    const isRefusal = parsed.detectedStage === "Refused / Withdrawn";
-    // Forward-only: advance only if the email implies a later stage (refusal always applies).
-    if (!isRefusal && newIdx <= curIdx) {
-      skipped.push({ subject: em.subject.slice(0, 70), reason: `already at/after (${match.stage})`, client: match.clientName });
-      continue;
+
+    // Pick the furthest forward stage any new email implies (refusal always applies).
+    let apply: Hit | null = null;
+    for (const h of hits) {
+      if (!h.parsed.detectedStage) continue;
+      if (h.parsed.detectedStage === "Refused / Withdrawn") { apply = h; break; }
+      if (h.parsed.stageIdx > curIdx && (!apply || h.parsed.stageIdx > apply.parsed.stageIdx)) apply = h;
     }
 
-    const note = `Auto: "${em.subject.slice(0, 80)}" (${em.date.slice(0, 10)})`;
-    if (!dry) {
-      await updateTracker(companyId, match.id, {
-        stage: parsed.detectedStage,
-        notes: match.notes ? `${match.notes} | ${note}` : note,
-        updatedBy: "Auto (IRCC email)",
-      } as any);
-      // keep our in-memory copy current so two emails in one run chain correctly
-      match.stage = parsed.detectedStage;
+    if (apply) {
+      const stage = apply.parsed.detectedStage as string;
+      const note = `Auto: "${apply.em.subject.slice(0, 80)}" (${apply.em.date.slice(0, 10)})`;
+      let notified = false, notifyErr: string | undefined;
+      if (!dry) {
+        await updateTracker(companyId, match.id, {
+          stage,
+          lastEmailAt: newestDate,
+          pendingReview: false,
+          pendingReviewNote: undefined,
+          notes: match.notes ? `${match.notes} | ${note}` : note,
+          updatedBy: "Auto (IRCC email)",
+        } as any);
+        if (match.clientPhone) {
+          try {
+            const res = await sendWhatsAppText(match.clientPhone, clientMessage(match.clientName, stage));
+            notified = Boolean(res?.success);
+            if (!notified) notifyErr = res?.error;
+          } catch (e) { notifyErr = (e as Error).message; }
+        }
+      }
+      advanced.push({
+        tracker: match.id, client: match.clientName, app: match.applicationNumber,
+        from: match.stage, to: stage, subject: apply.em.subject.slice(0, 70),
+        clientNotified: notified, notifyError: notifyErr, noPhone: !match.clientPhone || undefined,
+      });
+    } else {
+      // IRCC contacted us about this file but didn't name a step (generic
+      // "sign in to your account" notice). Flag for a human to check the portal.
+      const newest = hits.reduce((a, b) => (b.em.date > a.em.date ? b : a));
+      const reviewNote = `📬 IRCC update ${newest.em.date.slice(0, 10)}: ${newest.em.subject.slice(0, 90)} — check the IRCC account`;
+      if (!dry) {
+        await updateTracker(companyId, match.id, {
+          lastEmailAt: newestDate,
+          pendingReview: true,
+          pendingReviewNote: reviewNote,
+          notes: match.notes ? `${match.notes} | ${reviewNote}` : reviewNote,
+          updatedBy: "Auto (IRCC email)",
+        } as any);
+      }
+      flagged.push({ tracker: match.id, client: match.clientName, app: match.applicationNumber, note: reviewNote });
     }
-
-    // Notify the client (every stage change).
-    let notified = false, notifyErr: string | undefined;
-    if (!dry && match.clientPhone) {
-      try {
-        const res = await sendWhatsAppText(match.clientPhone, clientMessage(match.clientName, parsed.detectedStage));
-        notified = Boolean(res?.success);
-        if (!notified) notifyErr = res?.error;
-      } catch (e) { notifyErr = (e as Error).message; }
-    }
-
-    advanced.push({
-      tracker: match.id,
-      client: match.clientName,
-      app: match.applicationNumber,
-      from: `${match.stage}`,
-      to: parsed.detectedStage,
-      subject: em.subject.slice(0, 70),
-      clientNotified: notified,
-      notifyError: notifyErr,
-      noPhone: !match.clientPhone || undefined,
-    });
   }
 
   return NextResponse.json({
@@ -150,6 +177,8 @@ export async function POST(request: NextRequest) {
     irccEmails: scannedIrcc,
     advancedCount: advanced.length,
     advanced,
-    skipped: skipped.slice(0, 20),
+    flaggedCount: flagged.length,
+    flagged,
+    unmatched: unmatched.slice(0, 20),
   });
 }

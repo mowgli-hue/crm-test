@@ -205,8 +205,17 @@ export default function TrackingSheet({ apiFetch }: Props) {
               const d = daysIn(t.stageUpdatedAt);
               const terminal = TERMINAL.has(t.stage);
               return (
-                <tr key={t.id} className={`border-t border-slate-100 ${t.archived ? "opacity-50" : ""}`}>
-                  <td className="px-3 py-2 font-semibold text-slate-800">{t.clientName || "—"}</td>
+                <tr key={t.id} className={`border-t border-slate-100 ${t.archived ? "opacity-50" : ""} ${t.pendingReview ? "bg-indigo-50" : ""}`}>
+                  <td className="px-3 py-2 font-semibold text-slate-800">
+                    {t.clientName || "—"}
+                    {t.pendingReview && (
+                      <span title={t.pendingReviewNote || "New IRCC update — check the portal"}
+                        className="ml-1 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white align-middle">
+                        📬 update
+                        <button onClick={()=>void patchRow(t.id, { pendingReview: false } as any)} title="Mark reviewed" className="hover:text-indigo-200">✓</button>
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-600">{t.applicationNumber || "—"}</td>
                   <td className="px-3 py-2 text-xs text-slate-600">{t.applicationType}</td>
                   <td className="px-3 py-2">
