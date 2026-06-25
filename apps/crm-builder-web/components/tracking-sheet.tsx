@@ -30,6 +30,32 @@ export default function TrackingSheet({ apiFetch }: Props) {
   const [nNotes, setNNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<any[] | null>(null);
+
+  async function runDiscover() {
+    setDiscovering(true); setStatus("Mining the inbox for IRCC application numbers…"); setDiscovered(null);
+    try {
+      const r = await apiFetch("/admin/tracker-email-discover?days=180", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setDiscovered(d.discovered || []);
+        setStatus(`Scanned ${d.emailsScanned ?? 0} emails — found ${d.applicationsFound ?? 0} application(s), ${d.newCount ?? 0} not yet tracked.`);
+      } else setStatus(`⚠️ ${d.error || "Discovery failed."}`);
+    } catch { setStatus("Network error during discovery."); }
+    finally { setDiscovering(false); }
+  }
+
+  async function importNew() {
+    setDiscovering(true); setStatus("Importing new applications…");
+    try {
+      const r = await apiFetch("/admin/tracker-email-discover?days=180&create=1", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setStatus(`✅ Imported ${d.created ?? 0} new file(s).`); setDiscovered(null); void load(); }
+      else setStatus(`⚠️ ${d.error || "Import failed."}`);
+    } catch { setStatus("Network error during import."); }
+    finally { setDiscovering(false); }
+  }
 
   async function syncEmails() {
     setSyncing(true); setStatus("Reading IRCC emails…");
@@ -138,6 +164,11 @@ export default function TrackingSheet({ apiFetch }: Props) {
             className="rounded-lg bg-indigo-600 px-2.5 py-1 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
             {syncing ? "Syncing…" : "✉️ Sync IRCC emails"}
           </button>
+          <button onClick={() => void runDiscover()} disabled={discovering}
+            title="Scan the whole inbox and list every IRCC application number + stage"
+            className="rounded-lg bg-violet-600 px-2.5 py-1 font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+            {discovering ? "Scanning…" : "🔍 Discover from inbox"}
+          </button>
           <button onClick={() => void load()} className="rounded-lg border border-slate-200 px-2.5 py-1 font-semibold text-slate-600 hover:bg-slate-50">↻ Refresh</button>
         </div>
       </div>
@@ -180,6 +211,41 @@ export default function TrackingSheet({ apiFetch }: Props) {
       </div>
 
       {status && <p className="text-xs font-semibold text-slate-600">{status}</p>}
+
+      {/* Discovery results */}
+      {discovered && (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-bold text-violet-800">🔍 Found in inbox — {discovered.length} application(s)</p>
+            <div className="flex gap-2">
+              {discovered.some((d:any)=>!d.alreadyTracked) && (
+                <button onClick={()=>void importNew()} disabled={discovering}
+                  className="rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-50">
+                  + Import {discovered.filter((d:any)=>!d.alreadyTracked).length} new
+                </button>
+              )}
+              <button onClick={()=>setDiscovered(null)} className="rounded-lg border border-violet-200 px-2.5 py-1 text-xs font-semibold text-violet-700">Close</button>
+            </div>
+          </div>
+          <div className="max-h-64 overflow-auto rounded-lg bg-white border border-violet-100">
+            <table className="w-full text-xs">
+              <thead><tr className="text-left text-[11px] text-slate-500"><th className="px-2 py-1">App #</th><th className="px-2 py-1">Client</th><th className="px-2 py-1">Stage detected</th><th className="px-2 py-1">Latest</th><th className="px-2 py-1">Emails</th><th className="px-2 py-1"></th></tr></thead>
+              <tbody>
+                {discovered.map((d:any)=>(
+                  <tr key={d.appNumber} className="border-t border-violet-50">
+                    <td className="px-2 py-1 font-mono">{d.appNumber}</td>
+                    <td className="px-2 py-1">{d.clientName || <span className="text-slate-400">—</span>}</td>
+                    <td className="px-2 py-1">{d.furthestStage || <span className="text-indigo-500">generic notice (check portal)</span>}</td>
+                    <td className="px-2 py-1 text-slate-500">{(d.latestDate||'').slice(0,10)}</td>
+                    <td className="px-2 py-1 text-slate-500">{d.emailCount}</td>
+                    <td className="px-2 py-1">{d.alreadyTracked ? <span className="text-emerald-600 font-semibold">tracked</span> : <span className="text-violet-600 font-semibold">new</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
