@@ -5184,7 +5184,7 @@ We will notify you as soon as we receive a decision. This usually takes a few we
                 const groups: { id: string; label: string; tabIds: string[] }[] = [
                   { id: "_dashboard", label: "", tabIds: ["dashboard", "agent", "newton-ai"] },
                   { id: "processing", label: "Processing Team", tabIds: ["cases", "tasks", "inbox", "web-forms"] },
-                  { id: "review", label: "Review Team", tabIds: ["submission", "results"] },
+                  { id: "review", label: "Review Team", tabIds: ["submission", "tracking", "results"] },
                   { id: "marketing", label: "Marketing Team", tabIds: ["communications", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "pr-consultations", "accounting"] },
                   { id: "system", label: "System", tabIds: ["team", "settings"] },
                 ];
