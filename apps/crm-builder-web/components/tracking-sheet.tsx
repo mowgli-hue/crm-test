@@ -24,10 +24,27 @@ export default function TrackingSheet({ apiFetch }: Props) {
   // add-row state
   const [nAppNo, setNAppNo] = useState("");
   const [nName, setNName] = useState("");
+  const [nPhone, setNPhone] = useState("");
   const [nType, setNType] = useState(APP_TYPES[0]);
   const [nStage, setNStage] = useState(TRACKER_STAGES[0]);
   const [nNotes, setNNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  async function syncEmails() {
+    setSyncing(true); setStatus("Reading IRCC emails…");
+    try {
+      const r = await apiFetch("/admin/tracker-email-sync", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setStatus(`✅ Scanned ${d.emailsScanned ?? 0} emails (${d.irccEmails ?? 0} from IRCC). Advanced ${d.advancedCount ?? 0} file(s).`);
+        if ((d.advancedCount ?? 0) > 0) void load();
+      } else {
+        setStatus(`⚠️ ${d.error || "Sync failed."}`);
+      }
+    } catch { setStatus("Network error during sync."); }
+    finally { setSyncing(false); }
+  }
 
   async function load() {
     setLoading(true);
@@ -51,12 +68,12 @@ export default function TrackingSheet({ apiFetch }: Props) {
       const r = await apiFetch("/tracking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ applicationNumber: nAppNo, clientName: nName, applicationType: nType, stage: nStage, notes: nNotes }),
+        body: JSON.stringify({ applicationNumber: nAppNo, clientName: nName, clientPhone: nPhone, applicationType: nType, stage: nStage, notes: nNotes }),
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.tracker) {
         setRows((prev) => [d.tracker as TrackerEntry, ...prev]);
-        setNAppNo(""); setNName(""); setNNotes(""); setNStage(TRACKER_STAGES[0]);
+        setNAppNo(""); setNName(""); setNPhone(""); setNNotes(""); setNStage(TRACKER_STAGES[0]);
         setStatus("✅ Added.");
       } else setStatus(d.error || "Could not add.");
     } catch { setStatus("Network error."); }
@@ -116,6 +133,11 @@ export default function TrackingSheet({ apiFetch }: Props) {
         </div>
         <div className="flex items-center gap-2 text-xs">
           <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600">{rows.filter(t=>!t.archived).length} active</span>
+          <button onClick={() => void syncEmails()} disabled={syncing}
+            title="Read IRCC emails from the Newton inbox and auto-advance matching files"
+            className="rounded-lg bg-indigo-600 px-2.5 py-1 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+            {syncing ? "Syncing…" : "✉️ Sync IRCC emails"}
+          </button>
           <button onClick={() => void load()} className="rounded-lg border border-slate-200 px-2.5 py-1 font-semibold text-slate-600 hover:bg-slate-50">↻ Refresh</button>
         </div>
       </div>
@@ -125,9 +147,7 @@ export default function TrackingSheet({ apiFetch }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
           <input value={nName} onChange={(e)=>setNName(e.target.value)} placeholder="Client name" className="sm:col-span-3 rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
           <input value={nAppNo} onChange={(e)=>setNAppNo(e.target.value)} placeholder="Application / file #" className="sm:col-span-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-mono focus:border-emerald-400 focus:outline-none" />
-          <select value={nType} onChange={(e)=>setNType(e.target.value)} className="sm:col-span-2 rounded-xl border-2 border-slate-200 bg-white px-2 py-2 text-sm focus:border-emerald-400 focus:outline-none">
-            {APP_TYPES.map((t)=> <option key={t} value={t}>{t}</option>)}
-          </select>
+          <input value={nPhone} onChange={(e)=>setNPhone(e.target.value)} placeholder="Client phone (for updates)" className="sm:col-span-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-mono focus:border-emerald-400 focus:outline-none" />
           <select value={nStage} onChange={(e)=>setNStage(e.target.value as any)} className="sm:col-span-3 rounded-xl border-2 border-slate-200 bg-white px-2 py-2 text-sm focus:border-emerald-400 focus:outline-none">
             {TRACKER_STAGES.map((s)=> <option key={s} value={s}>{s}</option>)}
           </select>
@@ -135,7 +155,12 @@ export default function TrackingSheet({ apiFetch }: Props) {
             {saving ? "Adding…" : "+ Add"}
           </button>
         </div>
-        <input value={nNotes} onChange={(e)=>setNNotes(e.target.value)} placeholder="Notes (optional)" className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+        <div className="mt-2 flex gap-2">
+          <select value={nType} onChange={(e)=>setNType(e.target.value)} className="rounded-xl border-2 border-slate-200 bg-white px-2 py-2 text-sm focus:border-emerald-400 focus:outline-none">
+            {APP_TYPES.map((t)=> <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input value={nNotes} onChange={(e)=>setNNotes(e.target.value)} placeholder="Notes (optional)" className="flex-1 rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+        </div>
       </div>
 
       {/* Filters */}

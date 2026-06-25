@@ -14,7 +14,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
   const body = await request.json().catch(() => ({}));
   const patch: Record<string, any> = { updatedBy: user.name };
-  for (const k of ["applicationNumber", "clientName", "applicationType", "stage", "nextStep", "notes", "archived"]) {
+  for (const k of ["applicationNumber", "clientName", "clientPhone", "applicationType", "stage", "nextStep", "notes", "archived"]) {
     if (body[k] !== undefined) patch[k] = k === "archived" ? Boolean(body[k]) : body[k];
   }
   const updated = await updateTracker(user.companyId, params.id, patch);

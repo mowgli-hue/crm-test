@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     companyId: user.companyId,
     applicationNumber,
     clientName,
+    clientPhone: body.clientPhone,
     applicationType: body.applicationType,
     stage: body.stage,
     nextStep: body.nextStep,

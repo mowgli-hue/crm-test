@@ -3502,6 +3502,7 @@ export async function createTracker(input: {
   companyId: string;
   applicationNumber?: string;
   clientName?: string;
+  clientPhone?: string;
   applicationType?: string;
   stage?: string;
   nextStep?: string;
@@ -3517,6 +3518,7 @@ export async function createTracker(input: {
       companyId: input.companyId,
       applicationNumber: String(input.applicationNumber || "").trim(),
       clientName: String(input.clientName || "").trim(),
+      clientPhone: String(input.clientPhone || "").trim() || undefined,
       applicationType: String(input.applicationType || "Express Entry (PR)").trim(),
       stage: String(input.stage || "ITA Received").trim(),
       stageUpdatedAt: now,

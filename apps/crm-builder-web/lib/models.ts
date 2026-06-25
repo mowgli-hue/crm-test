@@ -519,6 +519,7 @@ export interface TrackerEntry {
   companyId: string;
   applicationNumber: string;       // IRCC application / file number
   clientName: string;
+  clientPhone?: string;            // for stage-change notifications (WhatsApp)
   applicationType: string;         // e.g. "Express Entry (PR)", "PR Sponsorship", "Other"
   stage: string;                   // current milestone (see TRACKER_STAGES)
   stageUpdatedAt: string;          // when the stage last changed (ISO)

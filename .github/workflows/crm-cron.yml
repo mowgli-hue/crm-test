@@ -14,11 +14,12 @@ on:
       job:
         description: "Which job to run now"
         type: choice
-        options: [brief, reports]
+        options: [brief, reports, tracker-sync]
         default: brief
   schedule:
     - cron: "0 15 * * *"   # ~8am Pacific — morning Ops Lead brief
     - cron: "0 2 * * *"    # ~7pm Pacific — end-of-day team reports
+    - cron: "*/30 * * * *" # every 30 min — read IRCC emails, auto-advance the PR tracker
 
 jobs:
   run:
@@ -37,3 +38,10 @@ jobs:
           curl -fsS -m 150 -X POST \
             "https://crm.newtonimmigration.com/api/admin/daily-team-reports?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}" \
             || { echo "::warning::team reports call failed"; exit 0; }
+
+      - name: PR tracker — read IRCC emails & auto-advance
+        if: github.event.schedule == '*/30 * * * *' || github.event.inputs.job == 'tracker-sync'
+        run: |
+          curl -fsS -m 150 -X POST \
+            "https://crm.newtonimmigration.com/api/admin/tracker-email-sync?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}&days=3" \
+            || { echo "::warning::tracker email sync failed"; exit 0; }
