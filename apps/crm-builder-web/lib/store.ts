@@ -26,6 +26,7 @@ import {
   WebFormEntry,
   PrConsultationEntry,
   SubmissionEntry,
+  TrackerEntry,
   AlertRecipient
 } from "@/lib/models";
 import { sampleCases, seedCompany, seedUsers } from "@/lib/data";
@@ -410,6 +411,7 @@ function migrateStore(raw: Partial<AppStore>): AppStore {
     webForms: raw.webForms ?? [],
     prConsultations: raw.prConsultations ?? [],
     submissions: raw.submissions ?? [],
+    trackers: raw.trackers ?? [],
     alertRecipients: raw.alertRecipients ?? []
   };
 }
@@ -3480,6 +3482,86 @@ export async function deleteSubmission(companyId: string, id: string): Promise<b
   if (store.submissions.length === before) return false;
   await writeStore(store);
   return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Post-ITA / PR milestone tracker (TrackerEntry).
+// Lightweight manual sheet: appNumber + clientName + current stage.
+// ─────────────────────────────────────────────────────────────────────
+export async function listTrackers(companyId: string): Promise<TrackerEntry[]> {
+  const store = await readStore();
+  const rows = (store.trackers ?? []).filter((t) => t.companyId === companyId);
+  // Active first (not archived), then most-recently-updated.
+  return rows.sort((a, b) => {
+    if (Boolean(a.archived) !== Boolean(b.archived)) return a.archived ? 1 : -1;
+    return (b.updatedAt || "").localeCompare(a.updatedAt || "");
+  });
+}
+
+export async function createTracker(input: {
+  companyId: string;
+  applicationNumber?: string;
+  clientName?: string;
+  applicationType?: string;
+  stage?: string;
+  nextStep?: string;
+  notes?: string;
+  caseId?: string | null;
+  updatedBy?: string;
+}): Promise<TrackerEntry> {
+  const now = new Date().toISOString();
+  return mutateStore((store) => {
+    if (!Array.isArray(store.trackers)) store.trackers = [];
+    const entry: TrackerEntry = {
+      id: `TRK-${randomUUID().slice(0, 8)}`,
+      companyId: input.companyId,
+      applicationNumber: String(input.applicationNumber || "").trim(),
+      clientName: String(input.clientName || "").trim(),
+      applicationType: String(input.applicationType || "Express Entry (PR)").trim(),
+      stage: String(input.stage || "ITA Received").trim(),
+      stageUpdatedAt: now,
+      nextStep: String(input.nextStep || "").trim() || undefined,
+      notes: String(input.notes || "").trim() || undefined,
+      caseId: input.caseId || null,
+      archived: false,
+      updatedBy: String(input.updatedBy || "").trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.trackers.push(entry);
+    return entry;
+  });
+}
+
+export async function updateTracker(
+  companyId: string,
+  id: string,
+  patch: Partial<Omit<TrackerEntry, "id" | "companyId" | "createdAt">>
+): Promise<TrackerEntry | null> {
+  return mutateStore((store) => {
+    if (!Array.isArray(store.trackers)) store.trackers = [];
+    const idx = store.trackers.findIndex((t) => t.companyId === companyId && t.id === id);
+    if (idx === -1) return null;
+    const prev = store.trackers[idx];
+    // Stamp stageUpdatedAt only when the stage actually changes.
+    const stageChanged = patch.stage !== undefined && patch.stage !== prev.stage;
+    store.trackers[idx] = {
+      ...prev,
+      ...patch,
+      stageUpdatedAt: stageChanged ? new Date().toISOString() : prev.stageUpdatedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    return store.trackers[idx];
+  });
+}
+
+export async function deleteTracker(companyId: string, id: string): Promise<boolean> {
+  return mutateStore((store) => {
+    if (!Array.isArray(store.trackers)) return false;
+    const before = store.trackers.length;
+    store.trackers = store.trackers.filter((t) => !(t.companyId === companyId && t.id === id));
+    return store.trackers.length !== before;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────

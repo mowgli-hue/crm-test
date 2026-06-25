@@ -14,6 +14,7 @@ import OpsLeadDashboard from "@/components/ops-lead-dashboard";
 import DailyCodeCard from "@/components/daily-code-card";
 import MyDay from "@/components/my-day";
 import MyPerformance from "@/components/my-performance";
+import TrackingSheet from "@/components/tracking-sheet";
 import TeamAtRisk from "@/components/team-at-risk";
 import ReviewQueue from "@/components/review-queue";
 import TeamPerformanceReview from "@/components/team-performance-review";
@@ -407,6 +408,7 @@ const tabs: { id: Screen; label: string; icon: ReactNode }[] = [
   { id: "communications", label: "New Case", icon: <UserPlus size={16} /> },
   { id: "results", label: "Results", icon: <BarChart2 size={16} /> },
   { id: "submission", label: "Submission", icon: <Send size={16} /> },
+  { id: "tracking", label: "Tracking", icon: <span>📋</span> },
   { id: "accounting", label: "Accounting", icon: <Calculator size={16} /> },
   { id: "settings", label: "Settings", icon: <Settings2 size={16} /> },
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} /> },
@@ -10025,6 +10027,12 @@ We will notify you as soon as we receive a decision. This usually takes a few we
               {/* Sent results & submissions — the running log (moved here from Settings). */}
               {(sessionUser?.userType === "staff") && <SentResultsLog />}
 
+            </section>
+          ) : null}
+
+          {screen === "tracking" ? (
+            <section className="space-y-4">
+              <TrackingSheet apiFetch={apiFetch} sessionUser={sessionUser} />
             </section>
           ) : null}
 

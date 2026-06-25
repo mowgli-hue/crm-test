@@ -504,8 +504,55 @@ export type AppStore = {
   webForms?: WebFormEntry[];
   prConsultations?: PrConsultationEntry[];
   submissions?: SubmissionEntry[];
+  trackers?: TrackerEntry[];
   alertRecipients?: AlertRecipient[];
 };
+
+// Post-submission milestone tracker — for long, multi-step applications
+// (Express Entry PR after ITA, PR Sponsorship) where IRCC drives the file
+// through many stages (AOR, biometrics, medical, eligibility, PPR, COPR,
+// landing). This is a lightweight manual sheet: the owner/team enters the
+// application number + client name and moves the stage forward as IRCC emails
+// arrive. Deliberately separate from the case pipeline (those are pre-submission).
+export interface TrackerEntry {
+  id: string;
+  companyId: string;
+  applicationNumber: string;       // IRCC application / file number
+  clientName: string;
+  applicationType: string;         // e.g. "Express Entry (PR)", "PR Sponsorship", "Other"
+  stage: string;                   // current milestone (see TRACKER_STAGES)
+  stageUpdatedAt: string;          // when the stage last changed (ISO)
+  nextStep?: string;               // optional free-text reminder ("waiting on medical")
+  notes?: string;
+  caseId?: string | null;          // optional link to an originating case
+  archived?: boolean;              // hidden from the active list (e.g. landed/closed)
+  updatedBy?: string;              // staff who last touched it
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Canonical stage list for the post-ITA / PR tracker. Order = pipeline order.
+// Covers Express Entry PR and PR Sponsorship (overlapping IRCC steps).
+export const TRACKER_STAGES = [
+  "ITA Received",
+  "e-APR / Application Submitted",
+  "AOR Received",
+  "Biometrics Requested",
+  "Biometrics Completed",
+  "Medical Requested",
+  "Medical Passed",
+  "Sponsorship Approved (SA)",
+  "Eligibility In Progress",
+  "Additional Documents Requested",
+  "Background / Security Check",
+  "Interview Requested",
+  "PPR / Passport Request",
+  "COPR Issued",
+  "Landed (PR Confirmed)",
+  "PR Card Received",
+  "On Hold",
+  "Refused / Withdrawn",
+] as const;
 
 // People who get a WhatsApp ping when the marketing bot hits an "important"
 // moment (office visit, blocked fabrication, frustrated client, ready-to-pay).

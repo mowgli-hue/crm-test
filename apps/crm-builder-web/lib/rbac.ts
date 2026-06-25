@@ -21,12 +21,13 @@ export type AppScreen =
   | "marketing-dashboard"
   | "call-log"
   | "agent"
+  | "tracking"
   | "newton-ai";
 
 // Each role only sees what they need
 const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   // Admin sees everything
-  Admin: ["dashboard", "admin-dashboard", "agent", "cases", "communications", "results", "submission", "accounting", "tasks", "inbox", "web-forms", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
+  Admin: ["dashboard", "admin-dashboard", "agent", "cases", "communications", "results", "submission", "tracking", "accounting", "tasks", "inbox", "web-forms", "marketing-inbox", "marketing-leads", "marketing-dashboard", "call-log", "team", "settings", "newton-ai"],
 
   // Marketing = the office-management circle (Manpreet, Neha). They run leads,
   // and per Newton policy also see Team, Settings, and Accounting alongside the
@@ -38,10 +39,10 @@ const STAFF_ROLE_TAB_ACCESS: Record<Exclude<Role, "Client">, AppScreen[]> = {
   Processing: ["dashboard", "cases", "submission", "tasks", "inbox", "web-forms", "newton-ai"],
 
   // Processing Lead can also see results and reassign — but not the management screens.
-  ProcessingLead: ["dashboard", "agent", "cases", "results", "submission", "tasks", "inbox", "web-forms", "newton-ai"],
+  ProcessingLead: ["dashboard", "agent", "cases", "results", "submission", "tracking", "tasks", "inbox", "web-forms", "newton-ai"],
 
   // Reviewer reviews cases — under-review queue, submissions, results. No management screens.
-  Reviewer: ["dashboard", "cases", "submission", "results", "tasks", "inbox", "newton-ai"],
+  Reviewer: ["dashboard", "cases", "submission", "results", "tracking", "tasks", "inbox", "newton-ai"],
 };
 
 function normalizeRole(role: Role | string): Role {
