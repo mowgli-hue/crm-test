@@ -178,7 +178,27 @@ const lc = (s: unknown) => String(s || "").toLowerCase().replace(/\s+/g, " ").tr
 //   • Paid — retainer paid but not yet started (pre-work; surfaced separately)
 // Without these exclusions the Ops Lead counted ~209 ("everything not submitted")
 // while the dashboard showed ~124, which made the AI look wrong.
+// Form types that are NOT real applications the team prepares / reviews / submits.
+// These are admin tasks, consultations, leads, or "do not work" markers — they
+// were polluting the management agent's case counts, at-risk lists and quality
+// metrics ("college change" etc. is not a case). The agent ignores them.
+const NON_APPLICATION_TYPES = [
+  "not for processing",
+  "college change",
+  "webform submission",
+  "web form",
+  "pr consultation",
+  "consultation",
+  "atip",
+];
+function isRealApplication(c: CaseItem): boolean {
+  const ft = lc((c as any).formType);
+  if (!ft) return true; // unknown type — don't hide it, let a human see it
+  return !NON_APPLICATION_TYPES.some((t) => ft.includes(t));
+}
+
 function isOpenCase(c: CaseItem): boolean {
+  if (!isRealApplication(c)) return false;
   if (isSubmittedCase(c)) return false;
   const st = lc((c as any).processingStatus);
   const stage = lc((c as any).stage);
@@ -384,7 +404,7 @@ export async function gatherOpsData(opts?: {
     // Guard: a SUBMITTED case often still has stage "Paid" (stage drifts), so we
     // must skip anything already submitted — otherwise submitted files wrongly
     // appear as "paid, not started".
-    if (lc((c as any).stage) === "paid" && !isSubmittedCase(c)) {
+    if (lc((c as any).stage) === "paid" && !isSubmittedCase(c) && isRealApplication(c)) {
       const createdMs = Date.parse((c as any).createdAt || "");
       paidList.push({
         caseId: c.id,
