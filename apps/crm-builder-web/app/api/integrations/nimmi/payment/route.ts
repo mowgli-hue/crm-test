@@ -55,9 +55,27 @@ const SERVICE_TO_FORM_TYPE: Record<string, string> = {
   "pr-consultation": "PR Consultation",
 };
 
+// Nimmi sends services as objects: { name, slug, amount }. Accept both that and
+// plain strings, and prefer the slug (which our map is keyed on).
+function svcToken(s: unknown): string {
+  if (s && typeof s === "object") {
+    const o = s as { slug?: string; name?: string };
+    return String(o.slug || o.name || "").trim();
+  }
+  return String(s ?? "").trim();
+}
+function svcNames(services: unknown): string {
+  const list = Array.isArray(services) ? services : services ? [services] : [];
+  return list.map(svcToken).filter(Boolean).join(", ");
+}
+// Nimmi sends amount_paid + order_total; older callers sent amount/final_amount.
+function paidAmount(body: any): number | undefined {
+  return Number(body.amount_paid ?? body.amount ?? body.order_total ?? body.final_amount ?? 0) || undefined;
+}
+
 function toFormType(services: unknown): string {
   const list = Array.isArray(services) ? services : services ? [services] : [];
-  const first = String(list[0] ?? "").trim();
+  const first = svcToken(list[0]);
   if (!first) return "Other (Nimmi)";
   const key = first.toLowerCase().replace(/\s+/g, "-");
   return SERVICE_TO_FORM_TYPE[key] || SERVICE_TO_FORM_TYPE[first.toLowerCase()] || first;
@@ -71,14 +89,15 @@ async function saveNimmiCase(body: any) {
     String(body.email || "").trim() ||
     "Nimmi Client";
 
-  const amount = Number(body.amount ?? body.final_amount ?? 0) || undefined;
+  const amount = paidAmount(body);
   const ref = String(body.payment_reference || body.nimmi_payment_id || "").trim();
   const notes = [
     "💰 Created from a paid Nimmi order.",
     ref ? `Payment ref: ${ref}` : null,
     amount ? `Amount paid: $${amount}` : null,
     body.email ? `Email: ${body.email}` : null,
-    Array.isArray(body.services) ? `Services: ${body.services.join(", ")}` : null,
+    svcNames(body.services) ? `Services: ${svcNames(body.services)}` : null,
+    body.whatsapp ? `WhatsApp: ${body.whatsapp}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -87,7 +106,7 @@ async function saveNimmiCase(body: any) {
     companyId: DEFAULT_COMPANY_ID,
     client: fullName,
     formType: toFormType(body.services),
-    leadPhone: body.phone ? String(body.phone) : undefined,
+    leadPhone: (body.whatsapp || body.phone) ? String(body.whatsapp || body.phone) : undefined,
     leadEmail: body.email ? String(body.email) : undefined,
     additionalNotes: notes,
     totalCharges: amount,
@@ -110,8 +129,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body?.nimmi_payment_id || !(body.amount ?? body.final_amount)) {
-    return NextResponse.json({ error: "Missing required fields (nimmi_payment_id, amount)" }, { status: 400 });
+  if (!body?.nimmi_payment_id) {
+    return NextResponse.json({ error: "Missing required field: nimmi_payment_id" }, { status: 400 });
   }
 
   // 3) Write the case. If this throws, return 500 so Nimmi retries.
