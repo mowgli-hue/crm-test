@@ -1080,6 +1080,18 @@ async function handleIncomingReplyInner(params: {
         /(talk|speak|connect|put me).{0,15}(human|person|someone|agent|real)/i,
         /(call me|give me a call|can (you|someone) call)/i,
         /(this is (frustrating|annoying|ridiculous)|fed up|not happy|unhappy|complain)/i,
+        // Confusion / "I don't understand" / asking for help — the client wants
+        // to proceed but is stuck. Real bug (Vipal, SOWP): she said "I am very
+        // confused about this" and the bot replied "Great! ✓" and repeated the
+        // wall of questions. Confusion must STOP the interrogation and bring in
+        // a human, not plough ahead.
+        /\bconfus/i,                                                  // confused / confusing / confusion
+        /(don.?t|do not|cannot|can.?t|not able to) understand/i,
+        /(no idea|not sure|don.?t know) (what|how|where|which|to)/i,
+        /what (do|does|should|to|am i) .{0,18}(mean|do|put|write|answer|fill|enter)/i,
+        /(too (many|much|complicated|hard|long|confusing))/i,
+        /(this (is|part is|section is|question is) (confusing|hard|too much|complicated|unclear))/i,
+        /(i need help|please help|can (you|someone) help|help me|need assistance)/i,
       ];
       // Guard: don't fire if the message ALSO contains numbered answers
       // (e.g. "1. No 2. Married") — that's a real answer, not a complaint.
@@ -1093,7 +1105,7 @@ async function handleIncomingReplyInner(params: {
         // Calm de-escalation — acknowledge, do NOT demand answers, hand to staff.
         await sendAndSave(
           phone,
-          `Thank you for flagging this, ${firstName}. \uD83D\uDE4F You are right to raise it \u2014 I will pass this to our team so someone can review your file properly. A Newton team member will follow up with you shortly. You do not need to answer the earlier questions for now.`,
+          `No problem at all, ${firstName}. \uD83D\uDE4F Some of these questions can be confusing \u2014 you don't have to figure them out on your own. I've asked a Newton team member to personally walk you through it, and they'll follow up with you shortly. You don't need to answer the earlier questions for now. \uD83C\uDF41`,
           session.caseId,
           session.clientName,
         );
@@ -1594,8 +1606,13 @@ async function handleIncomingReplyInner(params: {
         ackPrefix = `🎉 Got all ${answersCaptured} answers! ✓\n\n`;
       } else if (answersCaptured === 2) {
         ackPrefix = "Got both answers! ✓\n\n";
-      } else {
+      } else if (answersCaptured === 1) {
         ackPrefix = `${ackPhrases[qIndex % ackPhrases.length]}\n\n`;
+      } else {
+        // Nothing usable was captured from this message (gibberish, a stray
+        // upload, an off-topic reply). Do NOT fake "Perfect! ✓" — that made the
+        // client think they'd answered when they hadn't. Be honest and gentle.
+        ackPrefix = `No worries — let's take this one at a time. 🙂\n\n`;
       }
 
       // Determine if all questions in the current batch are now answered.
