@@ -137,6 +137,9 @@ const FRUSTRATED_RE = /\b(angry|furious|frustrat\w*|ridiculous|waste\s+of\s+(my\
 // Ready to pay / has paid — a hot lead worth grabbing live. Broad on purpose:
 // a false ping on an interested lead is cheap; a missed payment is not.
 const READY_TO_PAY_RE = /\b(paid|payment|partial\s+fee|fees?\s+(paid|sent|done)|sent\s+(the\s+)?(payment|fee|money|e-?transfer|interac)|e-?transfer\w*|interac|made\s+(the\s+)?payment|deposit\w*|receipt|ready\s+to\s+(pay|start|proceed|go\s+ahead)|i'?ll\s+pay|i\s+will\s+pay)\b/i;
+// Client is pushing back on / disputing a fee — a human should jump in to close
+// (these are warm leads that bots lose by arguing). Also catches "is it X only".
+const FEE_PUSHBACK_RE = /\b(too\s+(much|expensive|high|costly|pricey)|expensive|cheaper|discount|reduce|lower\s+(the\s+)?(price|fee|it)|make\s+it\s+(less|cheaper)|not\s+\$?\d{2,4}|only\s+\$?\d{2,4}|why\s+(so|is\s+it\s+so|that)|that'?s\s+(a\s+lot|too\s+much)|less\s+than|negotiat\w*|any\s+discount)\b/i;
 
 const __ownerAlertAt = new Map<string, number>();
 // Template body params can't contain newlines or long whitespace runs.
@@ -337,6 +340,8 @@ async function handleMarketingMessage(phone: string, message: string, contactNam
     alertContext = `⚠️ Client sounds frustrated/upset: "${message.slice(0, 160)}"`;
   } else if (READY_TO_PAY_RE.test(message)) {
     alertContext = `💰 Client is ready to pay / commit: "${message.slice(0, 160)}"`;
+  } else if (FEE_PUSHBACK_RE.test(message)) {
+    alertContext = `💬 Client pushing back on fees / price — jump in to close before it's lost: "${message.slice(0, 160)}"`;
   }
   if (alertContext) {
     await alertOwnerByWhatsApp({
@@ -653,17 +658,31 @@ You may ONLY state an actual fee for these standard, fixed-price services:
   • PGWP
   • Visitor Record (and extension)
   • Study Permit (and Study Permit Extension)
-  • TRV / Visitor Visa / stamping
   • The $52.50 PR consultation fee
-For EVERYTHING ELSE — SOWP, LMIA, VOWP, BOWP, PR Sponsorship, Express Entry application
-fees, PNP, Super Visa, PR Card, Citizenship, Restoration, College Change, Caregiver,
-US/UK/Australia visas, and anything not on the list above — DO NOT quote any number.
+For EVERYTHING ELSE — TRV / Visitor Visa / stamping, SOWP, LMIA, VOWP, BOWP, PR
+Sponsorship, Express Entry application fees, PNP, Super Visa, PR Card, Citizenship,
+Restoration, College Change, Caregiver, US/UK/Australia visas, and anything not on the
+list above — DO NOT quote any number.
 Their pricing is case-specific and is set by the team. Instead say something like:
 "The exact fee depends on your specific situation, so our team will confirm the quote —
 let me take your details and have them get back to you." For any PR-track service, steer
 to the $52.50 consultation, where the RCIC gives the precise quote.
 NEVER invent, estimate, or guess a fee for a service that is not on the allowed list.
 When in doubt, do NOT quote — hand off to the team.
+
+🚫 TRV / VISITOR VISA / "STAMP" / "STAMPING" — DO NOT QUOTE. There are TWO completely
+different products with very different prices: (a) Visitor Visa / TRV from OUTSIDE Canada,
+and (b) TRV "stamping" for someone already INSIDE Canada who needs to re-enter after
+travelling. People describe this confusingly and the wrong number loses the client. So for
+ANY TRV / visitor-visa / stamp / stamping request: do NOT state a fee. Take their details
+(are they inside or outside Canada, passport, when travelling) and say the team will
+confirm the exact fee for their situation. Then a human handles it.
+
+🚫 NEVER ARGUE ABOUT OR DEFEND A FEE. If a client questions, disputes, or pushes back on
+any fee ("not 185", "that's too much", "it's only 100", "why so expensive", "make it
+cheaper"), do NOT repeat, justify, or insist on the number — and do NOT lecture them about
+government fees. Apologise lightly and hand off: "Let me have our team confirm the exact
+fee for your situation and get right back to you 🙂" Then stop quoting. A human takes over.
 
 Newton's $52.50 consultation fee applies ONLY to:
 - Permanent Residence applications (Express Entry, PNP, etc.)
