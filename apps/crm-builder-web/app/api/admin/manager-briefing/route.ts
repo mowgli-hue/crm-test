@@ -61,7 +61,29 @@ export async function GET(request: NextRequest) {
 
   const docsPendingLong = active
     .filter((c) => (c as any).processingStatus === "docs_pending" && daysAgo((c as any).createdAt) > 7)
-    .map((c) => ({ id: c.id, client: (c as any).client, assignedTo: (c as any).assignedTo, days: Math.floor(daysAgo((c as any).createdAt)) }));
+    .map((c) => ({ id: c.id, client: (c as any).client, assignedTo: (c as any).assignedTo, days: Math.floor(daysAgo((c as any).createdAt)) }))
+    .sort((a, b) => b.days - a.days);
+
+  // The processing priority the owner actually wants: cases where the DOCS ARE IN
+  // and it's in the team's court (being prepped / reviewed / fixed) — i.e. things
+  // that can actually be SUBMITTED. Oldest first. Excludes non-application admin
+  // types and anything already submitted.
+  const NON_APP = ["not for processing", "college change", "webform", "web form", "pr consultation", "consultation", "atip"];
+  const isRealApp = (c: any) => { const ft = String(c.formType || "").toLowerCase(); return Boolean(ft) && !NON_APP.some((t) => ft.includes(t)); };
+  const readyToSubmit = active
+    .filter((c: any) => {
+      if (!isRealApp(c)) return false;
+      if (c.processingStatus === "submitted" || c.submittedAt) return false;
+      const st = String(c.processingStatus || "");
+      const rv = String(c.reviewStatus || "").toLowerCase();
+      return st === "under_review" || rv === "changes_needed" || rv === "changes_done";
+    })
+    .map((c: any) => {
+      const rv = String(c.reviewStatus || "").toLowerCase();
+      const phase = rv === "changes_done" ? "ready to submit" : rv === "changes_needed" ? "changes to fix" : "in review";
+      return { id: c.id, client: c.client, formType: c.formType, assignedTo: c.assignedTo, phase, days: Math.floor(daysAgo(c.createdAt)) };
+    })
+    .sort((a, b) => b.days - a.days);
 
   const expiringPermits = active
     .filter((c) => { const d = daysUntil((c as any).permitExpiryDate); return d >= 0 && d <= 30; })
@@ -118,6 +140,7 @@ export async function GET(request: NextRequest) {
   const sections = {
     pipeline: counts,
     needsAttention: {
+      readyToSubmit,
       unassigned,
       stuckInReview,
       docsPendingLong,
@@ -135,6 +158,12 @@ export async function GET(request: NextRequest) {
   L.push("");
   L.push(`Pipeline: ${counts.docs_pending} docs-pending · ${counts.under_review} in review · ${counts.submitted} submitted`);
   L.push("");
+  if (readyToSubmit.length) {
+    L.push(`🟢 SUBMIT FIRST — ${readyToSubmit.length} case(s) in the team's court (docs in), oldest first:`);
+    for (const c of readyToSubmit.slice(0, 12)) L.push(`   • ${c.id} ${c.client} (${c.formType}) — ${c.days}d · ${c.phase} · ${c.assignedTo || "Unassigned"}`);
+    if (readyToSubmit.length > 12) L.push(`   • …and ${readyToSubmit.length - 12} more`);
+    L.push("");
+  }
   if (unassigned.length) {
     L.push(`🟠 ${unassigned.length} unassigned case(s) — need an owner:`);
     for (const c of unassigned.slice(0, 8)) L.push(`   • ${c.id} ${c.client} (${c.formType})`);
@@ -152,7 +181,7 @@ export async function GET(request: NextRequest) {
     L.push("");
   }
   if (docsPendingLong.length) {
-    L.push(`📂 ${docsPendingLong.length} case(s) waiting on docs over a week:`);
+    L.push(`📂 ${docsPendingLong.length} case(s) stalled waiting on CLIENT docs over a week (chase the client — not team's court):`);
     for (const c of docsPendingLong.slice(0, 6)) L.push(`   • ${c.id} ${c.client} — ${c.days}d (${c.assignedTo || "?"})`);
     L.push("");
   }

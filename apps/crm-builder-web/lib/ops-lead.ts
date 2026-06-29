@@ -146,6 +146,19 @@ export interface AtRiskCase {
   remainingHours: number;
 }
 
+// A case in the TEAM's court — docs are in, it's being prepared/reviewed/fixed,
+// i.e. it's close to submission. This is the "submit these first" queue, sorted
+// oldest-first. Deliberately separate from cases stalled waiting on CLIENT docs
+// (those are a follow-up problem, not a processing-throughput problem).
+export interface ReadyToSubmitCase {
+  caseId: string;
+  client: string;
+  formType: string;
+  owner: string;
+  phase: string;         // "changes to fix" | "in review" | "ready to submit" | "prepping"
+  daysOld: number;       // age since created
+}
+
 export interface ReassignEvent {
   caseId: string;
   from: string;
@@ -165,6 +178,7 @@ export interface OpsLeadData {
   recentReassignments: ReassignEvent[]; // what the Ops Lead moved in the last 24h
   paidNotStartedCases: PaidCase[];  // paid clients whose work hasn't started (longest-waiting first)
   reworkStuckCases: ReworkStuckCase[]; // sent back by review, not yet refixed (longest-stuck first)
+  readyToSubmitCases: ReadyToSubmitCase[]; // in the team's court, oldest first — submit these first
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -380,11 +394,37 @@ export async function gatherOpsData(opts?: {
   const atRiskList: AtRiskCase[] = [];
   const paidList: PaidCase[] = [];
   const reworkList: ReworkStuckCase[] = [];
+  const readyList: ReadyToSubmitCase[] = [];
 
   for (const c of cases) {
     const who = assigneeOf(c);
     const open = isOpenCase(c);
     const sla = slaFor(c, now);
+
+    // Team's-court / final-stretch queue — docs are in and it's being prepped,
+    // reviewed, or fixed. This is what the team can actually SUBMIT (oldest
+    // first), as opposed to cases stalled waiting on the client for documents.
+    if (open && isRealApplication(c)) {
+      const st = lc((c as any).processingStatus);
+      const rv = lc((c as any).reviewStatus);
+      const stg = lc((c as any).stage);
+      const phase =
+        rv === "changes_needed" ? "changes to fix"
+        : rv === "changes_done" ? "ready to submit"
+        : (st === "under_review" || stg === "under review") ? "in review"
+        : "";
+      if (phase) {
+        const createdMs = Date.parse((c as any).createdAt || "");
+        readyList.push({
+          caseId: c.id,
+          client: String((c as any).client || ""),
+          formType: String(c.formType || ""),
+          owner: who || "Unassigned",
+          phase,
+          daysOld: Number.isNaN(createdMs) ? 0 : Math.max(0, Math.floor((now - createdMs) / 86_400_000)),
+        });
+      }
+    }
 
     // Sent back by review and not yet refixed — the rework bottleneck. Tracked
     // separately so the manager sees who's sitting on changes and for how long.
@@ -572,8 +612,14 @@ export async function gatherOpsData(opts?: {
   reworkList.sort((a, b) => b.daysStuck - a.daysStuck);
   const reworkStuckCases = reworkList.slice(0, 30);
 
+  // Submit-first priority: "ready to submit" / "changes to fix" ahead of "in
+  // review", oldest first within each.
+  const phaseRank: Record<string, number> = { "ready to submit": 0, "changes to fix": 1, "in review": 2 };
+  readyList.sort((a, b) => (phaseRank[a.phase] ?? 9) - (phaseRank[b.phase] ?? 9) || b.daysOld - a.daysOld);
+  const readyToSubmitCases = readyList.slice(0, 30);
+
   const windowLabel = `last ${windowDays} days`;
-  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments, paidNotStartedCases, reworkStuckCases };
+  return { generatedAt: new Date(now).toISOString(), windowDays, windowLabel, team, staff, rebalance, atRiskCases, recentReassignments, paidNotStartedCases, reworkStuckCases, readyToSubmitCases };
 }
 
 function pickBottleneck(args: { atRiskOpen: number; unassignedCases: number; totalReworkFlags: number; staff: StaffMetrics[]; openCases: number }): string {
