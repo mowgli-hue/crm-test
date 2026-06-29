@@ -109,6 +109,15 @@ async function run(request: NextRequest) {
     .filter((x: any) => x.read);
   const moved: any[] = rebalanced?.applied || [];
 
+  // ── Per-person scorecard: what each person did, their errors, what's on their plate ──
+  const scoreStaff = (ops?.staff || [])
+    .filter((s: any) => s.active !== false && (Array.isArray(s.functions) ? s.functions.some((f: string) => f === "prep" || f === "review") : true))
+    .sort((a: any, b: any) => (b.submittedToday - a.submittedToday) || (b.casesAssigned - a.casesAssigned));
+  const statusIcon = (st: string) => (st === "active" ? "🟢" : st === "idle" ? "🟡" : "⚪");
+  const didText = (s: any) => s.submittedToday > 0 ? `${s.submittedToday} submitted today` : (s.submittedWindow > 0 ? `${s.submittedWindow} submitted/30d` : "nothing submitted yet");
+  const qualText = (s: any) => s.reworkFlags > 0 ? `${s.reworkFlags} review errors${s.reworkRate != null ? ` (rate ${s.reworkRate})` : ""}` : "clean";
+  const scoreLineText = (s: any) => `  ${statusIcon(s.status)} ${s.name} — did ${didText(s)}; plate ${s.casesAssigned} active (${s.stuckAssigned} stuck, ${s.inReviewAssigned} in review, ${s.readyAssigned} ready); quality ${qualText(s)}${s.offToday ? "; OFF today" : ""}`;
+
   // Today's shared office access code (only when daily-code login is enabled) —
   // put it at the top of the briefing so the owner has it each morning to share.
   let accessCode: { dayKey: string; code: string } | null = null;
@@ -123,6 +132,11 @@ async function run(request: NextRequest) {
   textParts.push(`OPERATIONS LEAD — ${dateLabel}`, "");
   if (accessCode) textParts.push(`TODAY'S OFFICE ACCESS CODE: ${accessCode.code} (share with the team)`, "");
   if (briefLines.length) textParts.push(...briefLines, "");
+  if (scoreStaff.length) {
+    textParts.push("TEAM TODAY — each person: what they did · plate · errors:");
+    scoreStaff.forEach((s: any) => textParts.push(scoreLineText(s)));
+    textParts.push("");
+  }
   if (moved.length) { textParts.push("WHAT I MOVED WHILE YOU WERE AWAY:"); moved.forEach((m) => textParts.push(`  • ${m.caseId}: ${m.from} → ${m.to}`)); textParts.push(""); }
   if (needAttention.length) { textParts.push("COACH / WATCH:"); needAttention.forEach((v) => textParts.push(`  • ${v.name} (${v.ratingLabel}): ${v.fix}`)); textParts.push(""); }
   if (strong.length) textParts.push(`CARRYING THE FIRM: ${strong.map((v) => v.name).join(", ")}`, "");
@@ -154,6 +168,21 @@ async function run(request: NextRequest) {
     `<div style="color:#888;font-size:12px;margin-bottom:10px">${dateLabel}${judgment?.aiUsed ? ` · ${esc(judgment.model)}` : ""}</div>` +
     accessCodeHtml +
     briefHtml +
+    section("Team today — what each person did, errors & plate",
+      scoreStaff.length
+        ? `<table style="width:100%;border-collapse:collapse;font-size:12px">` +
+          `<tr style="text-align:left;color:#64748b"><th style="padding:4px 6px">Person</th><th>Did</th><th>Active</th><th>Stuck</th><th>Review</th><th>Ready</th><th>Errors</th></tr>` +
+          scoreStaff.map((s: any) =>
+            `<tr style="border-top:1px solid #eee"><td style="padding:4px 6px">${statusIcon(s.status)} <b>${esc(s.name)}</b>${s.offToday ? ` ${chip("off", "#e2e8f0", "#475569")}` : ""}</td>` +
+            `<td>${esc(didText(s))}</td>` +
+            `<td style="text-align:center">${s.casesAssigned}</td>` +
+            `<td style="text-align:center">${s.stuckAssigned ? `<b style="color:#b91c1c">${s.stuckAssigned}</b>` : 0}</td>` +
+            `<td style="text-align:center">${s.inReviewAssigned}</td>` +
+            `<td style="text-align:center">${s.readyAssigned ? `<b style="color:#166534">${s.readyAssigned}</b>` : 0}</td>` +
+            `<td style="text-align:center">${s.reworkFlags ? `<span style="color:#b91c1c">${s.reworkFlags}${s.reworkRate != null ? ` (${s.reworkRate})` : ""}</span>` : "—"}</td></tr>`
+          ).join("") +
+          `</table>`
+        : "") +
     section("What I moved while you were away", movedHtml) +
     section("Coach / watch today", attnHtml) +
     section("Carrying the firm", strongHtml) +

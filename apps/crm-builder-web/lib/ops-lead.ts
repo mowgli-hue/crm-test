@@ -57,6 +57,11 @@ export interface StaffMetrics {
   // output
   casesAssigned: number;      // open cases on their plate now
   submittedWindow: number;    // submitted in the window
+  submittedToday: number;     // submitted in the last 24h
+  // plate breakdown (open cases in their court, by phase)
+  stuckAssigned: number;      // changes_needed — sent back, not refixed
+  inReviewAssigned: number;   // under review
+  readyAssigned: number;      // changes_done — ready to submit
   // speed
   avgHoursToSubmit: number | null;
   slaHits: number;
@@ -379,13 +384,14 @@ export async function gatherOpsData(opts?: {
   // Accumulators keyed by canonical staff name.
   type Acc = {
     casesAssigned: number; atRiskAssigned: number;
-    submittedWindow: number; sumHoursToSubmit: number; submitTimedCount: number;
+    submittedWindow: number; submittedToday: number; sumHoursToSubmit: number; submitTimedCount: number;
     slaHits: number; slaMisses: number; reworkFlags: number;
+    stuck: number; inReview: number; ready: number;
   };
   const acc = new Map<string, Acc>();
   const ensureAcc = (name: string) => {
     const k = lc(name);
-    if (!acc.has(k)) acc.set(k, { casesAssigned: 0, atRiskAssigned: 0, submittedWindow: 0, sumHoursToSubmit: 0, submitTimedCount: 0, slaHits: 0, slaMisses: 0, reworkFlags: 0 });
+    if (!acc.has(k)) acc.set(k, { casesAssigned: 0, atRiskAssigned: 0, submittedWindow: 0, submittedToday: 0, sumHoursToSubmit: 0, submitTimedCount: 0, slaHits: 0, slaMisses: 0, reworkFlags: 0, stuck: 0, inReview: 0, ready: 0 });
     return acc.get(k)!;
   };
 
@@ -423,6 +429,12 @@ export async function gatherOpsData(opts?: {
           phase,
           daysOld: Number.isNaN(createdMs) ? 0 : Math.max(0, Math.floor((now - createdMs) / 86_400_000)),
         });
+        if (who) {
+          const a = ensureAcc(who);
+          if (phase === "changes to fix") a.stuck++;
+          else if (phase === "ready to submit") a.ready++;
+          else a.inReview++;
+        }
       }
     }
 
@@ -487,6 +499,7 @@ export async function gatherOpsData(opts?: {
         if (who) {
           const a = ensureAcc(who);
           a.submittedWindow++;
+          if (subMs >= now - 86_400_000) a.submittedToday++;
           const createdMs = Date.parse((c as any).createdAt || "");
           if (!Number.isNaN(createdMs) && subMs >= createdMs) {
             a.sumHoursToSubmit += (subMs - createdMs) / 3_600_000;
@@ -535,6 +548,10 @@ export async function gatherOpsData(opts?: {
       isNewHire: prof ? prof.isNewHire === true : (tenureDays !== null && tenureDays < NEW_HIRE_DAYS),
       casesAssigned: a?.casesAssigned ?? 0,
       submittedWindow: submitted,
+      submittedToday: a?.submittedToday ?? 0,
+      stuckAssigned: a?.stuck ?? 0,
+      inReviewAssigned: a?.inReview ?? 0,
+      readyAssigned: a?.ready ?? 0,
       avgHoursToSubmit: a && a.submitTimedCount > 0 ? Math.round((a.sumHoursToSubmit / a.submitTimedCount) * 10) / 10 : null,
       slaHits: a?.slaHits ?? 0,
       slaMisses: a?.slaMisses ?? 0,
