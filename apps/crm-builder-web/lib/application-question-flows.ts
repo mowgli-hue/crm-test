@@ -128,14 +128,16 @@ const QUESTION_FLOWS: Record<ChecklistKey, QuestionFlow> = {
       // Q9 — Principal eligibility path (CRITICAL — determines if SOWP even possible)
       "What is your spouse's current status in Canada? Pick ONE:\n\n*A — Foreign Worker* (working on a closed/employer-specific work permit, NOT PGWP)\n*B — International Student* (study permit, currently studying)\n*C — PGWP Holder* (post-graduation work permit)\n*D — Other* (PR, citizen, refugee, visitor, etc. — note: PR/citizen spouses go through Spousal SPONSORSHIP not SOWP)\n\nReply with the letter. We'll ask follow-up questions based on your choice.",
 
-      // Q10 — Principal's job / school details (the BIG eligibility question)
-      "Your spouse's *current employment or studies* details. Provide ALL that apply:\n\n*If working (paths A or C):*\n• Employer name + address\n• Job title + actual day-to-day duties (IMPORTANT: duties matter more than title for NOC)\n• NOC code if known (TEER 0 / 1 / 2 / 3 / 4 / 5)\n• Salary + hours per week\n• Permit start date and END date (YYYY-MM-DD)\n\n*If studying (path B):*\n• School name + DLI number\n• Program name (master's? doctoral? bachelor's? diploma?)\n• Program length (must be 16+ months for master's to qualify)\n• Current term (NOT final term — refused even on renewal as of March 4 2026)\n• Program start and end dates (YYYY-MM-DD)",
+      // Q10 — Principal's job / school details (kept plain — the team fills the
+      // technical bits like NOC/TEER/DLI; we don't burden the client with them).
+      "Tell me about your spouse's work or studies right now — just in plain words, no codes needed (our team handles those 🙂):\n\n• If they are *working*: where they work (company name), their job title, and roughly what they do each day.\n• If they are *studying*: the school name and which program they're in.\n\nWe'll confirm any technical details with you later — just give what you know.",
 
       // Q11 — Principal lives in Canada
       "Does your spouse currently *physically live in Canada*? (Yes/No — if living separately, give the city/province where they live)",
 
-      // Q12 — Months remaining on principal's permit
-      "How many months of valid work/study authorization does your spouse have remaining? (For SOWP, IRCC requires AT LEAST 16 MONTHS remaining at the time of your SOWP application — fewer = refused.)",
+      // Q12 — Months remaining on principal's permit (the team checks the
+      // 16-month eligibility rule — no need to alarm the client with it).
+      "Roughly how long does your spouse's current permit still have left? Just the expiry date (YYYY-MM-DD) or an approximate number of months is perfectly fine. 🙂",
 
       // Q13 — Applicant's current status in Canada
       "Are you currently *inside Canada* or *outside Canada*?\n\n• If INSIDE: your current status (visitor record / work permit / study permit / no status / maintained status), permit number + expiry, and where you live\n• If OUTSIDE: country where you currently live, and when you plan to come to Canada",
