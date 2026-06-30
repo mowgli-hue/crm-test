@@ -53,7 +53,9 @@ async function aiReviews(rows: Row[], label: string): Promise<Record<string, str
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        // Management brain — same Opus model as the Ops Lead, so the per-person
+        // performance read is as sharp as the daily brief.
+        model: process.env.OPS_LEAD_MODEL || "claude-opus-4-8",
         max_tokens: 1400,
         messages: [{
           role: "user",

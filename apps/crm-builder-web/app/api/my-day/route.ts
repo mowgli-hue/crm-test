@@ -57,7 +57,9 @@ async function aiFocus(items: Array<{ caseId: string; client: string; type: stri
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        // Same brain as the Ops Lead — the team's daily plan runs on Opus too,
+        // so the "do this first" judgment is as smart as the management layer.
+        model: process.env.OPS_LEAD_MODEL || "claude-opus-4-8",
         max_tokens: 500,
         messages: [{
           role: "user",
