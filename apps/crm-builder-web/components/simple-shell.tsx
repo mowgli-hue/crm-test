@@ -12,6 +12,7 @@ import TeamTimeOverview from "@/components/team-time-overview";
 import TeamActivity from "@/components/team-activity";
 import OpsLeadDashboard from "@/components/ops-lead-dashboard";
 import DailyCodeCard from "@/components/daily-code-card";
+import CheckinRoster from "@/components/checkin-roster";
 import MyDay from "@/components/my-day";
 import MyPerformance from "@/components/my-performance";
 import TrackingSheet from "@/components/tracking-sheet";
@@ -11892,6 +11893,9 @@ We will notify you as soon as we receive a decision. This usually takes a few we
 
               {/* Today's shared office access code (Admin only; self-hides) */}
               {(sessionUser?.role === "Admin") && <DailyCodeCard apiFetch={apiFetch} />}
+
+              {/* Morning check-in roster — who's started their day (managers) */}
+              {(sessionUser?.role === "Admin" || sessionUser?.role === "Marketing" || sessionUser?.role === "ProcessingLead") && <CheckinRoster apiFetch={apiFetch} />}
 
               {/* AI Operations Lead — management brain: scorecards, new-hire reads,
                   daily leadership brief, and auto work-distribution (Admin only) */}

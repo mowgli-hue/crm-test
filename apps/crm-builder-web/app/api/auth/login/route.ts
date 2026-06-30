@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { applySessionCookie } from "@/lib/auth";
-import { addAuditLog, createSessionWithContext, findCompanyById, findUserByCredentials, findActiveUserByEmail } from "@/lib/store";
+import { addAuditLog, createSessionWithContext, findCompanyById, findUserByCredentials, findActiveUserByEmail, verifyUserPin } from "@/lib/store";
+import { recordDayCheckIn } from "@/lib/checkin";
 import { createPreAuthToken, verifyTotp } from "@/lib/mfa";
 import { clearAuthRateLimit, consumeAuthRateLimit } from "@/lib/auth-rate-limit";
 import { isValidEmail, normalizeEmail } from "@/lib/validation";
@@ -14,8 +15,14 @@ export async function POST(request: Request) {
   const email = normalizeEmail(body.email);
   const password = String(body.password ?? "");
   const mfaCode = String(body.mfaCode ?? "").trim();
+  // Passwordless morning check-in (CHECKIN_PIN_LOGIN): today's office code + the
+  // person's own PIN. These come as separate fields; the rest of the flow is
+  // unchanged and the owner's real password still works.
+  const checkinCode = String(body.code ?? "").trim();
+  const checkinPin = String(body.pin ?? "").trim();
+  const checkinMode = String(process.env.CHECKIN_PIN_LOGIN || "").toLowerCase() === "true" && Boolean(checkinCode);
 
-  if (!email || !password) {
+  if (!email || (!password && !checkinMode)) {
     return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
   if (!isValidEmail(email)) {
@@ -52,11 +59,33 @@ export async function POST(request: Request) {
   // owner's real password always works above, so a missed/late code email can
   // never lock the office out.
   let codeUsed = false;
+  let mustSetPin = false;
   if (!user && dailyCodeLoginEnabled()) {
     const candidate = await findActiveUserByEmail(email);
     if (candidate && (await verifyTodayCode(password))) {
       user = candidate;
       codeUsed = true;
+    }
+  }
+
+  // Passwordless check-in path (CHECKIN_PIN_LOGIN): today's office code + the
+  // person's own PIN. First time (no PIN set yet) we accept just the valid code
+  // and flag the UI to make them set a PIN. The owner's password path above is
+  // untouched, so no one is ever locked out.
+  if (!user && checkinMode) {
+    const candidate = await findActiveUserByEmail(email);
+    if (candidate && (await verifyTodayCode(checkinCode))) {
+      if (candidate.pinHash) {
+        if (await verifyUserPin(candidate.id, checkinPin)) {
+          user = candidate;
+          codeUsed = true;
+        }
+      } else {
+        // No PIN yet — let them in on the valid code and force PIN setup.
+        user = candidate;
+        codeUsed = true;
+        mustSetPin = true;
+      }
     }
   }
 
@@ -152,6 +181,12 @@ export async function POST(request: Request) {
   } catch {
     // Ignore clear failures if auth rate-limit table is unavailable.
   }
+  // Morning attendance — stamp the day check-in for any staff login (first of
+  // the day wins). Non-fatal so it can never block a login.
+  if (user.userType === "staff") {
+    await recordDayCheckIn(user.id, user.name, codeUsed ? "code" : "password").catch(() => {});
+  }
+
   const company = await findCompanyById(user.companyId);
   const response = NextResponse.json({
     user: {
@@ -161,6 +196,7 @@ export async function POST(request: Request) {
       role: user.role,
       userType: user.userType
     },
+    mustSetPin,
     company
   });
 

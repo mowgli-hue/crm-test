@@ -14,12 +14,13 @@ on:
       job:
         description: "Which job to run now"
         type: choice
-        options: [brief, reports, tracker-sync]
+        options: [brief, reports, tracker-sync, checkin-roster]
         default: brief
   schedule:
     - cron: "0 15 * * *"   # ~8am Pacific — morning Ops Lead brief
     - cron: "0 2 * * *"    # ~7pm Pacific — end-of-day team reports
     - cron: "*/30 * * * *" # every 30 min — read IRCC emails, auto-advance the PR tracker
+    - cron: "30 17 * * *"  # ~10:30am Pacific — WhatsApp the morning check-in roster
 
 jobs:
   run:
@@ -45,3 +46,10 @@ jobs:
           curl -fsS -m 150 -X POST \
             "https://crm.newtonimmigration.com/api/admin/tracker-email-sync?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}&days=3" \
             || { echo "::warning::tracker email sync failed"; exit 0; }
+
+      - name: Morning check-in roster — WhatsApp
+        if: github.event.schedule == '30 17 * * *' || github.event.inputs.job == 'checkin-roster'
+        run: |
+          curl -fsS -m 90 -X POST \
+            "https://crm.newtonimmigration.com/api/admin/checkin-roster/notify?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}" \
+            || { echo "::warning::checkin roster notify failed"; exit 0; }

@@ -267,6 +267,10 @@ export type AppUser = {
   userType: UserType;
   active?: boolean;
   password: string;
+  // Personal 4-6 digit check-in PIN (hashed). Set by the user themselves; used
+  // for the passwordless morning check-in (today's office code + their PIN).
+  pinHash?: string;
+  pinSetAt?: string;
   mfaEnabled?: boolean;
   mfaSecret?: string;
   mfaEnabledAt?: string;

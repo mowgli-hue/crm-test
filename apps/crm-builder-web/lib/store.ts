@@ -517,6 +517,26 @@ export async function mutateStore<T>(mutator: (store: AppStore) => T | Promise<T
   return run as Promise<T>;
 }
 
+// ── Personal check-in PIN (set by the user themselves) ──
+export async function setUserPin(userId: string, pin: string): Promise<boolean> {
+  const clean = String(pin || "").replace(/\D/g, "");
+  if (clean.length < 4 || clean.length > 6) return false;
+  const hash = await hashPassword(clean);
+  return mutateStore((store) => {
+    const idx = store.users.findIndex((u) => u.id === userId);
+    if (idx === -1) return false;
+    store.users[idx] = { ...store.users[idx], pinHash: hash, pinSetAt: new Date().toISOString() };
+    return true;
+  });
+}
+
+export async function verifyUserPin(userId: string, pin: string): Promise<boolean> {
+  const store = await readStore();
+  const u = store.users.find((x) => x.id === userId);
+  if (!u || !u.pinHash) return false;
+  return verifyPassword(String(pin || "").replace(/\D/g, ""), u.pinHash);
+}
+
 export async function findUserByCredentials(email: string, password: string): Promise<AppUser | null> {
   const store = await readStore();
   const normalized = email.toLowerCase().trim();
