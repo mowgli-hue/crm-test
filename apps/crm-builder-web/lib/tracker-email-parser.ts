@@ -94,6 +94,22 @@ export function parseIrccEmail(subject: string, body: string): ParsedIrccEmail {
   };
 }
 
+// Detect a final-decision / correspondence signal in an IRCC email so a result
+// is never missed. Returns the outcome when it's clear, "fairness" for a
+// procedural-fairness / request letter, "check" when IRCC signals a decision
+// or correspondence but the email doesn't state the outcome (most generic
+// "sign in to your account" notices), or null when there's no decision signal.
+export type DecisionSignal = "refused" | "approved" | "fairness" | "check" | null;
+export function detectDecision(subject: string, body: string): DecisionSignal {
+  const hay = `${subject || ""}\n${body || ""}`.toLowerCase();
+  if (/\b(refus(ed|al)|we are unable to approve|application (was|has been) (refused|rejected)|did not meet the (requirements|eligibility)|your application.{0,20}not (been )?approved)\b/.test(hay)) return "refused";
+  if (/\b(procedural fairness|fairness letter|opportunity to respond|before (we|a) (make|reach).{0,12}decision)\b/.test(hay)) return "fairness";
+  if (/\b(has been approved|application.{0,12}approved|approved in principle|passport request|\bppr\b|\bcopr\b|confirmation of permanent residence|permit.{0,8}approved|visa.{0,8}approved)\b/.test(hay)) return "approved";
+  // Generic decision/correspondence with no stated outcome — flag for a human.
+  if (/\b(a decision (has been|was) made|final decision|decision.{0,10}(ready|available)|message about your application|correspondence|information about [a-z]?\d{6,})\b/.test(hay)) return "check";
+  return null;
+}
+
 // Is the sender an IRCC / Canada immigration address? Used to ignore noise.
 export function looksLikeIrcc(from: string): boolean {
   const f = (from || "").toLowerCase();

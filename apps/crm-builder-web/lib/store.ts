@@ -554,6 +554,18 @@ export async function setCaseDelayReason(companyId: string, id: string, reason: 
   });
 }
 
+// Mark that the IRCC email reader has handled a decision/correspondence for this
+// case (idempotency for the decision-email sync).
+export async function markCaseDecisionFlagged(companyId: string, id: string): Promise<void> {
+  await mutateStore((store) => {
+    let idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+    if (idx === -1) idx = store.cases.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    (store.cases[idx] as any).decisionFlaggedAt = new Date().toISOString();
+    store.cases[idx].updatedAt = new Date().toISOString();
+  });
+}
+
 export async function findUserByCredentials(email: string, password: string): Promise<AppUser | null> {
   const store = await readStore();
   const normalized = email.toLowerCase().trim();
@@ -2781,6 +2793,7 @@ export async function addLegacyResult(input: {
   if (matchedCase && ["approved", "refused", "request_letter"].includes(input.outcome)) {
     (matchedCase as any).finalOutcome = input.outcome;
     (matchedCase as any).decisionDate = resultDate;
+    (matchedCase as any).decisionFlaggedAt = new Date().toISOString();
     matchedCase.stage = "Decision";
     matchedCase.caseStatus = inferCaseStatusFromStage("Decision");
     matchedCase.updatedAt = new Date().toISOString();

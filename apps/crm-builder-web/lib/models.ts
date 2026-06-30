@@ -208,6 +208,9 @@ export type CaseItem = {
   // Set when a refusal is recorded — the file is reopened so the team
   // investigates the grounds and decides reconsideration / re-apply / appeal.
   reopenedForReconsideration?: boolean;
+  // Set when the IRCC email reader has already handled a decision/correspondence
+  // for this case, so the 30-min poll never re-records or re-flags it.
+  decisionFlaggedAt?: string;
   imm5710Automation?: {
     status: "idle" | "started" | "failed";
     startedAt?: string;

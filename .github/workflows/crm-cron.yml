@@ -47,6 +47,13 @@ jobs:
             "https://crm.newtonimmigration.com/api/admin/tracker-email-sync?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}&days=3" \
             || { echo "::warning::tracker email sync failed"; exit 0; }
 
+      - name: Decisions — read IRCC emails & action approvals/refusals
+        if: github.event.schedule == '*/30 * * * *' || github.event.inputs.job == 'tracker-sync'
+        run: |
+          curl -fsS -m 150 -X POST \
+            "https://crm.newtonimmigration.com/api/admin/decision-email-sync?systemToken=${{ secrets.CRM_SYSTEM_TOKEN }}&days=4" \
+            || { echo "::warning::decision email sync failed"; exit 0; }
+
       - name: Morning check-in roster — WhatsApp
         if: github.event.schedule == '30 17 * * *' || github.event.inputs.job == 'checkin-roster'
         run: |
