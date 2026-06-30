@@ -205,6 +205,9 @@ export type CaseItem = {
   delayReason?: string;
   delayReasonAt?: string;
   delayReasonBy?: string;
+  // Set when a refusal is recorded — the file is reopened so the team
+  // investigates the grounds and decides reconsideration / re-apply / appeal.
+  reopenedForReconsideration?: boolean;
   imm5710Automation?: {
     status: "idle" | "started" | "failed";
     startedAt?: string;

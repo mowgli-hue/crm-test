@@ -48,6 +48,12 @@ export async function GET(request: NextRequest) {
   });
 
   // ── Cases needing attention ──
+  // Refusals reopened for follow-up — investigate & decide reconsideration/re-apply.
+  const refusalsToAction = active
+    .filter((c: any) => c.finalOutcome === "refused" && c.reopenedForReconsideration)
+    .map((c: any) => ({ id: c.id, client: c.client, formType: c.formType, assignedTo: c.assignedTo, when: String(c.decisionDate || "").slice(0, 10) }))
+    .sort((a, b) => String(b.when).localeCompare(String(a.when)));
+
   const unassigned = active
     .filter((c) => {
       const a = String((c as any).assignedTo || "").trim();
@@ -158,6 +164,11 @@ export async function GET(request: NextRequest) {
   L.push("");
   L.push(`Pipeline: ${counts.docs_pending} docs-pending · ${counts.under_review} in review · ${counts.submitted} submitted`);
   L.push("");
+  if (refusalsToAction.length) {
+    L.push(`🔴 ${refusalsToAction.length} REFUSAL(S) to action — investigate the grounds & decide reconsideration / re-apply / appeal:`);
+    for (const c of refusalsToAction.slice(0, 12)) L.push(`   • ${c.id} ${c.client} (${c.formType}) — refused ${c.when || "?"} · ${c.assignedTo || "Unassigned"}`);
+    L.push("");
+  }
   if (readyToSubmit.length) {
     L.push(`🟢 SUBMIT FIRST — ${readyToSubmit.length} case(s) in the team's court (docs in), oldest first:`);
     for (const c of readyToSubmit) {

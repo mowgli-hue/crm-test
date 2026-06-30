@@ -2772,6 +2772,41 @@ export async function addLegacyResult(input: {
     createdAt: new Date().toISOString()
   };
   store.legacyResults.unshift(item);
+
+  // ── Decision → action ──
+  // Record the outcome on the matched case, and on a REFUSAL or fairness letter
+  // open the file for follow-up: a high-priority task so the team figures out
+  // WHY and decides reconsideration vs re-apply. A refusal must never just sit
+  // in a results log. (Idempotent — addAutomationTask skips duplicates.)
+  if (matchedCase && ["approved", "refused", "request_letter"].includes(input.outcome)) {
+    (matchedCase as any).finalOutcome = input.outcome;
+    (matchedCase as any).decisionDate = resultDate;
+    matchedCase.stage = "Decision";
+    matchedCase.caseStatus = inferCaseStatusFromStage("Decision");
+    matchedCase.updatedAt = new Date().toISOString();
+    const owner = String((matchedCase as any).reviewedBy || matchedCase.assignedTo || "Unassigned");
+    if (input.outcome === "refused") {
+      (matchedCase as any).reopenedForReconsideration = true;
+      addAutomationTask(store, {
+        companyId: input.companyId,
+        caseId: matchedCase.id,
+        title: "🔴 Refusal — investigate why & decide reconsideration/re-apply",
+        description: `Refusal received${input.applicationNumber ? ` (app ${input.applicationNumber})` : ""}${resultDate ? ` on ${resultDate}` : ""}. Pull the GCMS/refusal letter, identify the exact refusal grounds, and decide the path: reconsideration request, re-apply, or appeal — then action it.${input.notes ? " Notes: " + input.notes : ""}`,
+        assignedTo: owner,
+        priority: "high",
+      });
+    } else if (input.outcome === "request_letter") {
+      addAutomationTask(store, {
+        companyId: input.companyId,
+        caseId: matchedCase.id,
+        title: "📨 Procedural fairness / request letter — respond before deadline",
+        description: `IRCC sent a request / fairness letter${input.applicationNumber ? ` (app ${input.applicationNumber})` : ""}. Review what's being asked, prepare the response, and reply before the stated deadline.${input.notes ? " Notes: " + input.notes : ""}`,
+        assignedTo: owner,
+        priority: "high",
+      });
+    }
+  }
+
   await writeStore(store);
   return item;
 }
