@@ -100,7 +100,9 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [todaySeconds, setTodaySeconds] = useState(0);
   const [plan, setPlan] = useState<null | {
     dailyTarget: number; submittedToday: number; remainingToday: number; carryoverCount: number;
+    doneToday?: Array<{ caseId: string; client: string }>;
     cases: Array<{ caseId: string; client: string; type: string; nextStep: string; carryover: boolean; sla: any }>;
+    callList?: Array<{ caseId: string; client: string; type: string; phone: string; daysWaiting: number }>;
   }>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -220,21 +222,45 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
           {plan.carryoverCount > 0 && (
             <p className="mt-1 text-[11px] font-semibold text-rose-700">⏪ {plan.carryoverCount} carried over from before — do these first.</p>
           )}
-          <ol className="mt-2 space-y-1">
-            {plan.cases.map((p, i) => (
-              <li key={p.caseId} className="flex items-center gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-indigo-100">
-                <span className="text-xs font-black text-indigo-400 w-4">{i + 1}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-bold text-slate-900">
-                    {p.carryover && <span title="Carried over — overdue or sent back">⏪ </span>}
-                    {p.caseId} · {p.client || "—"}
-                  </p>
-                  <p className="truncate text-[11px] text-slate-500">{p.type}{p.nextStep ? ` · ${p.nextStep}` : ""}</p>
-                </div>
-                {p.sla?.label && <span className={`text-[10px] font-bold ${p.sla.status === "breached" ? "text-rose-600" : p.sla.status === "due_soon" ? "text-amber-600" : "text-slate-400"}`}>{p.sla.label}</span>}
-              </li>
-            ))}
-          </ol>
+          {plan.cases.length > 0 ? (
+            <ol className="mt-2 space-y-1">
+              {plan.cases.map((p, i) => (
+                <li key={p.caseId} className="flex items-center gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-indigo-100">
+                  <span className="text-xs font-black text-indigo-400 w-4">{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-slate-900">
+                      {p.carryover && <span title="Carried over — overdue or sent back">⏪ </span>}
+                      {p.caseId} · {p.client || "—"}
+                    </p>
+                    <p className="truncate text-[11px] text-slate-500">{p.type}{p.nextStep ? ` · ${p.nextStep}` : ""}</p>
+                  </div>
+                  {p.sla?.label && <span className={`text-[10px] font-bold ${p.sla.status === "breached" ? "text-rose-600" : p.sla.status === "due_soon" ? "text-amber-600" : "text-slate-400"}`}>{p.sla.label}</span>}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-2 text-xs font-semibold text-emerald-700">🎉 All caught up — goal met. Use spare time to chase the calls below.</p>
+          )}
+          {plan.doneToday && plan.doneToday.length > 0 && (
+            <p className="mt-2 text-[11px] text-emerald-700">✅ Done today: {plan.doneToday.map((d) => d.caseId).join(", ")}</p>
+          )}
+
+          {/* Quick-call list — chase clients who haven't sent documents */}
+          {plan.callList && plan.callList.length > 0 && (
+            <div className="mt-3 border-t border-indigo-200 pt-2">
+              <p className="text-[11px] font-black uppercase tracking-wide text-indigo-700">📞 Quick calls — chase documents ({plan.callList.length})</p>
+              <div className="mt-1 space-y-1">
+                {plan.callList.map((c) => (
+                  <div key={c.caseId} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 px-2.5 py-1 text-[12px]">
+                    <span className="min-w-0 truncate"><b>{c.client || c.caseId}</b> · {c.type} · waiting {c.daysWaiting}d</span>
+                    {c.phone
+                      ? <a href={`tel:${c.phone}`} className="shrink-0 rounded bg-indigo-600 px-2 py-0.5 text-[11px] font-bold text-white">Call</a>
+                      : <span className="shrink-0 text-[10px] text-slate-400">no phone</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

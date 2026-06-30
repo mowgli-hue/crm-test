@@ -24,20 +24,21 @@ export const runtime = "nodejs";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
 
-// Rough hours a typical application takes to prepare/submit end-to-end. Used to
-// turn a person's weekly capacity into a realistic per-day completion target.
-const HOURS_PER_APP = 2.5;
+// Target pace — about 6 applications on a full working day (the owner's goal:
+// push volume so files get done fast). New hires get a gentler ramp.
+const HOURS_PER_APP = 1.2;
+const MAX_DAILY = 6;
 
 // How many applications THIS person should aim to complete today, from their
-// weekly-hours capacity (team-config), minus their scheduled off-days.
+// weekly-hours capacity (team-config), spread over the days they actually work.
 function dailyTargetFor(name: string): number {
   const prof = profileForName(name);
   const weekly = prof?.weeklyHours ?? 35;
-  // spread the week over the days they actually work
   const offDays = prof?.offDays?.length ?? 0;
   const workDays = Math.max(1, 5 - Math.min(offDays, 4));
-  const perDay = (weekly / workDays) / HOURS_PER_APP;
-  return Math.max(1, Math.min(6, Math.round(perDay)));
+  let target = Math.round((weekly / workDays) / HOURS_PER_APP);
+  if (prof?.isNewHire) target = Math.min(target, 3); // ramp new hires gently
+  return Math.max(1, Math.min(MAX_DAILY, target));
 }
 
 function isTodayPacific(iso?: string): boolean {
@@ -114,6 +115,7 @@ export async function GET(request: NextRequest) {
         caseId: c.id,
         client: String(c.client || ""),
         type: String(c.formType || ""),
+        phone: String((c as any).leadPhone || ""),
         status: String(c.processingStatus || "docs_pending"),
         reviewStatus: String(c.reviewStatus || ""),
         // When the reviewer last sent it back — used to show "waiting Xh" on the
@@ -150,11 +152,28 @@ export async function GET(request: NextRequest) {
   // tag carryover = cases already past their submit deadline (overdue), which is
   // exactly the "didn't get done, do it first" set.
   const dailyTarget = dailyTargetFor(user.name);
-  const submittedTodayCount = all.filter(
-    (c: any) => isCaseAssignedToUser(c.assignedTo, user.name) && isTodayPacific((c as any).submittedAt),
-  ).length;
+
+  // What this person already finished (submitted) today.
+  const doneTodayCases = all
+    .filter((c: any) => isCaseAssignedToUser(c.assignedTo, user.name) && isTodayPacific((c as any).submittedAt))
+    .map((c: any) => ({ caseId: c.id, client: String(c.client || "") }));
+  const submittedTodayCount = doneTodayCases.length;
   const remainingToday = Math.max(0, dailyTarget - submittedTodayCount);
-  const todaysPlan = ranked.slice(0, Math.max(dailyTarget, 1)).map((r) => ({
+
+  // Split the queue: WORKABLE = docs are in / in review / sent back → can be
+  // pushed to submission today. WAITING = stalled because the CLIENT hasn't sent
+  // documents → these get a quick phone call to chase, not prep time.
+  const isWorkable = (r: any) =>
+    String(r.reviewStatus || "").toLowerCase() === "changes_needed" ||
+    r.status === "under_review" ||
+    (r.completionPct ?? 0) >= 70;
+  const workable = ranked.filter(isWorkable);
+  const waiting = ranked.filter((r) => !isWorkable(r));
+
+  // Today's list to COMPLETE — the top of the workable queue, sized to remaining
+  // target (so a person who's done 4 of 6 sees the next 2, not another full 6).
+  const planSize = Math.max(remainingToday, Math.min(dailyTarget, workable.length) > 0 ? 1 : 0);
+  const todaysPlan = workable.slice(0, Math.max(planSize, 0)).map((r) => ({
     caseId: r.caseId,
     client: r.client,
     type: r.type,
@@ -164,6 +183,13 @@ export async function GET(request: NextRequest) {
     // should have been done already → do it FIRST today.
     carryover: r.sla.status === "breached" || String(r.reviewStatus || "").toLowerCase() === "changes_needed",
   }));
+
+  // Quick-call list — chase the clients who haven't sent documents, so these
+  // files become workable for the coming days. Oldest waiting first.
+  const callList = waiting
+    .sort((a, b) => (b.ageDays || 0) - (a.ageDays || 0))
+    .slice(0, 8)
+    .map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, phone: r.phone, daysWaiting: r.ageDays }));
 
   const ai = await aiFocus(ranked.map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, reason: r.reason })));
   const topPickIds = ai?.topPickIds?.length ? ai.topPickIds : ranked.slice(0, 1).map((r) => r.caseId);
@@ -199,8 +225,10 @@ export async function GET(request: NextRequest) {
       dailyTarget,
       submittedToday: submittedTodayCount,
       remainingToday,
+      doneToday: doneTodayCases,
       carryoverCount: todaysPlan.filter((p) => p.carryover).length,
       cases: todaysPlan,
+      callList,
     },
     focus: ai?.focus || (ranked[0] ? `Start with ${ranked[0].caseId} (${ranked[0].client}) — ${ranked[0].reason.toLowerCase()}.` : "No open applications assigned to you. Nice and clear."),
     topPickIds,
