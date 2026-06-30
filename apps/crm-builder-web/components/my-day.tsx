@@ -98,6 +98,10 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [activeStartedAt, setActiveStartedAt] = useState<string | null>(null);
   const [todayLog, setTodayLog] = useState<TodayEntry[]>([]);
   const [todaySeconds, setTodaySeconds] = useState(0);
+  const [plan, setPlan] = useState<null | {
+    dailyTarget: number; submittedToday: number; remainingToday: number; carryoverCount: number;
+    cases: Array<{ caseId: string; client: string; type: string; nextStep: string; carryover: boolean; sla: any }>;
+  }>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -120,6 +124,7 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         setActiveStartedAt(d.activeStartedAt || null);
         setTodayLog(d.todayLog || []);
         setTodaySeconds(d.todaySeconds || 0);
+        setPlan(d.plan || null);
       }
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [apiFetch]);
@@ -204,6 +209,34 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
         <h2 className="text-lg font-bold text-slate-900">My day</h2>
         <button onClick={() => { setLoading(true); load(); }} className="text-xs font-semibold text-slate-500 hover:text-slate-700">Refresh</button>
       </div>
+
+      {/* ── TODAY'S GOAL — capacity-sized plan ── */}
+      {!loading && plan && plan.dailyTarget > 0 && (
+        <div className="rounded-xl border-2 border-indigo-300 bg-indigo-50 px-3 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-black uppercase tracking-wide text-indigo-700">🎯 Today's goal — complete {plan.dailyTarget}</p>
+            <p className="text-xs font-bold text-indigo-800">{plan.submittedToday}/{plan.dailyTarget} done{plan.remainingToday > 0 ? ` · ${plan.remainingToday} to go` : " · ✅ goal met!"}</p>
+          </div>
+          {plan.carryoverCount > 0 && (
+            <p className="mt-1 text-[11px] font-semibold text-rose-700">⏪ {plan.carryoverCount} carried over from before — do these first.</p>
+          )}
+          <ol className="mt-2 space-y-1">
+            {plan.cases.map((p, i) => (
+              <li key={p.caseId} className="flex items-center gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-indigo-100">
+                <span className="text-xs font-black text-indigo-400 w-4">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-slate-900">
+                    {p.carryover && <span title="Carried over — overdue or sent back">⏪ </span>}
+                    {p.caseId} · {p.client || "—"}
+                  </p>
+                  <p className="truncate text-[11px] text-slate-500">{p.type}{p.nextStep ? ` · ${p.nextStep}` : ""}</p>
+                </div>
+                {p.sla?.label && <span className={`text-[10px] font-bold ${p.sla.status === "breached" ? "text-rose-600" : p.sla.status === "due_soon" ? "text-amber-600" : "text-slate-400"}`}>{p.sla.label}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {/* ── CHANGES NEEDED — fix & resubmit these FIRST (top priority) ── */}
       {!loading && cases.some((c) => c.reviewStatus === "changes_needed") && (

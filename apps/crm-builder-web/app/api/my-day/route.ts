@@ -18,10 +18,35 @@ import { scoreCase, isClosed, ageDays } from "@/lib/case-priority";
 import { computeSla } from "@/lib/case-sla";
 import { nextActionFor } from "@/lib/next-action";
 import { getSop } from "@/lib/sops";
+import { profileForName } from "@/lib/team-config";
 
 export const runtime = "nodejs";
 
 const COMPANY_ID = process.env.DEFAULT_COMPANY_ID || "newton";
+
+// Rough hours a typical application takes to prepare/submit end-to-end. Used to
+// turn a person's weekly capacity into a realistic per-day completion target.
+const HOURS_PER_APP = 2.5;
+
+// How many applications THIS person should aim to complete today, from their
+// weekly-hours capacity (team-config), minus their scheduled off-days.
+function dailyTargetFor(name: string): number {
+  const prof = profileForName(name);
+  const weekly = prof?.weeklyHours ?? 35;
+  // spread the week over the days they actually work
+  const offDays = prof?.offDays?.length ?? 0;
+  const workDays = Math.max(1, 5 - Math.min(offDays, 4));
+  const perDay = (weekly / workDays) / HOURS_PER_APP;
+  return Math.max(1, Math.min(6, Math.round(perDay)));
+}
+
+function isTodayPacific(iso?: string): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  const fmt = (x: Date) => x.toLocaleDateString("en-CA", { timeZone: "America/Vancouver" });
+  return fmt(d) === fmt(new Date());
+}
 
 async function aiFocus(items: Array<{ caseId: string; client: string; type: string; reason: string }>): Promise<{ focus: string; topPickIds: string[] } | null> {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -115,6 +140,29 @@ export async function GET(request: NextRequest) {
       return b.score - a.score;
     });
 
+  // ── Capacity-driven daily plan ──
+  // The person gets a TARGET (sized to their weekly capacity) and a top-N
+  // "complete these today" list. The queue is already sorted SLA-first / oldest
+  // first, so anything not finished today is older tomorrow and naturally rises
+  // to the top — yesterday's leftovers lead the next day automatically. We also
+  // tag carryover = cases already past their submit deadline (overdue), which is
+  // exactly the "didn't get done, do it first" set.
+  const dailyTarget = dailyTargetFor(user.name);
+  const submittedTodayCount = all.filter(
+    (c: any) => isCaseAssignedToUser(c.assignedTo, user.name) && isTodayPacific((c as any).submittedAt),
+  ).length;
+  const remainingToday = Math.max(0, dailyTarget - submittedTodayCount);
+  const todaysPlan = ranked.slice(0, Math.max(dailyTarget, 1)).map((r) => ({
+    caseId: r.caseId,
+    client: r.client,
+    type: r.type,
+    nextStep: r.nextAction?.step || "",
+    sla: r.sla,
+    // Overdue (past submit deadline) or sent back for changes = a leftover that
+    // should have been done already → do it FIRST today.
+    carryover: r.sla.status === "breached" || String(r.reviewStatus || "").toLowerCase() === "changes_needed",
+  }));
+
   const ai = await aiFocus(ranked.map((r) => ({ caseId: r.caseId, client: r.client, type: r.type, reason: r.reason })));
   const topPickIds = ai?.topPickIds?.length ? ai.topPickIds : ranked.slice(0, 1).map((r) => r.caseId);
   const active = await getActiveSession(user.id);
@@ -144,6 +192,14 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     count: ranked.length,
+    // Capacity-driven plan for today.
+    plan: {
+      dailyTarget,
+      submittedToday: submittedTodayCount,
+      remainingToday,
+      carryoverCount: todaysPlan.filter((p) => p.carryover).length,
+      cases: todaysPlan,
+    },
     focus: ai?.focus || (ranked[0] ? `Start with ${ranked[0].caseId} (${ranked[0].client}) — ${ranked[0].reason.toLowerCase()}.` : "No open applications assigned to you. Nice and clear."),
     topPickIds,
     workNow,
