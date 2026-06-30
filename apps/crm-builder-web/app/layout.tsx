@@ -6,9 +6,9 @@ const metadataBaseUrl =
 
 export const metadata: Metadata = {
   metadataBase: new URL(metadataBaseUrl),
-  title: "FlowDesk CRM Builder",
+  title: "Newton Agent",
   description:
-    "Build custom CRM workflows, client portals, and team operations pipelines for any industry."
+    "Newton Immigration's operations workspace — cases, intake, and the AI Operations Lead."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

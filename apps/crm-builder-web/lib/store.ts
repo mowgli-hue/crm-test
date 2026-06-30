@@ -66,7 +66,7 @@ const defaultStore: AppStore = {
       companyId: "CMP-1",
       caseId: "CASE-1021",
       senderType: "ai",
-      senderName: "FlowDesk AI",
+      senderName: "Newton Agent",
       text: "I can help you verify if your documents are complete before review.",
       createdAt: new Date().toISOString()
     }

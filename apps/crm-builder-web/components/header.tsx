@@ -12,8 +12,8 @@ type HeaderProps = {
 };
 
 export function Header({
-  appName = "FlowDesk CRM Builder",
-  logoText = "Workspace Ops Platform",
+  appName = "Newton Agent",
+  logoText = "Newton Immigration",
   logoUrl = "",
   subtitle = "Build custom pipelines for immigration, legal, healthcare, consulting, or any operations-heavy business.",
   primary = "#1E3A8A",

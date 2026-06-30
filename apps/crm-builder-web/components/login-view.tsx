@@ -163,10 +163,20 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
     }
   }
 
+  const greetHour = new Date().getHours();
+  const greeting = greetHour < 12 ? "Good morning" : greetHour < 17 ? "Good afternoon" : "Good evening";
+
   return (
-    <section className="mx-auto w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
-      <h1 className="text-xl font-semibold text-ink">Sign In</h1>
-      <p className="mt-1 text-sm text-slate-600">Use your workspace account to open CRM simple mode.</p>
+    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 px-4 py-10">
+      <div className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-4xl ring-1 ring-white/20">🍁</div>
+          <h1 className="text-2xl font-bold text-white">{greeting} 👋</h1>
+          <p className="mt-1 text-sm text-slate-300">Welcome to <span className="font-semibold text-white">Newton Agent</span> — your immigration workspace. How are you today? Let's get the day started.</p>
+        </div>
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <h2 className="text-base font-bold text-slate-900">Check in to start your day</h2>
+          <p className="mt-1 text-xs text-slate-500">Sign in with your own account so your work is tracked to you.</p>
 
       {/* First-time PIN setup (signed in on a valid code, no PIN yet) */}
       {needPinSetup ? (
@@ -320,6 +330,9 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
           </a>
         </div>
       </div>
-    </section>
+        </section>
+        <p className="mt-4 text-center text-[11px] text-slate-400">Newton Immigration · RCIC R-705964</p>
+      </div>
+    </div>
   );
 }

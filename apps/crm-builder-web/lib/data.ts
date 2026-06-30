@@ -19,8 +19,8 @@ export const seedCompany: Company = {
   branding: {
     customPortalSections: [],
     customPortalSectionHistory: [],
-    appName: "FlowDesk",
-    logoText: "FlowDesk CRM",
+    appName: "Newton Agent",
+    logoText: "Newton Agent",
     logoUrl: "",
     driveRootLink: "",
     primary: "#1E3A8A",

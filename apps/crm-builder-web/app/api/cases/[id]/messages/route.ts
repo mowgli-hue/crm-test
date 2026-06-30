@@ -274,7 +274,7 @@ export async function POST(
             companyId: user.companyId,
             caseId: params.id,
             senderType: "ai",
-            senderName: "FlowDesk AI",
+            senderName: "Newton Agent",
             text: `${validation.error} ${nextQuestion.prompt}${nextQuestion.formatHint ? ` ${nextQuestion.formatHint}` : ""}`
           });
           return NextResponse.json({ message, aiMessage }, { status: 201 });
@@ -355,7 +355,7 @@ export async function POST(
       companyId: user.companyId,
       caseId: params.id,
       senderType: "ai",
-      senderName: "FlowDesk AI",
+      senderName: "Newton Agent",
       text: aiReplyText
     });
     return NextResponse.json({ message, aiMessage }, { status: 201 });
