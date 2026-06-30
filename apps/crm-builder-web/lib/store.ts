@@ -537,6 +537,23 @@ export async function verifyUserPin(userId: string, pin: string): Promise<boolea
   return verifyPassword(String(pin || "").replace(/\D/g, ""), u.pinHash);
 }
 
+// Record why a long-pending case is delayed (set by the assigned staff / admin).
+export async function setCaseDelayReason(companyId: string, id: string, reason: string, by: string): Promise<CaseItem | null> {
+  return mutateStore((store) => {
+    let idx = store.cases.findIndex((c) => c.companyId === companyId && c.id === id);
+    if (idx === -1) idx = store.cases.findIndex((c) => c.id === id);
+    if (idx === -1) return null;
+    store.cases[idx] = {
+      ...store.cases[idx],
+      delayReason: String(reason || "").trim().slice(0, 500),
+      delayReasonAt: new Date().toISOString(),
+      delayReasonBy: by || "",
+      updatedAt: new Date().toISOString(),
+    } as any;
+    return store.cases[idx];
+  });
+}
+
 export async function findUserByCredentials(email: string, password: string): Promise<AppUser | null> {
   const store = await readStore();
   const normalized = email.toLowerCase().trim();

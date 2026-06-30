@@ -116,6 +116,7 @@ export async function GET(request: NextRequest) {
         client: String(c.client || ""),
         type: String(c.formType || ""),
         phone: String((c as any).leadPhone || ""),
+        delayReason: String((c as any).delayReason || ""),
         status: String(c.processingStatus || "docs_pending"),
         reviewStatus: String(c.reviewStatus || ""),
         // When the reviewer last sent it back — used to show "waiting Xh" on the
@@ -182,6 +183,11 @@ export async function GET(request: NextRequest) {
     // Overdue (past submit deadline) or sent back for changes = a leftover that
     // should have been done already → do it FIRST today.
     carryover: r.sla.status === "breached" || String(r.reviewStatus || "").toLowerCase() === "changes_needed",
+    daysOld: r.ageDays,
+    delayReason: r.delayReason || "",
+    // The CRM asks WHY when a file's been in the team's court a long time with no
+    // recorded reason. The owner answers inline; it shows in the manager brief.
+    needsWhy: (r.ageDays || 0) >= 21 && !r.delayReason,
   }));
 
   // Quick-call list — chase the clients who haven't sent documents, so these

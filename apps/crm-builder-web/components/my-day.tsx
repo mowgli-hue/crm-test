@@ -101,9 +101,22 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
   const [plan, setPlan] = useState<null | {
     dailyTarget: number; submittedToday: number; remainingToday: number; carryoverCount: number;
     doneToday?: Array<{ caseId: string; client: string }>;
-    cases: Array<{ caseId: string; client: string; type: string; nextStep: string; carryover: boolean; sla: any }>;
+    cases: Array<{ caseId: string; client: string; type: string; nextStep: string; carryover: boolean; sla: any; daysOld?: number; delayReason?: string; needsWhy?: boolean }>;
     callList?: Array<{ caseId: string; client: string; type: string; phone: string; daysWaiting: number }>;
   }>(null);
+  const [whyDraft, setWhyDraft] = useState<Record<string, string>>({});
+
+  async function saveWhy(caseId: string) {
+    const reason = (whyDraft[caseId] || "").trim();
+    if (!reason) return;
+    try {
+      await apiFetch(`/cases/${caseId}/delay-note`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+      });
+      setWhyDraft((d) => { const n = { ...d }; delete n[caseId]; return n; });
+      load();
+    } catch { /* noop */ }
+  }
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -233,6 +246,18 @@ export default function MyDay({ apiFetch, onOpenCase }: { apiFetch: ApiFetch; on
                       {p.caseId} · {p.client || "—"}
                     </p>
                     <p className="truncate text-[11px] text-slate-500">{p.type}{p.nextStep ? ` · ${p.nextStep}` : ""}</p>
+                    {p.delayReason && <p className="truncate text-[11px] text-slate-400">↳ why: {p.delayReason}</p>}
+                    {p.needsWhy && (
+                      <div className="mt-1 flex items-center gap-1">
+                        <input
+                          value={whyDraft[p.caseId] || ""}
+                          onChange={(e) => setWhyDraft((d) => ({ ...d, [p.caseId]: e.target.value }))}
+                          placeholder={`⏳ ${p.daysOld}d old — why? (one line)`}
+                          className="flex-1 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] focus:outline-none focus:border-amber-500"
+                        />
+                        <button onClick={() => void saveWhy(p.caseId)} className="rounded bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">Save</button>
+                      </div>
+                    )}
                   </div>
                   {p.sla?.label && <span className={`text-[10px] font-bold ${p.sla.status === "breached" ? "text-rose-600" : p.sla.status === "due_soon" ? "text-amber-600" : "text-slate-400"}`}>{p.sla.label}</span>}
                 </li>

@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
     .map((c: any) => {
       const rv = String(c.reviewStatus || "").toLowerCase();
       const phase = rv === "changes_done" ? "ready to submit" : rv === "changes_needed" ? "changes to fix" : "in review";
-      return { id: c.id, client: c.client, formType: c.formType, assignedTo: c.assignedTo, phase, days: Math.floor(daysAgo(c.createdAt)) };
+      return { id: c.id, client: c.client, formType: c.formType, assignedTo: c.assignedTo, phase, days: Math.floor(daysAgo(c.createdAt)), delayReason: String(c.delayReason || "").trim() };
     })
     .sort((a, b) => b.days - a.days);
 
@@ -160,8 +160,15 @@ export async function GET(request: NextRequest) {
   L.push("");
   if (readyToSubmit.length) {
     L.push(`🟢 SUBMIT FIRST — ${readyToSubmit.length} case(s) in the team's court (docs in), oldest first:`);
-    for (const c of readyToSubmit.slice(0, 12)) L.push(`   • ${c.id} ${c.client} (${c.formType}) — ${c.days}d · ${c.phase} · ${c.assignedTo || "Unassigned"}`);
-    if (readyToSubmit.length > 12) L.push(`   • …and ${readyToSubmit.length - 12} more`);
+    for (const c of readyToSubmit) {
+      // Full list (no truncation). For old files, show the recorded delay reason,
+      // or flag that none was given so the owner can ask.
+      const why = c.delayReason
+        ? `  ↳ why: ${c.delayReason}`
+        : (c.days >= 21 ? `  ↳ ⚠️ no reason on file — ask ${c.assignedTo || "owner"} why it's ${c.days}d old` : "");
+      L.push(`   • ${c.id} ${c.client} (${c.formType}) — ${c.days}d · ${c.phase} · ${c.assignedTo || "Unassigned"}`);
+      if (why) L.push(why);
+    }
     L.push("");
   }
   if (unassigned.length) {

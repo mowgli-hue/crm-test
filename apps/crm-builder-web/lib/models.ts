@@ -200,6 +200,11 @@ export type CaseItem = {
   decisionDate?: string;
   finalOutcome?: "approved" | "refused" | "request_letter" | "withdrawn";
   remarks?: string;
+  // Why a long-pending file has been sitting (the CRM asks the owner to explain
+  // when a case is old in the team's court). Surfaced in the manager brief.
+  delayReason?: string;
+  delayReasonAt?: string;
+  delayReasonBy?: string;
   imm5710Automation?: {
     status: "idle" | "started" | "failed";
     startedAt?: string;
