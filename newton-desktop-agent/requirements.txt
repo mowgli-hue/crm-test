@@ -1,0 +1,8 @@
+# Desktop agent runtime deps.
+PyYAML>=6.0
+# Form-fill reuse (make_import_data + fill_* mappers):
+pypdf==3.17.4
+pikepdf
+Pillow>=10.0.0
+# When wiring the live data source, also install the newton-agent deps
+# (psycopg2-binary, google-api-python-client, etc.) — see ../newton-agent/requirements.txt

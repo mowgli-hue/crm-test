@@ -379,6 +379,12 @@ export type ClientMaster = {
     risks?: string;
     missingDocuments?: string;
   };
+  // Reusable personal data that stays the same across a client's applications
+  // (name, DOB, passport, address, citizenship, family). Auto-accumulated from
+  // each case's intake so the NEXT application (PGWP → TRV → EE → PR) can be
+  // pre-filled and the client just confirms "still correct?".
+  profileData?: Record<string, string>;
+  profileUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 };

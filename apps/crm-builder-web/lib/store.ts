@@ -3252,6 +3252,35 @@ export async function removeAlertRecipient(id: string): Promise<boolean> {
   });
 }
 
+// Personal fields that stay the same across a client's applications — these
+// accumulate onto the client profile and pre-fill the next application. Covers
+// both the camelCase and snake_case intake key conventions used in the app.
+export const REUSABLE_INTAKE_FIELDS: string[] = [
+  // identity
+  "firstName", "lastName", "fullName", "full_name", "given_name", "family_name",
+  "dob", "date_of_birth", "sex", "gender",
+  "place_birth_city", "place_birth_country", "citizenship", "citizenship_country", "country_of_birth",
+  "native_language", "nativeLanguage",
+  // passport
+  "passportNumber", "passport_number", "passportIssueDate", "passportExpiryDate", "passport_expiry", "passport_issue",
+  // contact + address
+  "email", "phone", "address",
+  "mailing_street_num", "mailing_street_name", "mailing_apt_unit", "mailing_city", "mailing_province", "mailing_postal_code", "mailing_country",
+  // family
+  "maritalStatus", "marital_status", "spouse_family_name", "spouse_given_name", "spouse_dob", "date_of_marriage",
+  "father_name", "mother_name",
+];
+
+// Read the reusable profile a repeat client already has on file (for pre-filling
+// the next application). Returns {} if none.
+export async function getClientProfileForCase(companyId: string, caseId: string): Promise<Record<string, string>> {
+  const store = await readStore();
+  const c = store.cases.find((x) => (x.companyId === companyId && x.id === caseId) || x.id === caseId);
+  if (!c || !(c as any).clientId) return {};
+  const client = store.clients.find((cl) => cl.id === (c as any).clientId);
+  return ((client as any)?.profileData as Record<string, string>) || {};
+}
+
 export async function updateCasePgwpIntake(
   companyId: string,
   id: string,
@@ -3298,6 +3327,33 @@ export async function updateCasePgwpIntake(
     }
   };
   applyCaseAutomation(store, store.cases[idx]);
+
+  // ── Accumulate reusable personal data onto the unified client profile ──
+  // So the next application for the same client is pre-filled and they just
+  // confirm "still correct?" instead of re-entering everything.
+  try {
+    const cid = (store.cases[idx] as any).clientId;
+    if (cid) {
+      const cIdx = store.clients.findIndex((c) => c.id === cid);
+      if (cIdx !== -1) {
+        const intake = (store.cases[idx].pgwpIntake ?? {}) as Record<string, any>;
+        const prof: Record<string, string> = { ...((store.clients[cIdx] as any).profileData || {}) };
+        let changed = false;
+        for (const f of REUSABLE_INTAKE_FIELDS) {
+          const v = intake[f];
+          if (v !== undefined && v !== null && String(v).trim() !== "") {
+            if (prof[f] !== String(v)) { prof[f] = String(v); changed = true; }
+          }
+        }
+        if (changed) {
+          (store.clients[cIdx] as any).profileData = prof;
+          (store.clients[cIdx] as any).profileUpdatedAt = new Date().toISOString();
+          store.clients[cIdx].updatedAt = new Date().toISOString();
+        }
+      }
+    }
+  } catch { /* non-fatal — profile accumulation is best-effort */ }
+
   await writeStore(store);
 
   // ── Drive backup hook ──

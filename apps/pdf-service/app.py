@@ -150,5 +150,39 @@ def debug():
                     return jsonify({"injected": has_test, "xml_snippet": xml2[xml2.find("FamilyName")-5:xml2.find("FamilyName")+40]})
     return jsonify({"error": "datasets not found"})
 
+@app.route("/fill-js", methods=["POST"])
+def fill_js():
+    """
+    Return the CERT-SAFE Acrobat *console* fill script for a certified IRCC form
+    (IMM5710 etc.) — the proven method from IMM5710_PLAYBOOK.md: write each value
+    into the XFA data DOM then remerge, so the certification stays valid and
+    Validate regenerates the barcode.
+
+    Request JSON: { "formId": "imm5710", "data": { <EMPTY_CLIENT-key fields> } }
+      — `data` is the SAME shape /fill takes (mapIntakeToForm output).
+    Response JSON: { ok, formId, field_count, js }  where `js` is the paste-and-run
+      console script. The caller saves it to the case's Drive folder; a human (or
+      the desktop agent) opens the blank form -> Cmd+J -> paste -> Enter ->
+      Validate -> Save As.
+    """
+    body = request.get_json(silent=True) or {}
+    form_id = str(body.get("formId", "imm5710")).lower()
+    data = body.get("data", {})
+    if not isinstance(data, dict) or not data:
+        return jsonify({"error": "provide non-empty `data` (EMPTY_CLIENT-key fields)"}), 400
+    sys.path.insert(0, "/app/python")
+    try:
+        import build_fill_js
+        out_js = tempfile.mktemp(suffix=".js")
+        res = build_fill_js.build_fill_js(data, form_id=form_id, out_js=out_js)
+        with open(res["out_js"], "r", encoding="utf-8") as f:
+            js = f.read()
+        os.remove(res["out_js"])
+        return jsonify({"ok": True, "formId": form_id,
+                        "field_count": res["field_count"], "js": js})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

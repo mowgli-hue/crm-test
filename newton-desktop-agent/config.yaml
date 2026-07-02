@@ -1,0 +1,58 @@
+# Newton Desktop Agent — configuration
+#
+# Maps each application type the firm handles to the IRCC forms it needs, and
+# holds the paths the agent uses. Add a new application type by adding an entry
+# here + ensuring a fill_<form>.py mapper exists in ../apps/pdf-service/python.
+
+paths:
+  # The proven form mappers + make_import_data live here.
+  pdf_service_python: "../apps/pdf-service/python"
+  # Fixed "inbox" the agent writes import files to and the Acrobat menu item
+  # reads from. Keep in sync with acrobat/newton_import.js -> NEWTON_INBOX.
+  acrobat_inbox: "~/NewtonAgent/inbox"
+  # Where finished, validated packages are staged before Drive upload.
+  output_dir: "~/NewtonAgent/output"
+
+review:
+  # Nothing is ever submitted by the agent. After preparing, it sets this stage
+  # and assigns a human. (Stages/enums match the CRM — see agent-config.yaml.)
+  ready_stage: "Under Review"
+  ready_status: "under_review"
+  handoff_note: "Prepared by desktop agent. Human review required before submission."
+
+# Application type -> forms. `rep_form` (IMM5476 Use of Representative) is added
+# to every type. `primary` is the main application form.
+application_types:
+  PGWP:
+    label: "Post-Graduation Work Permit"
+    primary: imm5710
+    also: []
+    size: small
+  VisitorRecord:
+    label: "Visitor Record"
+    primary: imm5708
+    also: []
+    size: small
+  TRV:
+    label: "Temporary Resident Visa"
+    primary: imm5257
+    also: []
+    size: small
+  StudyPermitExtension:
+    label: "Study Permit Extension"
+    primary: imm5709
+    also: []
+    size: small
+  # --- types below need a mapper before they can auto-fill (TODO) ---
+  WorkPermitExtension:
+    label: "Work Permit Extension (same/new employer)"
+    primary: imm5710
+    also: []
+    size: small
+  # LMIA / SOWP / VOWP / sponsorship / family are "big" types the roadmap flags
+  # for interleaved workload; add mappers as they are built.
+
+rep_form: imm5476   # IMM5476 Use of Representative — attached to every case
+
+# Which forms need the certified-Acrobat import path (all IRCC XFA forms do).
+certified_forms: [imm5710, imm5708, imm5709, imm5257, imm5476]
